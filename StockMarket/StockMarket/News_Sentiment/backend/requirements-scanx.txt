@@ -1,0 +1,22 @@
+# Minimal requirements for ScanX.trade news scraper
+# Install these first: pip install -r requirements-scanx.txt
+
+# Core API framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# News scraping
+feedparser==6.0.11
+beautifulsoup4==4.12.3
+
+# HTTP client
+httpx==0.26.0
+
+# Utilities
+python-dotenv==1.0.0
+loguru==0.7.2
+
+# Note: This is a minimal set for the scanx scraper only.
+# For full backend functionality, install requirements.txt after fixing psycopg2 issue.

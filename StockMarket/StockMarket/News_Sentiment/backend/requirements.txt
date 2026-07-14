@@ -1,0 +1,50 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+psycopg2-binary==2.9.9
+
+# Database
+sqlalchemy==2.0.25
+asyncpg==0.29.0
+alembic==1.13.1
+motor==3.3.2
+pymongo==4.6.1
+
+# Caching & Queue
+redis==5.0.1
+celery[redis]==5.3.6
+flower==2.0.1
+
+# HTTP & Utils
+httpx==0.26.0
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Financial Data
+yfinance==0.2.35
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.25.0
+pandas==2.1.4
+numpy==1.26.3
+
+# Utilities
+python-dotenv==1.0.0
+loguru==0.7.2
+
+# Scraper dependencies
+feedparser
+playwright
+beautifulsoup4
+lxml
+fake-useragent
+
+# ML dependencies for sentiment analysis
+torch==2.1.2
+transformers==4.37.0
+tokenizers==0.15.0
+sentence-transformers==2.3.1
+google-generativeai==0.3.2
+nltk==3.8.1
+scikit-learn==1.4.0

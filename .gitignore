@@ -1,0 +1,52 @@
+# Environment files (contain live credentials)
+.env
+.env.*
+backend/.env
+backend/.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+leverage.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Cache
+.pytest_cache/
+celerybeat-schedule*
+.backfill_*
+.backfill_*.json
+
+# Temp files (root level only)
+temp*.txt
+temp*.py
+
+# Generated
+instruments_cache.json

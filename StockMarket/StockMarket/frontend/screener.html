@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Screener - LEVERAGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nav.css">
+    <style>
+        :root{--text-secondary:#a1a1aa;--accent-blue:#4A90E2;}
+        .screen-layout{display:flex;gap:1.5rem;}
+        .screen-sidebar{width:260px;flex-shrink:0;}
+        .screen-main{flex:1;min-width:0;}
+        .preset-section{margin-bottom:1.5rem;}
+        .preset-section h3{font-size:0.8rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.5rem;}
+        .preset-btn{display:block;width:100%;padding:0.65rem 1rem;background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;text-align:left;font-size:0.85rem;font-weight:500;cursor:pointer;transition:all 0.15s;margin-bottom:0.35rem;font-family:'Inter',sans-serif;}
+        .preset-btn:hover{border-color:rgba(74,144,226,0.3);}
+        .preset-btn.active{background:rgba(74,144,226,0.12);border-color:rgba(74,144,226,0.4);color:#4A90E2;}
+        .filter-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:1.25rem;margin-bottom:1rem;}
+        .filter-card h4{font-size:0.9rem;font-weight:600;color:#fff;margin-bottom:0.75rem;}
+        .filter-row{margin-bottom:0.75rem;}
+        .filter-row label{display:block;font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px;font-weight:500;}
+        .filter-row input,.filter-row select{width:100%;padding:0.5rem;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#fff;font-size:0.8rem;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box;}
+        .filter-row input:focus,.filter-row select:focus{border-color:var(--accent-blue);}
+        .filter-row .range-inputs{display:flex;gap:0.5rem;}
+        .filter-row .range-inputs input{width:50%;}
+        .btn-primary{width:100%;padding:0.65rem;background:var(--accent-blue);border:none;border-radius:8px;color:#fff;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;font-size:0.85rem;margin-bottom:0.5rem;}
+        .btn-primary:hover{background:#357abd;}
+        .btn-clear{width:100%;padding:0.55rem;background:transparent;border:1px solid rgba(255,0,85,0.3);border-radius:8px;color:#FF0055;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;font-size:0.8rem;transition:all 0.15s;}
+        .btn-clear:hover{background:rgba(255,0,85,0.08);border-color:#FF0055;}
+        .results-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;}
+        .results-header h2{font-size:1.2rem;font-weight:700;}
+        .results-count{font-size:0.85rem;color:var(--text-secondary);}
+        .screen-table{width:100%;border-collapse:collapse;font-size:0.85rem;}
+        .screen-table th{text-align:left;padding:0.65rem 0.75rem;color:var(--text-secondary);font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid rgba(255,255,255,0.08);}
+        .screen-table td{padding:0.65rem 0.75rem;border-bottom:1px solid rgba(255,255,255,0.04);color:#fff;}
+        .screen-table tr{cursor:pointer;transition:background 0.1s;}
+        .screen-table tr:hover{background:rgba(255,255,255,0.03);}
+        .page-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
+        .page-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:2rem;}
+        .text-green{color:#00E676;}.text-red{color:#FF0055;}
+        .badge{font-size:0.7rem;padding:2px 8px;border-radius:12px;font-weight:600;}
+        .badge-green{background:rgba(0,230,118,0.15);color:#00E676;}
+        @media(max-width:768px){.screen-layout{flex-direction:column;}.screen-sidebar{width:100%;}}
+    </style>
+    <script src="page-cache.js"></script>
+</head>
+<body style="background-color: #0A0A0B;">
+    <div id="nav-root"></div>
+    <main class="page-content">
+        <h1 class="page-title">Stock Screener</h1>
+        <p class="page-subtitle">Find opportunities with powerful presets and custom filters</p>
+        <div class="screen-layout">
+            <aside class="screen-sidebar">
+                <div class="preset-section">
+                    <h3>📋 Preset Scans</h3>
+                    <button class="preset-btn active" onclick="runPreset('all',this)">All Stocks</button>
+                    <button class="preset-btn" onclick="runPreset('breakout',this)">💥 Bullish Breakout</button>
+                    <button class="preset-btn" onclick="runPreset('undervalued',this)">💎 Undervalued</button>
+                    <button class="preset-btn" onclick="runPreset('volume',this)">⚡ Unusual Volume</button>
+                    <button class="preset-btn" onclick="runPreset('momentum',this)">🚀 High Momentum</button>
+                </div>
+                <div class="filter-card">
+                    <h4>🎯 Custom Filters</h4>
+                    <div class="filter-row"><label>Price Range (₹)</label><div class="range-inputs"><input type="number" id="fPriceMin" placeholder="Min" onchange="applyCustom()"><input type="number" id="fPriceMax" placeholder="Max" onchange="applyCustom()"></div></div>
+                    <div class="filter-row"><label>Change %</label><div class="range-inputs"><input type="number" id="fChgMin" placeholder="Min" onchange="applyCustom()"><input type="number" id="fChgMax" placeholder="Max" onchange="applyCustom()"></div></div>
+                    <div class="filter-row"><label>Volume (× avg)</label><select id="fVolume" onchange="applyCustom()"><option value="">Any</option><option value="1">Above 1x</option><option value="2">Above 2x</option><option value="3">Above 3x</option><option value="5">Above 5x</option></select></div>
+
+                    <button class="btn-primary" onclick="applyCustom()">🔍 Apply Filters</button>
+                    <button class="btn-clear" id="clearBtn" onclick="clearFilters()" style="display:none;">✕ Clear All Filters</button>
+                </div>
+            </aside>
+            <div class="screen-main">
+                <div class="results-header">
+                    <h2 id="resultsTitle">All Stocks</h2>
+                    <span class="results-count" id="resultsCount">-- results</span>
+                </div>
+                <div style="overflow-x:auto;">
+                    <table class="screen-table" id="resultsTable">
+                        <thead><tr><th>#</th><th>Ticker</th><th>Price</th><th>Change</th><th>% Change</th><th>RSI</th><th>Vol Ratio</th><th>Volume</th><th>Sector</th></tr></thead>
+                        <tbody id="resultsBody"><tr><td colspan="9" style="text-align:center;color:var(--text-secondary);">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+    <script>
+        (function(){
+            var allData = []; var currentPreset = 'all';
+
+            function getRSIBadge(rsi){ if(rsi>=70)return '<span style="color:#FF0055;font-weight:600;">'+rsi.toFixed(1)+'</span>'; if(rsi<=30)return '<span style="color:#00E676;font-weight:600;">'+rsi.toFixed(1)+'</span>'; return rsi.toFixed(1); }
+
+            function fmtVol(v){
+              if(!v||v===0)return '--';
+              if(v>=1e8)return (v/1e8).toFixed(2)+' Cr';
+              if(v>=1e6)return (v/1e6).toFixed(2)+' M';
+              if(v>=1e3)return (v/1e3).toFixed(1)+' K';
+              return String(v);
+            }
+
+            function renderResults(data,title){
+                document.getElementById('resultsTitle').textContent = title||'Results';
+                document.getElementById('resultsCount').textContent = data.length+' results';
+                var body = document.getElementById('resultsBody');
+                if(!data.length){ body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">No stocks match your criteria</td></tr>'; return; }
+                body.innerHTML = data.slice(0,100).map(function(s,i){
+                    var cls=s.change>=0?'text-green':'text-red'; var sign=s.change>=0?'+':'';
+                    var volRatio = s.vol_ratio != null ? s.vol_ratio.toFixed(1)+'x' : (s.avg_volume > 0 ? (s.volume/s.avg_volume).toFixed(1)+'x' : '--');
+                    var rsiDisplay = s.rsi != null ? getRSIBadge(s.rsi) : '--';
+                    var srcBadge = s.source==='historical'?'<span title="Last close (market closed)" style="font-size:0.65rem;color:#888;margin-left:4px;">📅</span>':'';
+                    return '<tr onclick="window.location.href=\'stock.html?ticker='+s.ticker+'\'"><td>'+(i+1)+'</td><td style="font-weight:600;">'+s.ticker+srcBadge+'</td><td style="font-family:Roboto Mono,monospace;">₹'+s.price.toFixed(2)+'</td><td class="'+cls+'" style="font-family:Roboto Mono,monospace;">'+sign+s.change.toFixed(2)+'</td><td class="'+cls+'" style="font-family:Roboto Mono,monospace;">'+sign+s.change_pct.toFixed(2)+'%</td><td style="font-family:Roboto Mono,monospace;font-size:0.8rem;">'+rsiDisplay+'</td><td style="font-family:Roboto Mono,monospace;font-size:0.8rem;color:var(--text-secondary);">'+volRatio+'</td><td style="font-family:Roboto Mono,monospace;font-size:0.8rem;">'+fmtVol(s.volume)+'</td><td style="font-size:0.8rem;color:var(--text-secondary);">'+s.sector+'</td></tr>';
+                }).join('');
+            }
+
+            function getFiltered(){
+                var data = allData.slice();
+                var prMin = parseFloat(document.getElementById('fPriceMin').value); var prMax = parseFloat(document.getElementById('fPriceMax').value);
+                var chgMin = parseFloat(document.getElementById('fChgMin').value); var chgMax = parseFloat(document.getElementById('fChgMax').value);
+                var volOpt = document.getElementById('fVolume').value;
+                if(!isNaN(prMin)&&prMin) data=data.filter(function(s){return s.price>=prMin;}); if(!isNaN(prMax)&&prMax) data=data.filter(function(s){return s.price<=prMax;});
+                if(!isNaN(chgMin)&&chgMin!=='') data=data.filter(function(s){return s.change_pct>=chgMin;}); if(!isNaN(chgMax)&&chgMax!=='') data=data.filter(function(s){return s.change_pct<=chgMax;});
+                if(volOpt) data=data.filter(function(s){var r=s.avg_volume>0?s.volume/s.avg_volume:0;return r>=parseFloat(volOpt);});
+                return data;
+            }
+
+            function setLoading(loading) {
+                var body = document.getElementById('resultsBody');
+                if(loading) {
+                    document.getElementById('resultsCount').textContent = 'Loading…';
+                    body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">' +
+                        '<div style="display:inline-flex;align-items:center;gap:0.75rem;">' +
+                        '<div style="width:18px;height:18px;border:2px solid rgba(74,144,226,0.3);border-top-color:#4A90E2;border-radius:50%;animation:screenerSpin 0.8s linear infinite;"></div>' +
+                        'Loading stock data…</div></td></tr>';
+                    if(!document.getElementById('screenerSpinStyle')){
+                        var s=document.createElement('style');s.id='screenerSpinStyle';
+                        s.textContent='@keyframes screenerSpin{to{transform:rotate(360deg)}}';
+                        document.head.appendChild(s);
+                    }
+                }
+            }
+
+            async function fetchScreenerData(){
+                setLoading(true);
+                try{
+                    var res=await fetch('/api/screener');
+                    if(!res.ok) throw new Error('HTTP '+res.status);
+                    var json=await res.json();
+                    if(!Array.isArray(json)||json.length===0){
+                        document.getElementById('resultsBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">No data received from backend. Make sure the backend server is running and at least one stock has price data.</td></tr>';
+                        document.getElementById('resultsCount').textContent='0 results';
+                        return;
+                    }
+                    allData=json;
+                    // Re-apply current preset/filters after refresh
+                    if(currentPreset==='all') renderResults(allData,'All Stocks');
+                    else if(currentPreset==='custom') renderResults(getFiltered(),'Custom Filters');
+                    else runPreset(currentPreset, document.querySelector('.preset-btn.active'));
+                }catch(e){
+                    document.getElementById('resultsBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Failed to load screener: '+e.message+'. Ensure the backend server is running.</td></tr>';
+                    document.getElementById('resultsCount').textContent='Error';
+                }
+            }
+
+            window.runPreset = function(name,btn){
+                currentPreset=name;
+                document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.remove('active');}); if(btn)btn.classList.add('active');
+                var data = allData.slice(); var title='';
+                if(name==='all'){ title='All Stocks'; data=allData.slice(); }
+                else if(name==='breakout'){ data=data.filter(function(s){return s.change_pct>1&&s.volume>100000;}); data.sort(function(a,b){return b.change_pct-a.change_pct;}); title='💥 Bullish Breakout'; }
+                else if(name==='undervalued'){ data=data.filter(function(s){return s.change_pct<-1&&s.price>0;}); data.sort(function(a,b){return a.change_pct-b.change_pct;}); title='💎 Undervalued'; }
+                else if(name==='volume'){ data=data.filter(function(s){return s.avg_volume>0&&(s.volume/s.avg_volume)>2;}); data.sort(function(a,b){return (b.volume/(b.avg_volume||1))-(a.volume/(a.avg_volume||1));}); title='⚡ Unusual Volume'; }
+                else if(name==='momentum'){ data=data.filter(function(s){return s.change_pct>0.5&&s.volume>100000;}); data.sort(function(a,b){return b.change_pct-a.change_pct;}); title='🚀 High Momentum'; }
+                renderResults(data,title);
+            };
+
+            window.applyCustom = function(){
+                if(currentPreset!=='custom'){
+                    document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.remove('active');});
+                    currentPreset='custom';
+                }
+                var clearBtn = document.getElementById('clearBtn');
+                if(clearBtn) clearBtn.style.display = 'block';
+                renderResults(getFiltered(),'Custom Filters');
+            };
+
+            window.clearFilters = function(){
+                ['fPriceMin','fPriceMax','fChgMin','fChgMax'].forEach(function(id){
+                    var el = document.getElementById(id); if(el) el.value = '';
+                });
+                ['fVolume'].forEach(function(id){
+                    var el = document.getElementById(id); if(el) el.selectedIndex = 0;
+                });
+                var clearBtn = document.getElementById('clearBtn');
+                if(clearBtn) clearBtn.style.display = 'none';
+                currentPreset='all';
+                document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.remove('active');});
+                var first=document.querySelector('.preset-btn'); if(first)first.classList.add('active');
+                renderResults(allData,'All Stocks');
+            };
+
+            fetchScreenerData();
+
+            // Refresh every 60s (was 15s — too aggressive for the backend)
+            var refreshTimer=setInterval(function(){
+                if(!document.hidden) fetchScreenerData();
+            },60000);
+
+            document.addEventListener('visibilitychange',function(){
+                if(!document.hidden&&!refreshTimer){refreshTimer=setInterval(function(){fetchScreenerData();},60000);}
+                if(document.hidden&&refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}
+            });
+        })();
+    </script>
+
+    <script src="stocks.js"></script>
+    <script src="nav.js?v=3"></script>
+</body>
+</html>
+

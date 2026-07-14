@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News - LEVERAGE</title>
+    <meta name="description" content="Live Indian stock market news with AI-powered sentiment analysis. Stay updated on Nifty, Sensex, and top stocks.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nav.css">
+    <style>
+        :root{--text-secondary:#a1a1aa;--accent-blue:#4A90E2;}
+        .news-layout{display:grid;grid-template-columns:220px 1fr;gap:1.5rem;}
+        .sidebar{display:flex;flex-direction:column;gap:0.25rem;}
+        .sidebar-btn{padding:0.6rem 1rem;background:transparent;border:none;color:var(--text-secondary);text-align:left;font-size:0.85rem;font-weight:500;border-radius:8px;cursor:pointer;transition:all 0.15s;font-family:'Inter',sans-serif;}
+        .sidebar-btn:hover{background:rgba(255,255,255,0.05);color:#fff;}
+        .sidebar-btn.active{background:rgba(74,144,226,0.15);color:#4A90E2;}
+        .featured-headline{background:linear-gradient(135deg,#1a1a2e,#111);border:1px solid rgba(74,144,226,0.2);border-radius:12px;padding:2rem;margin-bottom:1.5rem;cursor:pointer;transition:all 0.2s;position:relative;}
+        .featured-headline:hover{border-color:rgba(74,144,226,0.4);}
+        .featured-headline h2{font-size:1.5rem;font-weight:700;margin-bottom:0.5rem;}
+        .featured-headline p{color:var(--text-secondary);font-size:0.9rem;}
+        .featured-badge{display:inline-block;padding:3px 10px;background:rgba(0,230,118,0.15);color:#00E676;border-radius:20px;font-size:0.7rem;font-weight:600;margin-bottom:0.75rem;}
+        .source-badge{display:inline-block;padding:2px 8px;background:rgba(74,144,226,0.1);color:#4A90E2;border-radius:4px;font-size:0.7rem;font-weight:600;margin-left:6px;}
+        .news-list{display:flex;flex-direction:column;gap:0.75rem;}
+        .news-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1.25rem;cursor:pointer;transition:all 0.2s;position:relative;}
+        .news-card:hover{border-color:rgba(255,255,255,0.15);transform:translateY(-1px);}
+        .news-card .meta{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;font-size:0.75rem;color:var(--text-secondary);}
+        .news-card .title{font-size:1rem;font-weight:600;color:#fff;margin-bottom:0.35rem;padding-right:1.5rem;}
+        .news-card .excerpt{font-size:0.85rem;color:var(--text-secondary);line-height:1.4;}
+        .sentiment-tag{padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;}
+        .sentiment-bullish{background:rgba(0,230,118,0.15);color:#00E676;}
+        .sentiment-bearish{background:rgba(255,0,85,0.15);color:#FF0055;}
+        .sentiment-neutral{background:rgba(255,255,255,0.1);color:var(--text-secondary);}
+        .page-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
+        .page-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:2rem;}
+        .search-news{display:flex;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap;}
+        .search-news input{flex:1;min-width:200px;padding:0.65rem 1rem;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#fff;font-family:'Inter',sans-serif;font-size:0.9rem;outline:none;}
+        .search-news input:focus{border-color:var(--accent-blue);}
+        .bookmark-btn{position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1rem;padding:4px;border-radius:4px;transition:all 0.15s;}
+        .bookmark-btn:hover{color:#ffd700;background:rgba(255,215,0,0.1);}
+        .bookmark-btn.saved{color:#ffd700;}
+        .news-loading{display:flex;align-items:center;justify-content:center;gap:0.5rem;padding:2rem;color:var(--text-secondary);}
+        .spinner{width:18px;height:18px;border:2px solid rgba(74,144,226,0.3);border-top-color:#4A90E2;border-radius:50%;animation:spin 0.8s linear infinite;}
+        @keyframes spin{to{transform:rotate(360deg);}}
+        @media(max-width:768px){.news-layout{grid-template-columns:1fr;}}
+    </style>
+    <script src="page-cache.js"></script>
+</head>
+<body style="background-color: #0A0A0B;">
+    <div id="nav-root"></div>
+    <main class="page-content">
+        <h1 class="page-title">News</h1>
+        <p class="page-subtitle">Market news with AI-powered sentiment analysis — bookmark what matters</p>
+        <div class="search-news">
+            <input type="text" id="newsSearch" placeholder="Search by stock ticker or keyword..." oninput="window.newsApp.filterNews(this.value)">
+            <input type="text" id="stockFilter" placeholder="Filter by ticker (e.g. RELIANCE)" style="max-width:200px;" oninput="window.newsApp.filterNews(document.getElementById('newsSearch').value)">
+        </div>
+        <div class="news-layout">
+            <aside class="sidebar" id="newsCategories">
+                <button class="sidebar-btn active" id="catBtn-latest" onclick="window.newsApp.switchCategory('latest',this)">📰 Latest</button>
+                <button class="sidebar-btn" id="catBtn-bullish" onclick="window.newsApp.switchCategory('bullish',this)">📈 Bullish</button>
+                <button class="sidebar-btn" id="catBtn-bearish" onclick="window.newsApp.switchCategory('bearish',this)">📉 Bearish</button>
+                <button class="sidebar-btn" id="catBtn-earnings" onclick="window.newsApp.switchCategory('earnings',this)">💰 Earnings</button>
+                <button class="sidebar-btn" id="catBtn-ipo" onclick="window.newsApp.switchCategory('ipo',this)">🏢 IPO</button>
+                <button class="sidebar-btn" id="catBtn-economy" onclick="window.newsApp.switchCategory('economy',this)">📊 Economy</button>
+                <button class="sidebar-btn" id="catBtn-bookmarked" onclick="window.newsApp.showBookmarked(this)" style="margin-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);padding-top:0.75rem;">🔖 Bookmarks <span id="bookmarkCount" style="font-size:0.75rem;color:var(--text-secondary);margin-left:4px;">(0)</span></button>
+            </aside>
+            <div>
+                <div class="featured-headline" id="featuredHeadline">
+                    <span class="featured-badge">🔴 LIVE</span>
+                    <h2 id="featuredTitle">Loading latest market news…</h2>
+                    <p id="featuredExcerpt">Fetching live data from news sources…</p>
+                </div>
+                <div id="newsStatus" style="display:none;background:rgba(255,193,7,0.15);border:1px solid rgba(255,193,7,0.3);color:#FFC107;padding:0.5rem 1rem;border-radius:8px;margin-bottom:0.75rem;font-size:0.85rem;text-align:center;"></div>
+                <div class="news-list" id="newsContainer">
+                    <div class="news-loading"><div class="spinner"></div> Loading live news…</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+    // =====================================================================
+    //  News Page App — all functions exposed on window.newsApp to avoid
+    //  IIFE scope traps. openPageNewsDetail also exposed on window directly
+    //  since it's used from dynamically generated HTML data-attributes.
+    // =====================================================================
+    (function () {
+        'use strict';
+
+        var allNews = [];
+        var currentCategory = 'latest';
+        var bookmarks = [];
+        try { bookmarks = JSON.parse(localStorage.getItem('leverage_bookmarks') || '[]'); } catch(e) {}
+
+        /* ── Helpers ─────────────────────────────────────────────────── */
+
+        function saveBookmarks() {
+            try { localStorage.setItem('leverage_bookmarks', JSON.stringify(bookmarks)); } catch(e) {}
+            updateBookmarkCount();
+        }
+
+        function updateBookmarkCount() {
+            var el = document.getElementById('bookmarkCount');
+            if (el) el.textContent = '(' + bookmarks.length + ')';
+        }
+
+        function _normaliseSentiment(raw) {
+            if (!raw) return 'Neutral';
+            var l = (typeof raw === 'string' ? raw : (raw.label || raw.sentiment || '')).toLowerCase();
+            if (l === 'positive' || l === 'bullish') return 'Bullish';
+            if (l === 'negative' || l === 'bearish') return 'Bearish';
+            return 'Neutral';
+        }
+
+        function _timeAgo(dateStr) {
+            if (!dateStr) return '';
+            try {
+                var d = new Date(dateStr);
+                var sec = Math.floor((Date.now() - d) / 1000);
+                if (sec < 60)   return 'just now';
+                if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+                if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+                return Math.floor(sec / 86400) + 'd ago';
+            } catch(e) { return ''; }
+        }
+
+        function _escHtml(s) {
+            return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+        }
+
+        function _cleanTitle(t) {
+            return (t || '').replace(/\s*-\s*scanx\.trade\s*$/i, '').replace(/\s*\|\s*scanx\.trade\s*$/i, '').trim();
+        }
+
+        /* ── Render ──────────────────────────────────────────────────── */
+
+        function renderList(items) {
+            var container = document.getElementById('newsContainer');
+            if (!items || items.length === 0) {
+                container.innerHTML = '<div style="color:var(--text-secondary);padding:2rem;text-align:center;">No news found for this category</div>';
+                return;
+            }
+            // Store globally so openPageNewsDetail can access by index
+            window._newsPageArticles = items;
+            var html = items.slice(0, 30).map(function (n, i) {
+                var label = _normaliseSentiment(n.sentiment);
+                var sentClass = label === 'Bullish' ? 'sentiment-bullish' : (label === 'Bearish' ? 'sentiment-bearish' : 'sentiment-neutral');
+                var timeAgo = _timeAgo(n.published_at);
+                var cleanTitle = _cleanTitle(n.title);
+                var url = n.url || '';
+                var isBookmarked = bookmarks.indexOf(url || i + '') >= 0;
+                var source = n.source ? ('<span class="source-badge">' + _escHtml(n.source) + '</span>') : '';
+                return '<div class="news-card" data-news-idx="' + i + '">' +
+                    '<div class="meta">' +
+                        '<span style="color:var(--accent-blue);font-weight:600;">' + _escHtml(n.ticker || 'MARKET') + '</span>' +
+                        (timeAgo ? '<span>' + timeAgo + '</span>' : '') +
+                        (label ? '<span class="sentiment-tag ' + sentClass + '">' + label + '</span>' : '') +
+                        source +
+                    '</div>' +
+                    '<div class="title">' + _escHtml(cleanTitle) + '</div>' +
+                    (n.excerpt ? '<div class="excerpt">' + _escHtml(n.excerpt) + '</div>' : '') +
+                    '<button class="bookmark-btn' + (isBookmarked ? ' saved' : '') + '" data-bm-url="' + _escHtml(url || i + '') + '" title="Bookmark">🔖</button>' +
+                    '</div>';
+            }).join('');
+            container.innerHTML = html;
+        }
+
+        function renderNews() {
+            var filtered = allNews;
+            var cat = currentCategory;
+            if (cat === 'bullish') {
+                filtered = allNews.filter(function (n) {
+                    return _normaliseSentiment(n.sentiment) === 'Bullish';
+                });
+            } else if (cat === 'bearish') {
+                filtered = allNews.filter(function (n) {
+                    return _normaliseSentiment(n.sentiment) === 'Bearish';
+                });
+            } else if (cat === 'earnings') {
+                filtered = allNews.filter(function (n) {
+                    var t = (n.title || '').toLowerCase();
+                    return t.includes('earning') || t.includes('profit') || t.includes('result') || t.includes('quarterly') || t.includes('q1') || t.includes('q2') || t.includes('q3') || t.includes('q4');
+                });
+            } else if (cat === 'ipo') {
+                filtered = allNews.filter(function (n) {
+                    var t = (n.title || '').toLowerCase();
+                    return t.includes('ipo') || t.includes('listing') || t.includes('allotment') || t.includes('public offer');
+                });
+            } else if (cat === 'economy') {
+                filtered = allNews.filter(function (n) {
+                    var t = (n.title || '').toLowerCase();
+                    return t.includes('rbi') || t.includes('gdp') || t.includes('inflation') || t.includes('repo') || t.includes('budget') || t.includes('economy') || t.includes('fiscal') || t.includes('sebi');
+                });
+            } else if (cat === 'bookmarked') {
+                filtered = allNews.filter(function (n, i) { return bookmarks.indexOf(n.url || i + '') >= 0; });
+            }
+            renderList(filtered);
+        }
+
+        /* ── Detail modal ─────────────────────────────────────────────── */
+
+        function openPageNewsDetail(idx) {
+            var items = window._newsPageArticles || [];
+            var n = items[idx];
+            if (!n) return;
+            var label = _normaliseSentiment(n.sentiment);
+            var sentColor = label === 'Bullish' ? '#00E676' : (label === 'Bearish' ? '#FF0055' : '#a1a1aa');
+            var sentEmoji = label === 'Bullish' ? '📈' : (label === 'Bearish' ? '📉' : '🎯');
+            var summary = _escHtml(n.excerpt || n.summary || n.snippet || 'No additional details available.');
+            var cleanTitle = _cleanTitle(n.title);
+
+            var overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+            overlay.setAttribute('tabindex', '-1');
+
+            var modal = document.createElement('div');
+            modal.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:2rem;max-width:620px;width:90%;max-height:82vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,0.6);';
+
+            var linkUrl = n.url && n.url !== '#' ? n.url : (n.ticker ? 'stock.html?ticker=' + encodeURIComponent(n.ticker) : null);
+            var readMoreBtn = linkUrl ? '<a href="' + _escHtml(linkUrl) + '" target="_blank" rel="noopener" style="padding:0.6rem 1.5rem;background:#4A90E2;border-radius:8px;color:#fff;font-size:0.85rem;text-decoration:none;font-weight:600;">Read Full Article ↗</a>' : '';
+            var closeId = 'newsDetailClose_' + Date.now();
+            modal.innerHTML =
+                '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">' +
+                    '<div style="font-size:0.8rem;color:' + sentColor + ';background:rgba(255,255,255,0.05);padding:4px 12px;border-radius:20px;font-weight:600;">' + sentEmoji + ' ' + label + '</div>' +
+                    (n.ticker ? '<div style="font-size:0.8rem;color:#4A90E2;font-weight:600;padding:4px 12px;background:rgba(74,144,226,0.1);border-radius:20px;">' + _escHtml(n.ticker) + '</div>' : '') +
+                '</div>' +
+                '<h2 style="font-size:1.25rem;font-weight:700;color:#fff;margin-bottom:0.75rem;line-height:1.45;">' + _escHtml(cleanTitle) + '</h2>' +
+                '<div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.8rem;color:#a1a1aa;margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,0.06);">' +
+                    '<span>' + _escHtml(n.source || 'Market News') + '</span>' +
+                    '<span>•</span>' +
+                    '<span>' + (n.published_at ? new Date(n.published_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : '') + '</span>' +
+                '</div>' +
+                '<div style="font-size:0.95rem;color:#d1d1d6;line-height:1.75;">' + summary + '</div>' +
+                '<div style="display:flex;gap:1rem;margin-top:1.5rem;flex-wrap:wrap;">' +
+                    readMoreBtn +
+                    '<button id="' + closeId + '" style="padding:0.6rem 1.5rem;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;cursor:pointer;font-size:0.85rem;">Close</button>' +
+                '</div>';
+
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+            overlay.focus();
+
+            // Close handlers
+            overlay.addEventListener('click', function (e) { if (e.target === overlay) document.body.removeChild(overlay); });
+            overlay.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.body.removeChild(overlay); });
+            document.getElementById(closeId).addEventListener('click', function () { document.body.removeChild(overlay); });
+        }
+
+        // Expose globally (called from event delegation)
+        window.openPageNewsDetail = openPageNewsDetail;
+
+        /* ── Event delegation for news cards ─────────────────────────── */
+
+        document.addEventListener('click', function (e) {
+            // News card click → open detail
+            var card = e.target.closest('.news-card[data-news-idx]');
+            if (card && !e.target.closest('.bookmark-btn')) {
+                var idx = parseInt(card.getAttribute('data-news-idx'), 10);
+                if (!isNaN(idx)) openPageNewsDetail(idx);
+                return;
+            }
+            // Bookmark button click
+            var bmBtn = e.target.closest('.bookmark-btn[data-bm-url]');
+            if (bmBtn) {
+                e.stopPropagation();
+                var url = bmBtn.getAttribute('data-bm-url');
+                if (!url) return;
+                var idx2 = bookmarks.indexOf(url);
+                if (idx2 >= 0) { bookmarks.splice(idx2, 1); bmBtn.classList.remove('saved'); }
+                else { bookmarks.push(url); bmBtn.classList.add('saved'); }
+                saveBookmarks();
+                return;
+            }
+        });
+
+        /* ── Public API on window.newsApp ────────────────────────────── */
+
+        window.newsApp = {
+            switchCategory: function (cat, btn) {
+                currentCategory = cat;
+                document.querySelectorAll('.sidebar-btn').forEach(function (b) { b.classList.remove('active'); });
+                if (btn) btn.classList.add('active');
+                renderNews();
+            },
+            showBookmarked: function (btn) {
+                currentCategory = 'bookmarked';
+                document.querySelectorAll('.sidebar-btn').forEach(function (b) { b.classList.remove('active'); });
+                if (btn) btn.classList.add('active');
+                renderNews();
+            },
+            filterNews: function (q) {
+                var searchVal = (q || '').toLowerCase().trim();
+                var stockVal = (document.getElementById('stockFilter').value || '').trim().toUpperCase();
+                var filtered = allNews;
+                if (searchVal) filtered = filtered.filter(function (n) {
+                    return (n.title && n.title.toLowerCase().includes(searchVal)) ||
+                           (n.excerpt && n.excerpt.toLowerCase().includes(searchVal));
+                });
+                if (stockVal) filtered = filtered.filter(function (n) { return n.ticker && n.ticker.toUpperCase().includes(stockVal); });
+                renderList(filtered);
+            },
+            toggleBookmark: function (url, el) {
+                if (!url) return;
+                var idx = bookmarks.indexOf(url);
+                if (idx >= 0) { bookmarks.splice(idx, 1); if (el) el.classList.remove('saved'); }
+                else { bookmarks.push(url); if (el) el.classList.add('saved'); }
+                saveBookmarks();
+            }
+        };
+
+        /* ── Data loading ─────────────────────────────────────────────── */
+
+        function _normaliseArticle(a, defaultSource) {
+            return {
+                ticker: a.ticker || a.symbol || 'MARKET',
+                title: a.title || a.headline || '',
+                excerpt: a.excerpt || a.snippet || a.summary || '',
+                published_at: a.published_at || a.pubDate || a.published || new Date().toISOString(),
+                sentiment: { label: _normaliseSentiment(a.sentiment) },
+                url: a.url || a.link || '',
+                source: a.source || defaultSource || 'News'
+            };
+        }
+
+        // Fallback: parse Google News RSS via allorigins proxy for live market headlines
+        async function _fetchGoogleNewsRSS() {
+            var queries = [
+                'NSE+India+stock+market+today',
+                'Nifty+Sensex+today',
+                'RBI+SEBI+Indian+economy'
+            ];
+            var articles = [];
+            for (var i = 0; i < queries.length; i++) {
+                try {
+                    var rssUrl = 'https://news.google.com/rss/search?q=' + queries[i] + '&hl=en-IN&gl=IN&ceid=IN:en';
+                    var proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(rssUrl);
+                    var resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+                    if (!resp.ok) continue;
+                    var data = await resp.json();
+                    var xml = data.contents || '';
+                    var parser = new DOMParser();
+                    var doc = parser.parseFromString(xml, 'text/xml');
+                    var items = doc.querySelectorAll('item');
+                    items.forEach(function (item) {
+                        var title = item.querySelector('title') ? item.querySelector('title').textContent : '';
+                        var link  = item.querySelector('link')  ? item.querySelector('link').textContent : (item.querySelector('guid') ? item.querySelector('guid').textContent : '');
+                        var pub   = item.querySelector('pubDate') ? item.querySelector('pubDate').textContent : '';
+                        var desc  = item.querySelector('description') ? item.querySelector('description').textContent : '';
+                        // Strip HTML tags from description
+                        var tmpDiv = document.createElement('div'); tmpDiv.innerHTML = desc;
+                        var plainDesc = tmpDiv.textContent || '';
+                        if (title && title.length > 5) {
+                            articles.push({
+                                ticker: 'MARKET',
+                                title: title.replace(/\s*-\s*[^-]+$/, '').trim(),  // Remove "- Source Name" suffix
+                                excerpt: plainDesc.substring(0, 200),
+                                published_at: pub ? new Date(pub).toISOString() : new Date().toISOString(),
+                                sentiment: { label: 'Neutral' },
+                                url: link || '',
+                                source: 'Google News'
+                            });
+                        }
+                    });
+                } catch(e) {
+                    console.warn('[News] Google RSS fetch failed for query', queries[i], e);
+                }
+                if (articles.length >= 10) break;
+            }
+            return articles;
+        }
+
+        async function loadNews() {
+            var statusEl = document.getElementById('newsStatus');
+            var combined = [];
+            var sources = [];
+
+            // ── 1. Main backend: /api/news/general (market data articles) ──
+            try {
+                var res = await fetch('/api/news/general');
+                if (res.ok) {
+                    var data = await res.json();
+                    var mainArticles = (data.articles || []).map(function (a) { return _normaliseArticle(a, 'Market Data'); });
+                    if (mainArticles.length) { combined = combined.concat(mainArticles); sources.push('Market Data'); }
+                }
+            } catch(e) { console.warn('[News] Main backend fetch failed:', e); }
+
+            // ── 2. ScanX proxy: /api/scanx/news/full/all (proxied via main backend → port 8003) ──
+            try {
+                var scanxRes = await fetch('/api/scanx/news/full/all?limit=20');
+                if (scanxRes.ok) {
+                    var scanxData = await scanxRes.json();
+                    if (Array.isArray(scanxData) && scanxData.length > 0) {
+                        var scanxArticles = scanxData.map(function (a) { return _normaliseArticle(a, 'ScanX'); });
+                        combined = combined.concat(scanxArticles);
+                        sources.push('ScanX');
+                    } else {
+                        console.warn('[News] ScanX returned empty array — service may not be running');
+                    }
+                }
+            } catch(e) { console.warn('[News] ScanX fetch failed:', e); }
+
+            // ── 3. Google News RSS fallback (always fetch to pad with real news) ──
+            if (combined.length < 5) {
+                try {
+                    var rssArticles = await _fetchGoogleNewsRSS();
+                    if (rssArticles.length > 0) { combined = combined.concat(rssArticles); sources.push('Google News'); }
+                } catch(e) { console.warn('[News] Google RSS fallback failed:', e); }
+            }
+
+            // ── 4. Deduplicate by normalised title ──
+            var seen = {};
+            combined = combined.filter(function (a) {
+                var key = (a.title || '').trim().toLowerCase().substring(0, 60);
+                if (!key || seen[key]) return false;
+                seen[key] = true;
+                return true;
+            });
+
+            // ── 5. Sort newest-first ──
+            combined.sort(function (a, b) {
+                return new Date(b.published_at || 0) - new Date(a.published_at || 0);
+            });
+
+            allNews = combined;
+
+            if (!allNews || allNews.length === 0) {
+                // Hard fallback sample data
+                if (statusEl) { statusEl.textContent = 'Live news sources temporarily unreachable — showing sample data. Check that the News Sentiment service (port 8003) is running.'; statusEl.style.display = 'block'; }
+                var now = new Date();
+                allNews = [
+                    {ticker:'NIFTY',title:'Nifty holds 22,500 as bulls maintain control',excerpt:'The benchmark index traded in a narrow range with positive bias.',published_at:now.toISOString(),sentiment:{label:'Bullish'},source:'Sample',url:''},
+                    {ticker:'RELIANCE',title:'Reliance Industries gains on retail biz expansion plans',excerpt:'The company announced new store openings across tier-2 cities.',published_at:new Date(now-3600000).toISOString(),sentiment:{label:'Bullish'},source:'Sample',url:''},
+                    {ticker:'HDFCBANK',title:'HDFC Bank leads banking pack, Nifty Bank up 0.8%',excerpt:'Private sector banks outperform on strong Q3 expectations.',published_at:new Date(now-7200000).toISOString(),sentiment:{label:'Bullish'},source:'Sample',url:''},
+                    {ticker:'TCS',title:'IT stocks mixed as rupee strengthens',excerpt:'TCS and Infosys saw mild profit booking after recent rally.',published_at:new Date(now-10800000).toISOString(),sentiment:{label:'Bearish'},source:'Sample',url:''},
+                    {ticker:'SBIN',title:'PSU banks under pressure on valuation concerns',excerpt:'SBI, PNB, and Canara Bank slipped 1-2%.',published_at:new Date(now-14400000).toISOString(),sentiment:{label:'Bearish'},source:'Sample',url:''},
+                ];
+                document.getElementById('featuredTitle').textContent = 'AI-Powered Market Summary: Bullish bias with selective profit booking';
+                document.getElementById('featuredExcerpt').textContent = 'Nifty outlook positive. Banking and IT lead. Pharma shows strength. Metals under pressure.';
+                document.getElementById('featuredHeadline').onclick = function() { window.open('https://www.google.com/finance', '_blank'); };
+            } else {
+                if (statusEl) {
+                    if (sources.length) {
+                        statusEl.textContent = '✅ Loaded ' + allNews.length + ' articles from: ' + sources.join(', ');
+                        statusEl.style.background = 'rgba(0,230,118,0.1)';
+                        statusEl.style.borderColor = 'rgba(0,230,118,0.3)';
+                        statusEl.style.color = '#00E676';
+                        statusEl.style.display = 'block';
+                        setTimeout(function() { statusEl.style.display = 'none'; }, 4000);
+                    } else {
+                        statusEl.style.display = 'none';
+                    }
+                }
+                // Update featured headline with first real article
+                var first = allNews[0];
+                if (first) {
+                    document.getElementById('featuredTitle').textContent = _cleanTitle(first.title);
+                    document.getElementById('featuredExcerpt').textContent = first.excerpt || '';
+                    document.getElementById('featuredHeadline').onclick = first.url
+                        ? function() { window.open(first.url, '_blank'); }
+                        : function() { window.open('https://www.google.com/finance', '_blank'); };
+                }
+            }
+
+            renderNews();
+            updateBookmarkCount();
+        }
+
+        // Initial load + auto-refresh every 60 seconds
+        loadNews();
+        var _newsInterval = setInterval(loadNews, 60000);
+
+        // Pause refresh when tab is hidden (save resources)
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                clearInterval(_newsInterval);
+                _newsInterval = null;
+            } else if (!_newsInterval) {
+                _newsInterval = setInterval(loadNews, 60000);
+                loadNews();
+            }
+        });
+
+    })();
+    </script>
+    <script src="stocks.js"></script>
+    <script src="nav.js?v=3"></script>
+</body>
+</html>

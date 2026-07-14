@@ -1,0 +1,244 @@
+/* drawings.css */
+
+:root {
+    --toolbar-width: 52px;
+    --toolbar-bg: #000000;
+    --toolbar-border: #2a2e39;
+    --icon-color: #b2b5be;
+    --icon-active-color: #2962ff;
+    --icon-hover-bg: #2a2e39;
+    --submenu-bg: #000000;
+    --submenu-border: #333;
+    --submenu-shadow: 0 4px 12px rgba(255, 255, 255, 0.1);
+    --text-color: #d1d4dc;
+    --header-text: #787b86;
+}
+
+/* Body Padding Adjustment for Toolbar */
+body {
+    padding-left: calc(var(--toolbar-width) + 0px);
+}
+
+/* Toolbar Container */
+.drawing-toolbar {
+    position: fixed;
+    left: 0;
+    top: 70px;
+    /* Adjust based on header height */
+    bottom: 0;
+    width: var(--toolbar-width);
+    background: var(--toolbar-bg);
+    border-right: 1px solid var(--toolbar-border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    user-select: none;
+}
+
+.toolbar-item {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    position: relative;
+    color: var(--icon-color);
+    transition: background 0.1s, color 0.1s;
+}
+
+.toolbar-item:hover {
+    background: var(--icon-hover-bg);
+    color: #e0e3eb;
+}
+
+.toolbar-item.active {
+    color: var(--icon-active-color);
+    background: transparent;
+}
+
+.toolbar-item[data-active="true"] {
+    color: var(--icon-active-color);
+}
+
+.toolbar-item[data-active="true"] svg {
+    filter: drop-shadow(0 0 1px var(--icon-active-color));
+}
+
+.toolbar-item svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+    stroke: currentColor;
+    stroke-width: 2.5px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+/* Arrow Indicator for Groups */
+.arrow-indicator {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 0;
+    height: 0;
+    border-left: 3px solid transparent;
+    border-right: 3px solid transparent;
+    border-bottom: 3px solid var(--icon-color);
+    transform: rotate(135deg);
+    opacity: 0.6;
+}
+
+.toolbar-item:hover .arrow-indicator {
+    border-bottom-color: #e0e3eb;
+    opacity: 1;
+}
+
+/* Submenu Panel */
+.drawing-submenu {
+    position: absolute;
+    left: 100%;
+    top: 0;
+    margin-left: 2px;
+    background: var(--submenu-bg);
+    box-shadow: var(--submenu-shadow);
+    border: 1px solid var(--submenu-border);
+    border-radius: 4px;
+    min-width: 240px;
+    /* Wider for pattern names */
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    display: none;
+    z-index: 1001;
+    padding: 6px 0;
+}
+
+.drawing-submenu.visible {
+    display: block;
+    animation: fadeIn 0.1s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateX(-5px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.submenu-header {
+    padding: 8px 14px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--header-text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid transparent;
+}
+
+/* Add separation between sections */
+.submenu-header:not(:first-child) {
+    margin-top: 4px;
+    border-top: 1px solid var(--toolbar-border);
+    padding-top: 8px;
+}
+
+.submenu-item {
+    padding: 6px 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text-color);
+    transition: background 0.1s;
+}
+
+.submenu-item:hover {
+    background: var(--icon-hover-bg);
+}
+
+.submenu-item.active {
+    background: rgba(41, 98, 255, 0.1);
+    color: var(--icon-active-color);
+}
+
+.submenu-item svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+    stroke: currentColor;
+    stroke-width: 2.5px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.submenu-item span {
+    white-space: nowrap;
+}
+
+/* Scrollbar */
+.drawing-submenu::-webkit-scrollbar {
+    width: 4px;
+}
+
+.drawing-submenu::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.drawing-submenu::-webkit-scrollbar-thumb {
+    background: #434651;
+    border-radius: 2px;
+}
+
+
+
+/* Drawing Canvas Overlay */
+#drawing-canvas-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    /* Leave space for axes - right 76px for Y-axis, bottom 28px for X-axis */
+    width: calc(100% - 76px);
+    height: calc(100% - 28px);
+    pointer-events: none;
+    /* Default: chart handles events */
+    z-index: 50;
+    overflow: hidden;
+}
+
+#drawing-canvas {
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* Enable pointer events when in drawing mode */
+.drawing-mode-active #drawing-canvas-container,
+.drawing-mode-active #drawing-canvas {
+    pointer-events: auto;
+    cursor: crosshair;
+}
+
+/* Enable pointer events for selection mode */
+.selection-mode-active #drawing-canvas-container,
+.selection-mode-active #drawing-canvas {
+    pointer-events: none;
+    /* cursor is handled by js on checking hover */
+}
+
+/* Separator */
+.toolbar-separator {
+    width: 20px;
+    height: 1px;
+    background: #363a45;
+    margin: 6px 0;
+}

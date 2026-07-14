@@ -1,0 +1,64 @@
+# Historical Candle Migration Configuration
+# ==========================================
+# One-time migration to rebuild candle database in multi-timeframe storage.
+# Does NOT modify live engine, user data, or any non-candle tables.
+
+requests_per_second: 0.3
+workers: 2
+batch_size: 50
+retry_max: 3
+backoff_seconds: [10, 30, 60]
+
+# Angel One API
+angel_one:
+  use_historical_credentials: true
+  max_date_range_days: 90
+
+# Staging
+staging_table: candles_migration
+backup_retention_days: 7
+
+# Tier configuration
+# Each tier covers N calendar months.
+# Angel One interval names used for direct fetches.
+# Resampled tiers: 4h (from 1h), 1w (from 1d), 1m (from 1d)
+tiers:
+  - timeframe: 5m
+    months: 2
+    angel_interval: FIVE_MINUTE
+    fetch_method: direct
+  - timeframe: 15m
+    months: 2
+    angel_interval: FIFTEEN_MINUTE
+    fetch_method: direct
+  - timeframe: 30m
+    months: 2
+    angel_interval: THIRTY_MINUTE
+    fetch_method: direct
+  - timeframe: 1h
+    months: 2
+    angel_interval: ONE_HOUR
+    fetch_method: direct
+  - timeframe: 4h
+    months: 2
+    angel_interval: ONE_HOUR
+    fetch_method: resample
+    resample_from: 1h
+  - timeframe: 1d
+    months: 2
+    angel_interval: ONE_DAY
+    fetch_method: direct
+  - timeframe: 1w
+    months: 2
+    angel_interval: ONE_DAY
+    fetch_method: resample
+    resample_from: 1d
+  - timeframe: 1m
+    months: null
+    angel_interval: ONE_DAY
+    fetch_method: resample
+    resample_from: 1d
+
+# Validation
+validation:
+  sample_size: 10

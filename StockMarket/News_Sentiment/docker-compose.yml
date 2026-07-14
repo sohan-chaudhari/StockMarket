@@ -1,0 +1,156 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Structured data (sentiment results, recency scores)
+  postgres:
+    image: postgres:16-alpine
+    container_name: stock-news-postgres
+    environment:
+      POSTGRES_DB: news_sentiment
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB - Unstructured data (raw news articles)
+  mongo:
+    image: mongo:7.0
+    container_name: stock-news-mongo
+    environment:
+      MONGO_INITDB_DATABASE: news_articles
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Caching & Celery broker
+  redis:
+    image: redis:7-alpine
+    container_name: stock-news-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: stock-news-backend
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/news_sentiment
+      MONGODB_URI: mongodb://mongo:27017/news_articles
+      REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Celery Worker (background tasks)
+  celery-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: stock-news-celery-worker
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/news_sentiment
+      MONGODB_URI: mongodb://mongo:27017/news_articles
+      REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ENVIRONMENT: development
+    volumes:
+      - ./backend:/app
+      - ./ml:/ml
+    depends_on:
+      - redis
+      - postgres
+      - mongo
+    command: celery -A tasks.celery_app worker --loglevel=info
+
+  # Celery Beat (scheduler)
+  celery-beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: stock-news-celery-beat
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres123}@postgres:5432/news_sentiment
+      MONGODB_URI: mongodb://mongo:27017/news_articles
+      REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      ENVIRONMENT: development
+    volumes:
+      - ./backend:/app
+      - ./ml:/ml
+    depends_on:
+      - redis
+      - postgres
+      - mongo
+    command: celery -A tasks.celery_app beat --loglevel=info
+
+  # Flower (Celery monitoring)
+  flower:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: stock-news-flower
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    command: celery -A tasks.celery_app flower --port=5555
+
+  # Frontend (Next.js)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: stock-news-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  mongo_data:
+  redis_data:

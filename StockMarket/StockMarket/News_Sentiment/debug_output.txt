@@ -1,0 +1,135 @@
+﻿
+================================================================================
+DEBUG: Google News RSS for RELIANCE
+================================================================================
+Query: site:scanx.trade (RELIANCE OR "Reliance Industries")
+URL: https://news.google.com/rss/search?q=site%3Ascanx.trade+%28RELIANCE+OR+%22Reliance+Industries%22%29&hl=en-IN&gl=IN&ceid=IN:en
+
+Total entries in feed: 100
+
+
+[Entry 1]
+  Title: ScanX - Stock Screener & Market Research Platform Built for India - scanx.trade...
+  URL: https://news.google.com/rss/articles/CBMiN0FVX3lxTE1Ma2JqczJwN00yaEpoM2hGdzN6VjJkdmEzcWxxVTlQTWZjWUV...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 2]
+  Title: RHFL Share Price Today - Reliance Home Finance on NSE/BSE - scanx.trade...
+  URL: https://news.google.com/rss/articles/CBMiY0FVX3lxTE5YUUk3a3V3UWpxNFhhZ29vX0dNNkhMLURMNVdVZG5YektaSWh...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 3]
+  Title: RPOWER Share Price Today - Reliance Power on NSE/BSE - scanx.trade...
+  URL: https://news.google.com/rss/articles/CBMiWkFVX3lxTFBMd3hCZDNkTVo1bGZ2SVVOSzFKVVowVG1SaGp5bkM2clNTNEl...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 4]
+  Title: Reliance Industries Gets AAA Credit Rating Reaffirmed by India Ratings - scanx.t...
+  URL: https://news.google.com/rss/articles/CBMiyAFBVV95cUxOc09wWXdOR3NoMGhwQjV0bTJob3J6QzRtWVR0TEVFZXJiX05...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 5]
+  Title: Reliance Chemotex Industries Reports 16% Profit Growth in Q2 FY2026 - scanx.trad...
+  URL: https://news.google.com/rss/articles/CBMivwFBVV95cUxQUWVnMDNfdjgzZnlqVllqc0VRMncwWHljT3BmZVJFbFBSaUF...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 6]
+  Title: Reliance Industries Loses Control of Abraham Thakore Private Limited as Founder ...
+  URL: https://news.google.com/rss/articles/CBMihgJBVV95cUxPOUgzSkpnc0xQMmJkcFJXV0xsYmlNTkNDMzk1Mnd5c1BPUUN...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 7]
+  Title: RELIANCE Share Price Today - Reliance Industries on NSE/BSE - scanx.trade...
+  URL: https://news.google.com/rss/articles/CBMiYEFVX3lxTE5HaGFaNW5MbkV2cE9iTEY1OUVOcmtLVEUzd0o4dFJPd2ZtTGF...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 8]
+  Title: Trishakti Industries Secures Major Contract from Reliance Industries Worth Over ...
+  URL: https://news.google.com/rss/articles/CBMi5gFBVV95cUxQcXV5OWtEQ3pTQ19yX1AyazlWRmxJM05EenhPOXc4X05oRUs...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 9]
+  Title: Reliance Chemotex Industries Seeks Reclassification of Promoter to Public Shareh...
+  URL: https://news.google.com/rss/articles/CBMi1gFBVV95cUxOTXJYeUpSZ0xRODFwSkZ5UkxvZjlSd2lmbjdHa2cwcENsZzd...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 10]
+  Title: Reliance Consumer Products Acquires Majority Stake in Lotus Chocolate Company - ...
+  URL: https://news.google.com/rss/articles/CBMi2gFBVV95cUxOWGFZTzNyb3c0WkRBU0RnTTJhMlUxN3RsbDJrMjdENEVUcXJ...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 11]
+  Title: Nand Gopal Khaitan Steps Down from Reliance Chemotex Board, Citing Promoter Misc...
+  URL: https://news.google.com/rss/articles/CBMi3wFBVV95cUxONGxpeVNEVkl4U2w5WklFbTA2dlJRZTdHSFFVWElDTkE0MUZ...
+  Has source attribute: True
+  Has source.title: True
+  Source title: 'scanx.trade'
+  Is scanx (source): True
+  Is scanx (title): True
+  [KEPT]
+
+[Entry 12]
+python : Traceback (most recent call last):
+At line:1 char:1
++ python debug_rss_feed.py 2>&1 | Out-File -FilePath debug_output.txt - ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "C:\Users\rahul\Desktop\News_Sentiment\debug_rss_feed.py", line 41, in <module>
+    print(f"  Title: {title[:80]}...")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\Python314\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u20b9' in position 62: character maps to <undefined>

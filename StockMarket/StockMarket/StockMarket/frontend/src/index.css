@@ -1,0 +1,126 @@
+:root {
+  --bg-color: #131722;
+  --header-bg: #1e222d;
+  --text-primary: #d1d4dc;
+  --text-secondary: #b2b5be;
+  --accent-blue: #2962ff;
+  --accent-green: #26a69a;
+  --accent-red: #ef5350;
+  --border-color: #2a2e39;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  overflow: hidden;
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+}
+
+.header {
+  height: 60px;
+  background-color: var(--header-bg);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  justify-content: space-between;
+}
+
+.ticker-info {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.ticker-info h1 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background-color: var(--header-bg);
+  padding: 5px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-right: 1px solid var(--border-color);
+}
+
+.toolbar-group:last-child {
+  border-right: none;
+}
+
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.toolbar-btn:hover {
+  background-color: #2a2e39;
+  color: var(--text-primary);
+}
+
+.toolbar-btn.active {
+  background-color: rgba(41, 98, 255, 0.1);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+.chart-area {
+  flex: 1;
+  position: relative;
+  background-color: var(--bg-color);
+}
+
+.sidebar {
+  width: 300px;
+  background-color: var(--header-bg);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+}
+
+select {
+  background-color: #2a2e39;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 4px 8px;
+  border-radius: 4px;
+  outline: none;
+}

@@ -1,0 +1,15 @@
+Object '<User at 0x1a0f3421950>' is already attached to session '23' (this is '24')
+Traceback (most recent call last):
+  File "D:\LoginRegister Done Stockmarket\backend\main.py", line 1236, in delete_account
+    db.delete(current_user)
+    ~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\Hp\AppData\Roaming\Python\Python314\site-packages\sqlalchemy\orm\session.py", line 3528, in delete
+    self._delete_impl(state, instance, head=True)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Hp\AppData\Roaming\Python\Python314\site-packages\sqlalchemy\orm\session.py", line 3541, in _delete_impl
+    to_attach = self._before_attach(state, obj)
+  File "C:\Users\Hp\AppData\Roaming\Python\Python314\site-packages\sqlalchemy\orm\session.py", line 4255, in _before_attach
+    raise sa_exc.InvalidRequestError(
+    ...<3 lines>...
+    )
+sqlalchemy.exc.InvalidRequestError: Object '<User at 0x1a0f3421950>' is already attached to session '23' (this is '24')

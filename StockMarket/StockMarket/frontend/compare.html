@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compare Stocks - LEVERAGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nav.css">
+    <script src="lightweight-charts.js"></script>
+    <style>
+        :root{--text-secondary:#a1a1aa;--accent-blue:#4A90E2;}
+        body{background:#0A0A0B;color:#fff;font-family:'Inter',sans-serif;margin:0;padding:0;}
+        .page-content{max-width:1200px;margin:0 auto;padding:2rem 1.5rem;}
+        .page-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
+        .page-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:2rem;}
+        .compare-form{display:flex;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center;}
+        .ticker-input{display:flex;align-items:center;gap:0.5rem;background:#15171a;border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:0.25rem 0.5rem;}
+        .ticker-input .remove-btn{background:none;border:none;color:#FF0055;cursor:pointer;font-size:1.1rem;padding:0 4px;}
+        .ticker-input input{background:transparent;border:none;color:#fff;font-family:'Roboto Mono',monospace;font-size:0.85rem;width:90px;outline:none;padding:0.5rem 0.25rem;}
+        .add-btn{background:rgba(74,144,226,0.12);border:1px solid rgba(74,144,226,0.25);color:#4A90E2;border-radius:8px;padding:0.55rem 1rem;cursor:pointer;font-weight:600;font-size:0.85rem;font-family:'Inter',sans-serif;}
+        .add-btn:hover{background:rgba(74,144,226,0.2);}
+        .compare-btn{background:#4A90E2;border:none;border-radius:8px;color:#fff;padding:0.55rem 1.5rem;cursor:pointer;font-weight:600;font-size:0.85rem;font-family:'Inter',sans-serif;}
+        .compare-btn:hover{background:#357abd;}
+        #chartContainer{width:100%;height:500px;border-radius:12px;overflow:hidden;margin-bottom:1.5rem;}
+        .legend{display:flex;gap:1rem;flex-wrap:wrap;padding:0.75rem 0;}
+        .legend-item{display:flex;align-items:center;gap:6px;font-size:0.8rem;color:var(--text-secondary);}
+        .legend-dot{width:10px;height:10px;border-radius:50%;}
+        .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.75rem;margin-top:1rem;}
+        .stat-card{background:#15171a;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1rem;}
+        .stat-card h4{font-size:0.8rem;color:var(--text-secondary);margin:0 0 0.5rem;font-weight:500;text-transform:uppercase;letter-spacing:0.3px;}
+        .stat-val{font-family:'Roboto Mono',monospace;font-size:1.2rem;font-weight:600;color:#fff;}
+        .stat-val.green{color:#00E676;}.stat-val.red{color:#FF0055;}
+        @media(max-width:600px){.compare-form{flex-direction:column;align-items:stretch;}}
+    </style>
+    <script src="page-cache.js"></script>
+</head>
+<body>
+    <div id="nav-root"></div>
+    <main class="page-content">
+        <h1 class="page-title">Stock Comparison</h1>
+        <p class="page-subtitle">Compare up to 5 stocks side-by-side with normalized performance</p>
+        <div class="compare-form" id="compareForm">
+            <div class="ticker-input"><input type="text" class="comp-ticker" value="RELIANCE" placeholder="Ticker"><button class="remove-btn" onclick="removeTicker(this)" style="display:none;">&times;</button></div>
+            <div class="ticker-input"><input type="text" class="comp-ticker" value="TCS" placeholder="Ticker"><button class="remove-btn" onclick="removeTicker(this)">&times;</button></div>
+            <button class="add-btn" onclick="addTickerInput()">+ Add</button>
+            <button class="compare-btn" onclick="loadComparison()">Compare</button>
+        </div>
+        <div id="legendContainer" class="legend"></div>
+        <div id="chartContainer"></div>
+        <div id="statsContainer" class="stats-grid"></div>
+    </main>
+    <script>
+        var _chart = null; var _series = []; var _colors = ['#4A90E2','#FF0055','#00E676','#F5A623','#9B59B6'];
+        function addTickerInput() {
+            var form = document.getElementById('compareForm');
+            if (form.querySelectorAll('.ticker-input').length >= 5) return;
+            var div = document.createElement('div'); div.className = 'ticker-input';
+            div.innerHTML = '<input type="text" class="comp-ticker" value="" placeholder="Ticker"><button class="remove-btn" onclick="removeTicker(this)">&times;</button>';
+            form.insertBefore(div, form.querySelector('.add-btn'));
+        }
+        function removeTicker(btn) {
+            var div = btn.parentElement;
+            if (document.querySelectorAll('.ticker-input').length <= 2) return;
+            div.remove();
+        }
+        function fmtDate(ts){
+            var d = new Date(ts);
+            return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+        }
+        function fmtVol(v){
+            if(!v)return '--';
+            if(v>=1e8)return (v/1e8).toFixed(2)+' Cr';
+            if(v>=1e6)return (v/1e6).toFixed(2)+' M';
+            if(v>=1e3)return (v/1e3).toFixed(1)+' K';
+            return String(v);
+        }
+        async function loadComparison() {
+            var inputs = document.querySelectorAll('.comp-ticker');
+            var tickers = [];
+            inputs.forEach(function(inp){
+                var v = inp.value.trim().toUpperCase();
+                if (v) tickers.push(v);
+            });
+            if (tickers.length < 2) { alert('Enter at least 2 tickers'); return; }
+            if (tickers.length > 5) { alert('Max 5 tickers'); return; }
+
+            var container = document.getElementById('chartContainer');
+            if (_chart) { _chart.remove(); _chart = null; _series = []; }
+            _chart = LightweightCharts.createChart(container, {
+                width: container.clientWidth, height: 500,
+                layout: { background:{type:'Solid',color:'transparent'}, textColor:'#a1a1aa' },
+                grid: { vertLines:{color:'rgba(255,255,255,0.04)'}, horzLines:{color:'rgba(255,255,255,0.04)'} },
+                crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                timeScale: { timeVisible: false, borderColor:'rgba(255,255,255,0.08)' },
+                rightPriceScale: { borderColor:'rgba(255,255,255,0.08)' }
+            });
+
+            var legend = document.getElementById('legendContainer');
+            legend.innerHTML = '';
+
+            var statsContainer = document.getElementById('statsContainer');
+            statsContainer.innerHTML = '<div style="color:var(--text-secondary);padding:2rem;text-align:center;grid-column:1/-1;">Loading...</div>';
+
+            try {
+                var results = await Promise.all(tickers.map(async function(t, idx){
+                    try {
+                        var res = await fetch('/api/stock-data/range?ticker='+encodeURIComponent(t)+'&range=1MO');
+                        var data = await res.json();
+                        // Also fetch live price
+                        var pr = await fetch('/api/live-prices', {
+                            method:'POST', headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({tickers:[t]})
+                        });
+                        var liveRaw = await pr.json();
+                        var live = liveRaw[t] || {};
+                        return {ticker:t, candles:data.candles||data||[], live:live, index:idx, error:null};
+                    } catch(e) { return {ticker:t, candles:[], live:{}, index:idx, error:e.message}; }
+                }));
+
+                var valid = results.filter(function(r){ return r.candles && r.candles.length > 5; });
+                if (valid.length < 2) {
+                    statsContainer.innerHTML = '<div style="color:var(--text-secondary);padding:2rem;text-align:center;grid-column:1/-1;">Not enough data. Check ticker symbols.</div>';
+                    return;
+                }
+
+                // Build normalized chart
+                valid.forEach(function(r, idx){
+                    var color = _colors[idx % _colors.length];
+                    var candles = r.candles.filter(function(c){ return c.close > 0; });
+                    if (candles.length === 0) return;
+                    // Normalize to percentage from first close
+                    var baseClose = candles[0].close;
+                    var norm = candles.map(function(c){
+                        var ts = typeof c.timestamp === 'string' ? new Date(c.timestamp).getTime()/1000 : c.timestamp;
+                        return { time: ts, value: ((c.close - baseClose)/baseClose)*100 };
+                    });
+                    var s = _chart.addLineSeries({
+                        color: color, lineWidth: 2, lastValueVisible: true,
+                        priceFormat: { type: 'percent', precision: 2 }
+                    });
+                    s.setData(norm);
+                    _series.push(s);
+
+                    var dot = document.createElement('span'); dot.className = 'legend-dot'; dot.style.background = color;
+                    var item = document.createElement('span'); item.className = 'legend-item';
+                    item.appendChild(dot);
+                    var finalPct = norm.length > 0 ? norm[norm.length-1].value : 0;
+                    var sign = finalPct >= 0 ? '+' : '';
+                    item.appendChild(document.createTextNode(r.ticker + ' (' + sign + finalPct.toFixed(2) + '%)'));
+                    legend.appendChild(item);
+                });
+
+                // Stats
+                statsContainer.innerHTML = '';
+                valid.forEach(function(r){
+                    var idx = r.index;
+                    var color = _colors[idx % _colors.length];
+                    var candles = r.candles.filter(function(c){ return c.close > 0; });
+                    if (candles.length === 0) return;
+                    var baseClose = candles[0].close;
+                    var lastClose = candles[candles.length-1].close;
+                    var high = Math.max.apply(null, candles.map(function(c){ return c.high; }));
+                    var low = Math.min.apply(null, candles.map(function(c){ return c.low; }));
+                    var totalVol = candles.reduce(function(s,c){ return s + (c.volume||0); }, 0);
+                    var avgVol = candles.length > 0 ? totalVol / candles.length : 0;
+                    var returnPct = ((lastClose - baseClose)/baseClose)*100;
+                    var pctCls = returnPct >= 0 ? 'green' : 'red';
+                    var cp = r.live.current_price || r.live.current || lastClose;
+                    var card = document.createElement('div'); card.className = 'stat-card';
+                    card.style.borderTop = '3px solid '+color;
+                    card.innerHTML = '<h4>'+r.ticker+'</h4>'+
+                        '<div class="stat-val" style="font-size:0.9rem;margin-bottom:0.5rem;">₹'+cp.toFixed(2)+'</div>'+
+                        '<div style="font-size:0.75rem;color:var(--text-secondary);">Return: <span class="stat-val '+pctCls+'" style="font-size:0.85rem;">'+(returnPct>=0?'+':'')+returnPct.toFixed(2)+'%</span></div>'+
+                        '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">Range: ₹'+low.toFixed(2)+' – ₹'+high.toFixed(2)+'</div>'+
+                        '<div style="font-size:0.75rem;color:var(--text-secondary);margin-top:4px;">Avg Vol: '+fmtVol(avgVol)+'</div>';
+                    statsContainer.appendChild(card);
+                });
+
+                _chart.timeScale().fitContent();
+                window.addEventListener('resize', function(){
+                    if (_chart) _chart.applyOptions({width: container.clientWidth});
+                });
+            } catch(e) {
+                statsContainer.innerHTML = '<div style="color:var(--text-secondary);padding:2rem;text-align:center;grid-column:1/-1;">Error: '+e.message+'</div>';
+            }
+        }
+        // Auto-load on page load
+        document.addEventListener('DOMContentLoaded', function(){ loadComparison(); });
+    </script>
+    <script src="stocks.js"></script>
+    <script src="nav.js?v=3"></script>
+</body>
+</html>

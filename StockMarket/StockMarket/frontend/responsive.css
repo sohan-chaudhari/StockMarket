@@ -1,0 +1,119 @@
+/* Mobile Responsive Overrides — safe !important-free overrides */
+@media (max-width: 768px) {
+  /* ── Header / Nav ── */
+  .header-top-row { flex-wrap: wrap; gap: 8px; }
+  .header-container .logo-container .brand-image-wrapper { display: none; }
+  .search-panel {
+    order: 10; flex: 1 1 100% !important; max-width: 100% !important;
+    margin: 4px 0 0 0 !important;
+  }
+  .search-results { max-height: 60vh; }
+  .header-bottom-row { flex-wrap: wrap; gap: 8px; }
+  .nav-links {
+    gap: 12px; margin-left: 0; flex-wrap: wrap;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap;
+    padding-bottom: 4px;
+  }
+  .nav-link { font-size: 0.85rem; white-space: nowrap; }
+  .nav-actions { gap: 8px; }
+  .nav-icon-btn { font-size: 1rem; }
+  .user-info { gap: 8px !important; }
+  .user-balance { font-size: 0.8rem; padding: 2px 6px; }
+  .market-status-indicator { font-size: 0.75rem; padding: 2px 8px; }
+  .status-text { font-size: 0.7rem; }
+
+  /* ── Dashboard Layout ── */
+  .dashboard-hero {
+    flex-direction: column !important; gap: 16px !important;
+  }
+  .dashboard-hero > * { width: 100% !important; }
+  .market-movers-section {
+    flex-direction: column !important; gap: 16px !important;
+  }
+  .movers-column { width: 100% !important; flex: none !important; }
+  .mover-row { padding: 10px 12px; }
+  .watchlist-section { overflow: hidden; }
+  .watchlist-cards-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* ── Index/Landing page ── */
+  .dashboard-main.index-main .hero-chart-grid {
+    flex-direction: column !important;
+  }
+  .dashboard-main.index-main .hero-chart-grid > * { width: 100% !important; }
+  .tracker-grid { grid-template-columns: repeat(3, 1fr) !important; gap: 8px; }
+  .tracker-card { padding: 10px; }
+  .tracker-card h4 { font-size: 0.8rem; }
+
+  /* ── Ticker Strip ── */
+  .index-strip-container { overflow-x: auto; }
+  .ticker-card { min-width: 140px !important; padding: 10px 12px !important; }
+  .ticker-card .ticker-name { font-size: 0.8rem; }
+  .ticker-card .ticker-price { font-size: 1rem; }
+
+  /* ── Sentiment Gauge ── */
+  .ai-insights-panel { width: 100% !important; }
+  .gauge-svg { max-width: 180px; }
+
+  /* ── Stock page ── */
+  .sticky-header-container .header-controls { flex-wrap: wrap; gap: 6px; }
+  .ticker-branding { flex-wrap: wrap; gap: 6px; }
+  #ticker-name { font-size: 18px; }
+  .header-ohlc-display { flex-wrap: wrap; gap: 6px; font-size: 12px; }
+  #header-price { font-size: 22px; }
+  .range-selector { flex-wrap: wrap; gap: 3px; }
+  .range-selector button { font-size: 11px; padding: 3px 8px; }
+  .sector-tag { font-size: 10px; padding: 2px 8px; }
+  .trade-buttons { flex-wrap: wrap; gap: 6px; }
+  /* Tables — horizontal scroll instead of break */
+  table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
+  /* Drawing toolbar narrower */
+  .drawing-toolbar { width: 40px !important; }
+  body.drawing-active, body { padding-left: 40px !important; }
+  .drawing-submenu { min-width: 180px; left: 40px; }
+  /* Market detail grid */
+  .market-detail-grid { grid-template-columns: 1fr !important; }
+  .market-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  /* Stock bottom panel */
+  .bottom-panel { max-height: none !important; overflow-y: auto !important; }
+
+  /* ── Modals ── */
+  .modal-content { width: 95% !important; max-width: 95% !important; margin: 10% auto !important; }
+  .modal-card { width: 95% !important; }
+
+  /* ── General ── */
+  .section-title { font-size: 1.1rem; }
+  .pill-indicator { width: 3px; height: 16px; }
+  .news-skeleton-container { padding: 0 8px !important; }
+}
+
+@media (max-width: 480px) {
+  .tracker-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .ticker-card { min-width: 110px !important; padding: 8px 10px !important; }
+  .ticker-card .ticker-price { font-size: 0.9rem; }
+  .ticker-card .ticker-change { font-size: 0.75rem; }
+  #niftyPrice { font-size: 1.5rem; }
+  .sentiment-score-text { font-size: 2rem; }
+  .nav-link { font-size: 0.78rem; }
+
+  #ticker-name { font-size: 15px; }
+  #ticker-symbol-small { font-size: 11px; }
+  #header-price { font-size: 18px; }
+  .header-ohlc-display { font-size: 10px; gap: 4px; }
+  #ticker-badge, .ticker-badge, .stock-badge { font-size: 10px; padding: 2px 6px; }
+  .trade-btn, .news-btn { font-size: 12px; padding: 6px 14px; }
+  .drawing-toolbar { width: 32px !important; }
+  body.drawing-active, body { padding-left: 32px !important; }
+  .drawing-submenu { min-width: 150px; left: 32px; }
+}
+
+/* ── Small phones ── */
+@media (max-width: 360px) {
+  .tracker-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 6px; }
+  .tracker-card { padding: 8px; }
+  .tracker-card h4 { font-size: 0.7rem; }
+  .header-container { padding: 8px; }
+  .nav-links { gap: 8px; }
+  .nav-link { font-size: 0.72rem; }
+  .dashboard-main { padding: 8px; }
+  .section-header-flex { flex-direction: column; align-items: flex-start; gap: 6px; }
+}

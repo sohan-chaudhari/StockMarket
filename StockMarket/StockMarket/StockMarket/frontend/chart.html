@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Analysis - Live</title>
+  <script src="lightweight-charts.js"></script>
+  <link rel="stylesheet" href="styles.css?v=35">
+  <link rel="stylesheet" href="index.css?v=50">
+  <link rel="stylesheet" href="nav.css?v=2">
+  <link rel="stylesheet" href="loader.css?v=1">
+  <link rel="stylesheet" href="responsive.css?v=1">
+
+</head>
+
+<body style="background-color: #0A0A0B;">
+  <!-- Drawing Toolbar -->
+  <!-- Drawing Toolbar -->
+  <!-- Drawing Toolbar -->
+  <!-- Drawing Toolbar -->
+  <div class="drawing-toolbar">
+    <!-- Group 1: Cursors -->
+    <div class="toolbar-item" title="Cursors" onclick="toggleSubmenu('submenu-cursor', event)" data-tool-group="cursor">
+      <svg viewBox="0 0 28 28">
+        <path
+          d="M12.5 15.5L22 25L25 22L15.5 12.5M12.5 15.5L5 23L2 20L9.5 12.5M12.5 15.5L3 6L6 3L15.5 12.5M12.5 15.5L20 8L23 11L15.5 18.5"
+          stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-cursor">
+        <div class="submenu-item" onclick="activateTool('cursor', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 4V24M4 14H24" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Cross</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('dot', event);">
+          <svg viewBox="0 0 28 28">
+            <circle cx="14" cy="14" r="5" fill="currentColor" />
+          </svg>
+          <span>Dot</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('arrow', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M5 5L12 23L16 16L23 12L5 5Z" fill="currentColor" />
+          </svg>
+          <span>Arrow</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('eraser', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M8 20L20 8L24 12L12 24H8V20Z" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Eraser</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar-separator"></div>
+
+    <!-- Group 2: Trend Lines -->
+    <div class="toolbar-item" title="Trend Line Tools" onclick="toggleSubmenu('submenu-lines', event)"
+      data-tool-group="lines">
+      <svg viewBox="0 0 28 28">
+        <path d="M4 24L24 4" stroke="currentColor" stroke-width="2" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-lines">
+        <div class="submenu-header">LINES</div>
+        <div class="submenu-item" onclick="activateTool('trendline', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24L24 4" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Trend Line</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('ray', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24L24 4M20 4H24V8" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Ray</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('infoline', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24L24 4" stroke="currentColor" stroke-width="2" /><text x="14" y="10" font-size="8"
+              fill="currentColor">i</text>
+          </svg>
+          <span>Info Line</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('extended', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 26L26 2" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Extended Line</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('horizontal_line', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 14H26" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Horizontal Line</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('horizontal_ray', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 14H26M22 10L26 14L22 18" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Horizontal Ray</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('vertical_line', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 2V26" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Vertical Line</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('cross_line', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 2V26M2 14H26" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Cross Line</span>
+        </div>
+        <div class="submenu-header">CHANNELS</div>
+        <div class="submenu-item" onclick="activateTool('channel', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 20L20 4M8 24L24 8" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Parallel Channel</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('pitchfork', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 14H6L10 6M10 22L6 14M10 6H26M10 22H26M6 14H26" stroke="currentColor" stroke-width="2"
+              fill="none" />
+          </svg>
+          <span>Pitchfork</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group 3: Gann & Fib -->
+    <div class="toolbar-item" title="Gann and Fibonacci Tools" onclick="toggleSubmenu('submenu-fib', event)"
+      data-tool-group="fib">
+      <svg viewBox="0 0 28 28">
+        <path d="M2 24H26M2 18H26M2 12H26M2 6H26" stroke="currentColor" stroke-width="1.5" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-fib">
+        <div class="submenu-header">FIBONACCI</div>
+        <div class="submenu-item" onclick="activateTool('fib_retracement', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 24H26M2 18H26M2 12H26M2 6H26" stroke="currentColor" stroke-width="1.5" />
+          </svg>
+          <span>Fib Retracement</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('fib_trend_ext', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 24L10 6L18 24M2 24H18" stroke="currentColor" stroke-width="1.5" fill="none" />
+          </svg>
+          <span>Trend-Based Fib Extension</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('fib_channel', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 24L24 2M6 26L26 6" stroke="currentColor" stroke-width="1.5" />
+          </svg>
+          <span>Fib Channel</span>
+        </div>
+        <div class="submenu-header">GANN</div>
+        <div class="submenu-item" onclick="activateTool('gann_box', event);">
+          <svg viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="20" stroke="currentColor" fill="none" />
+            <path d="M4 4L24 24M4 24L24 4" stroke="currentColor" />
+          </svg>
+          <span>Gann Box</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('gann_fan', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24L24 4M4 24L24 10M4 24L24 16M4 24L16 4M4 24L10 4" stroke="currentColor" stroke-width="1" />
+          </svg>
+          <span>Gann Fan</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group 4: Shapes -->
+    <div class="toolbar-item" title="Geometric Shapes" onclick="toggleSubmenu('submenu-shapes', event)"
+      data-tool-group="shapes">
+      <svg viewBox="0 0 28 28">
+        <rect x="5" y="5" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-shapes">
+        <div class="submenu-item" onclick="activateTool('brush', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M5 20C5 20 8 15 12 15C16 15 18 20 22 20" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Brush</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('highlighter', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 14H24" stroke="currentColor" stroke-width="8" opacity="0.5" />
+          </svg>
+          <span>Highlighter</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('rectangle', event);">
+          <svg viewBox="0 0 28 28">
+            <rect x="4" y="8" width="20" height="12" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Rectangle</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('circle', event);">
+          <svg viewBox="0 0 28 28">
+            <circle cx="14" cy="14" r="10" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Circle</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('ellipse', event);">
+          <svg viewBox="0 0 28 28">
+            <ellipse cx="14" cy="14" rx="10" ry="6" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Ellipse</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('path', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24L8 10L14 20L20 4L24 16" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Path</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('triangle', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 4L4 24H24L14 4Z" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Triangle</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group 5: Annotation -->
+    <div class="toolbar-item" title="Annotation Tools" onclick="toggleSubmenu('submenu-text', event)"
+      data-tool-group="text">
+      <svg viewBox="0 0 28 28"><text x="6" y="22" font-size="20" font-family="Arial" fill="currentColor">T</text></svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-text">
+        <div class="submenu-item" onclick="activateTool('text', event);">
+          <svg viewBox="0 0 28 28"><text x="6" y="22" font-size="20" font-family="Arial"
+              fill="currentColor">T</text></svg>
+          <span>Text</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('anchored_text', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24V4H24" stroke="currentColor" stroke-width="2" fill="none" /><text x="8" y="20" font-size="14"
+              fill="currentColor">T</text>
+          </svg>
+          <span>Anchored Text</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('note', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 4H20V16H8L4 20V4Z" stroke="currentColor" fill="none" stroke-width="1.5" />
+            <circle cx="12" cy="10" r="1" fill="currentColor" />
+          </svg>
+          <span>Note</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('callout', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 6H20V18H10L4 24V6Z" stroke="currentColor" fill="none" stroke-width="1.5" /><text x="8" y="14"
+              font-size="10">Hi</text>
+          </svg>
+          <span>Callout</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('price_label', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 8H18L22 14L18 20H4V8Z" stroke="currentColor" fill="none" stroke-width="1.5" /><text x="6" y="16"
+              font-size="8">$</text>
+          </svg>
+          <span>Price Label</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('arrow_marker', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 24V4 M10 8L14 4L18 8" stroke="currentColor" stroke-width="1.5" />
+          </svg>
+          <span>Arrow Marker</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group 6: Patterns -->
+    <div class="toolbar-item" title="Patterns" onclick="toggleSubmenu('submenu-patterns', event)"
+      data-tool-group="patterns">
+      <svg viewBox="0 0 28 28">
+        <path d="M4 22L9 8L14 24L19 12L24 18" stroke="currentColor" fill="none" stroke-width="1.5" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-patterns">
+        <div class="submenu-header">CHART PATTERNS</div>
+        <div class="submenu-item" onclick="activateTool('xabcd_pattern', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 20L8 10L12 18L16 6L24 16" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>XABCD Pattern</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('cypher_pattern', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 22L10 8L14 18L20 6L24 14" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>Cypher Pattern</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('abcd_pattern', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 20L10 6L18 20L24 6" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>ABCD Pattern</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('triangle_pattern', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 20L14 4L24 20H4Z" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>Triangle Pattern</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('head_and_shoulders', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 20L6 10L10 18L14 6L18 18L22 10L26 20" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>Head & Shoulders</span>
+        </div>
+        <div class="submenu-header">ELLIOTT WAVES</div>
+        <div class="submenu-item" onclick="activateTool('elliott_impulse', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 20L6 10L10 18L14 6L18 18" stroke="currentColor" fill="none" stroke-width="1.5" /><text x="20"
+              y="10" font-size="8">5</text>
+          </svg>
+          <span>Elliott Impulse Wave (12345)</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('elliott_triangle', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 20L8 10L14 18L20 12L26 16" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>Elliott Triangle Wave (ABCDE)</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('elliott_correction', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 20L12 6L24 16" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>Elliott Correction Wave (ABC)</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('elliott_double_combo', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 20L6 10L10 18L14 8L18 16L22 6L26 16" stroke="currentColor" fill="none" stroke-width="1.5" />
+          </svg>
+          <span>Elliott Double Combo (WXY)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group 7: Prediction -->
+    <div class="toolbar-item" title="Prediction and Measurement" onclick="toggleSubmenu('submenu-prediction', event)"
+      data-tool-group="prediction">
+      <svg viewBox="0 0 28 28">
+        <rect x="4" y="4" width="20" height="20" stroke="currentColor" fill="none" />
+        <line x1="4" y1="14" x2="24" y2="14" stroke="currentColor" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-prediction">
+        <div class="submenu-item" onclick="activateTool('long_position', event);">
+          <svg viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="10" fill="#26a69a" opacity="0.5" />
+            <rect x="4" y="14" width="20" height="10" fill="#ef5350" opacity="0.5" />
+          </svg>
+          <span>Long Position</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('short_position', event);">
+          <svg viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="10" fill="#ef5350" opacity="0.5" />
+            <rect x="4" y="14" width="20" height="10" fill="#26a69a" opacity="0.5" />
+          </svg>
+          <span>Short Position</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('date_range', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 14H24M4 10V18M24 10V18" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Date Range</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('price_range', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M14 4V24M10 4H18M10 24H18" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Price Range</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('date_price_range', event);">
+          <svg viewBox="0 0 28 28">
+            <rect x="4" y="4" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Date & Price Range</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Group 8: Icons (Placeholder) -->
+    <div class="toolbar-item" title="Icons" onclick="toggleSubmenu('submenu-icons', event)" data-tool-group="icons">
+      <svg viewBox="0 0 28 28">
+        <circle cx="10" cy="10" r="2" fill="currentColor" />
+        <circle cx="18" cy="10" r="2" fill="currentColor" />
+        <path d="M10 18Q14 24 18 18" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-icons">
+        <div class="submenu-item"><span>Icons Library (Placeholder)</span></div>
+      </div>
+    </div>
+
+    <div class="toolbar-separator"></div>
+
+    <!-- Utilities -->
+    <div class="toolbar-item" title="Measure" onclick="activateTool('measure', event)">
+      <svg viewBox="0 0 28 28">
+        <path d="M4 20L20 4L24 8L8 24Z" stroke="currentColor" stroke-width="2" fill="none" />
+        <line x1="8" y1="20" x2="11" y2="17" stroke="currentColor" />
+        <line x1="10" y1="22" x2="13" y2="19" stroke="currentColor" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Zoom In" onclick="activateTool('zoom', event)">
+      <svg viewBox="0 0 28 28">
+        <circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2" fill="none" />
+        <line x1="18" y1="18" x2="24" y2="24" stroke="currentColor" stroke-width="2" />
+        <line x1="9" y1="12" x2="15" y2="12" stroke="currentColor" />
+        <line x1="12" y1="9" x2="12" y2="15" stroke="currentColor" />
+      </svg>
+    </div>
+
+    <div class="toolbar-separator"></div>
+
+    <div class="toolbar-item" title="Weak Magnet"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleMagnet(this)">
+      <svg viewBox="0 0 28 28">
+        <path d="M4 10C4 6 7 2 14 2C21 2 24 6 24 10V16H20V10C20 8 18 6 14 6C10 6 8 8 8 10V16H4V10Z"
+          fill="currentColor" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Stay in Drawing Mode"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleStayMode(this)">
+      <svg viewBox="0 0 28 28">
+        <rect x="6" y="12" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" fill="none" />
+        <path d="M14 12V6C14 4 15 2 17 2" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Lock All Drawing Tools"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleLockAll(this)">
+      <svg viewBox="0 0 28 28">
+        <rect x="6" y="12" width="16" height="12" rx="2" fill="currentColor" />
+        <path d="M14 12V6C14 4 15 2 17 2H11C13 2 14 4 14 6" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Hide All Drawings"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleHideAll(this)">
+      <svg viewBox="0 0 28 28">
+        <path d="M2 14Q7 4 14 4Q21 4 26 14Q21 24 14 24Q7 24 2 14Z" stroke="currentColor" stroke-width="2" fill="none" />
+        <line x1="4" y1="4" x2="24" y2="24" stroke="currentColor" stroke-width="2" />
+      </svg>
+    </div>
+
+    <!-- Group 9: Remove (Trash) -->
+    <div class="toolbar-item" title="Remove Objects" onclick="toggleSubmenu('submenu-remove', event)"
+      data-tool-group="remove">
+      <svg viewBox="0 0 28 28">
+        <path d="M6 8H22M10 8V24H18V8M8 8V4H20V8" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+      <div class="arrow-indicator"></div>
+      <div class="drawing-submenu" id="submenu-remove">
+        <div class="submenu-item" onclick="window.toolManager && window.toolManager.deleteSelected()">
+          <svg viewBox="0 0 28 28">
+            <path d="M6 8H22M10 8V24H18V8M8 8V4H20V8" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Remove Selected</span>
+        </div>
+        <div class="submenu-item" onclick="window.toolManager && window.toolManager.clearAll()">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 14Q7 4 14 4Q21 4 26 14Q21 24 14 24Q7 24 2 14Z" stroke="currentColor" stroke-width="2"
+              fill="none" />
+            <line x1="4" y1="4" x2="24" y2="24" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Remove Drawings</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div class="container">
+    <!-- Header -->
+    <div id="nav-root"></div>
+
+    <!-- Sticky Header Wrapper -->
+    <div class="sticky-header-container">
+      <!-- Header 1: Controls -->
+      <div class="header-controls" style="margin-top: 5px;">
+        <div class="range-selector">
+          <button onclick="loadData('5m')">5m</button>
+          <button onclick="loadData('15m')">15m</button>
+          <button onclick="loadData('30m')">30m</button>
+          <button onclick="loadData('1h')">1H</button>
+          <button onclick="loadData('1D')">1D</button>
+          <button onclick="loadData('1W')">1W</button>
+          <button onclick="loadData('1M')">1M</button>
+          <button onclick="loadData('3M')">3M</button>
+          <button onclick="loadData('6M')">6M</button>
+          <button class="active" onclick="loadData('ALL')">ALL</button>
+        </div>
+      </div>
+
+      <!-- Header 2: Identity -->
+      <div class="header-identity">
+        <div class="ticker-branding">
+          <img id="ticker-logo" class="ticker-logo" src="" alt="" style="display:none;">
+          <div class="ticker-text-group">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h1 id="ticker-name">--</h1>
+              <span id="ticker-badge" class="stock-badge">--</span>
+              <span id="sector-tag" class="sector-tag" style="display:none;font-size:12px;padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.08);color:#b2b5be;border:1px solid rgba(255,255,255,0.1);white-space:nowrap;"></span>
+            </div>
+            <div id="ticker-symbol-small">--</div>
+          </div>
+          <!-- Price display next to name -->
+          <div style="display: flex; flex-direction: column; margin-left: 24px;">
+            <div class="header-price-display" style="display: flex; align-items: baseline; gap: 10px;">
+              <span id="header-price"
+                style="font-size: 28px; font-weight: 700; font-family: 'Roboto Mono', monospace; color: #fff;">--</span>
+              <span id="header-change" style="font-size: 16px; font-weight: 600;">--</span>
+            </div>
+            <!-- New OHLC Display -->
+            <div class="header-ohlc-display"
+              style="display: flex; gap: 15px; font-family: 'Roboto Mono', monospace; font-size: 14px; color: #b2b5be; margin-top: 4px;">
+              <span><span style="font-weight: 700;">O:</span> <span id="ohlc-open"
+                  style="color: #d1d4dc; font-weight: 700;">--</span></span>
+              <span><span style="font-weight: 700;">H:</span> <span id="ohlc-high"
+                  style="color: #d1d4dc; font-weight: 700;">--</span></span>
+              <span><span style="font-weight: 700;">L:</span> <span id="ohlc-low"
+                  style="color: #d1d4dc; font-weight: 700;">--</span></span>
+              <span><span style="font-weight: 700;">C:</span> <span id="ohlc-close"
+                  style="color: #d1d4dc; font-weight: 700;">--</span></span>
+            </div>
+          </div>
+          <div style="display: flex; align-items: center; margin-left: 20px;">
+            <button class="news-btn" onclick="toggleNewsModal()"
+              style="padding: 8px 24px; background: #ff9800; border: none; border-radius: 8px; color: white; cursor: pointer; font-size: 14px; font-weight: 600; box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3); transition: transform 0.2s;">
+              <span style="margin-right: 6px;">📰</span> News Sentiment
+            </button>
+          </div>
+        </div>
+        <span class="status" id="ws-status">● Live</span>
+      </div>
+
+    </div> <!-- End Sticky Header -->
+
+
+
+    <!-- Chart -->
+    <div id="chart-container" style="position: relative;">
+      <div class="loading" id="loading">Loading...</div>
+      <div class="error" id="error-msg"></div>
+      <div id="chart"></div>
+      <!-- Drawing Layer -->
+      <div id="drawing-canvas-container">
+        <canvas id="drawing-canvas"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Premium Loader -->
+  <div class="leverage-loader-overlay" id="leverage-loader">
+    <div class="leverage-loader">
+      <div class="loader-text">
+        <div class="loader-logo-container">
+          <img src="logo.jpeg" alt="LEVERAGE" class="loader-logo-img">
+        </div>
+        <span class="loader-status">
+          <span class="loader-dot"></span>
+          Loading chart data...
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <script src="stocks.js?v=19"></script> <!-- Added Stocks JS -->
+  <script src="loader.js?v=1"></script>
+  <script src="nav.js?v=4"></script>
+  <script src="news.js"></script>
+  <script src="cache.js?v=2"></script>
+  <script src="dashboard.js?v=1016"></script> <!-- TradingView Logic -->
+  <script src="drawings.js?v=7"></script>
+
+  <!-- News Modal -->
+  <div id="newsModal" class="modal">
+    <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+      <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid #333; padding-bottom: 1rem;">
+        <h2 id="newsModalTitle" style="color: white; margin: 0;">Stock News Sentiment</h2>
+        <button onclick="toggleNewsModal()" style="background: none; border: none; color: #999; font-size: 24px; cursor: pointer;">&times;</button>
+      </div>
+      <div id="ticker-news-container" class="news-grid">
+        <!-- News cards populated by news.js -->
+        <div class="leverage-loader simple-glow-theme news-loader" style="padding: 2rem;">
+            <div class="loader-text-clean">
+                <span class="loader-dot-pulse"></span>
+                <span class="loader-message-text">Analyzing news sentiment for <span id="loading-ticker">ticker</span>...</span>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function toggleNewsModal() {
+      const modal = document.getElementById('newsModal');
+      const isVisible = modal.classList.toggle('visible');
+      
+      if (isVisible) {
+        const ticker = currentTicker || 'RELIANCE.NS';
+        document.getElementById('newsModalTitle').innerText = `${ticker} News Sentiment`;
+        document.getElementById('loading-ticker').innerText = ticker;
+        
+        // Clear previous news
+        document.getElementById('ticker-news-container').innerHTML = `
+            <div class="leverage-loader simple-glow-theme news-loader" style="padding: 2rem;">
+                <div class="loader-text-clean">
+                    <span class="loader-dot-pulse"></span>
+                    <span class="loader-message-text">Analyzing news sentiment for ${ticker}...</span>
+                </div>
+            </div>
+        `;
+        
+        const news = await fetchStockNews(ticker);
+        renderNewsCards('ticker-news-container', news);
+      }
+    }
+  </script>
+  <script>
+
+  </script>
+</body>
+
+</html>

@@ -1,0 +1,210 @@
+@startuml
+skinparam classAttributeIconSize 0
+left to right direction
+
+' ==================== CORE USER ====================
+
+class User {
+  userId
+  email
+  passwordHash
+  fullName
+  virtualBalance
+  isVerified
+  +register()
+  +login()
+  +verifyEmail()
+}
+
+' ==================== AUTHENTICATION ====================
+
+class AuthService {
+  +validateCredentials()
+  +generateJWT()
+  +verifyJWT()
+}
+
+class PasswordManager {
+  +hashPassword()
+  +verifyPassword()
+}
+
+class EmailService {
+  +sendVerificationEmail()
+  +sendWelcomeEmail()
+}
+
+' ==================== USER FEATURES ====================
+
+class MyProfile {
+  fullName
+  email
+  joinedDate
+  +viewProfile()
+  +editProfile()
+  +changePassword()
+}
+
+class MyPortfolio {
+  currentBalance
+  totalPnL
+  openPositions
+  closedPositions
+  +viewSummary()
+  +getWinRate()
+}
+
+class ChartView {
+  ticker
+  timeframe
+  candleData
+  +loadChart()
+  +updateLive()
+  +switchTimeframe()
+}
+
+' ==================== MARKET & STOCK ====================
+
+class MarketClock {
+  marketStartTime
+  marketEndTime
+  holidays
+  +isMarketOpen()
+  +isPreMarket()
+  +isPostMarket()
+}
+
+class Stock {
+  ticker
+  name
+  exchange
+  currentPrice
+}
+
+class YFinanceScraper {
+  +fetchLivePrice()
+  +fetchHistoricalData()
+}
+
+class CurrentDayCandle {
+  open
+  high
+  low
+  currentPrice
+  close
+  volume
+  isFinalized
+}
+
+class StockData {
+  ticker
+  date
+  open
+  high
+  low
+  close
+  volume
+}
+
+class WebSocketManager {
+  activeConnections
+  +connect()
+  +broadcast()
+}
+
+' ==================== TRADING ====================
+
+class PaperTradingAccount {
+  balance
+  +debit()
+  +credit()
+}
+
+class Position {
+  positionId
+  ticker
+  entryPrice
+  quantity
+  positionType
+  takeProfit
+  stopLoss
+  status
+  pnl
+  +open()
+  +close()
+}
+
+class Order {
+  orderId
+  orderType
+  triggerPrice
+  status
+  +execute()
+}
+
+class TradingService {
+  +openPosition()
+  +closePosition()
+  +setLimits()
+}
+
+class ExecutionEngine {
+  +checkPendingOrders()
+  +executeOrder()
+}
+
+class Transaction {
+  transactionType
+  amount
+  pnl
+  balanceAfter
+}
+
+' ==================== DATABASE ====================
+
+class Database {
+  +getDB()
+}
+
+' ==================== RELATIONSHIPS ====================
+
+' User to main features
+User --> AuthService : authenticates
+User --> MyProfile : manages
+User --> MyPortfolio : views
+User --> ChartView : views
+
+' Auth components
+AuthService --> PasswordManager : uses
+AuthService --> EmailService : uses
+
+' Portfolio flow
+MyPortfolio --> PaperTradingAccount : tracks
+PaperTradingAccount --> Position : contains
+Position --> Transaction : generates
+Position --> Order : has
+
+' Chart flow
+ChartView --> Stock : displays
+ChartView --> WebSocketManager : subscribes
+Stock --> YFinanceScraper : fetches from
+YFinanceScraper --> CurrentDayCandle : updates
+CurrentDayCandle --> StockData : archives to
+WebSocketManager --> CurrentDayCandle : broadcasts
+
+' Market
+MarketClock --> Stock : monitors
+
+' Trading
+TradingService --> Position : manages
+TradingService --> Order : creates
+ExecutionEngine --> TradingService : uses
+ExecutionEngine --> Order : monitors
+
+' Database
+Database --> User : stores
+Database --> Stock : stores
+Database --> Position : stores
+Database --> Transaction : stores
+
+@enduml

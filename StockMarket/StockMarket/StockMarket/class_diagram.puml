@@ -1,0 +1,502 @@
+@startuml StockMarket_ClassDiagram
+
+!define TABLE(x) class x << (T,#FFAAAA) >>
+!define SERVICE(x) class x << (S,#AAFFAA) >>
+!define SCHEMA(x) class x << (D,#AAAAFF) >>
+!define MANAGER(x) class x << (M,#FFAAFF) >>
+
+title Stock Market Trading System - Class Diagram
+
+' ==================== DATABASE MODELS ====================
+
+package "Database Models" {
+    
+    TABLE(StockData) {
+        +id: Integer {PK}
+        +ticker: String {Index}
+        +date: Date {Index}
+        +open: Float
+        +high: Float
+        +low: Float
+        +close: Float
+        +adj_close: Float
+        +volume: Integer
+        --
+        {unique} ticker, date
+    }
+    
+    TABLE(IntradayTick) {
+        +id: Integer {PK}
+        +ticker: String {Index}
+        +price: Float
+        +timestamp: DateTime {Index}
+        +trading_date: Date {Index}
+        +created_at: DateTime
+    }
+    
+    TABLE(CurrentDayCandle) {
+        +id: Integer {PK}
+        +ticker: String {Index}
+        +trading_date: Date {Index}
+        +open: Float
+        +high: Float
+        +low: Float
+        +current_price: Float
+        +close: Float
+        +volume: Integer
+        +is_finalized: Boolean
+        +last_updated: DateTime
+        --
+        {unique} ticker, trading_date
+    }
+    
+    TABLE(Holiday) {
+        +date: Date {PK}
+        +description: String
+        +created_at: DateTime
+    }
+    
+    TABLE(StockMetadata) {
+        +id: Integer {PK}
+        +ticker: String {Index}
+        +name: String
+        +exchange: String
+        +logo: String
+        +base_price: Float
+        --
+        {unique} ticker, exchange
+    }
+    
+    TABLE(User) {
+        +user_id: Integer {PK}
+        +email: String {Unique, Index}
+        +password_hash: String
+        +full_name: String
+        +virtual_balance: Float
+        +is_verified: Boolean
+        +is_active: Boolean
+        +created_at: DateTime
+        +last_login: DateTime
+        +failed_login_attempts: Integer
+        +locked_until: DateTime
+    }
+    
+    TABLE(LoginAttempt) {
+        +id: Integer {PK}
+        +email: String {Index}
+        +ip_address: String
+        +user_agent: String
+        +success: Boolean
+        +failure_reason: String
+        +attempted_at: DateTime {Index}
+    }
+    
+    TABLE(VerificationToken) {
+        +id: Integer {PK}
+        +user_id: Integer {Index}
+        +token_hash: String
+        +otp_code: String
+        +token_type: String
+        +expires_at: DateTime
+        +used: Boolean
+        +created_at: DateTime
+    }
+    
+    TABLE(TokenBlacklist) {
+        +id: Integer {PK}
+        +token_jti: String {Unique, Index}
+        +blacklisted_at: DateTime
+    }
+    
+    TABLE(Position) {
+        +id: Integer {PK}
+        +user_id: Integer {Index}
+        +ticker: String {Index}
+        +position_type: String
+        +quantity: Integer
+        +entry_price: Float
+        +closing_price: Float
+        +total_investment: Float
+        +realized_pnl: Float
+        +status: String {Index}
+        +close_type: String
+        +take_profit: Float
+        +stop_loss: Float
+        +tp_edit_count: Integer
+        +sl_edit_count: Integer
+        +created_at: DateTime {Index}
+        +closed_at: DateTime
+    }
+    
+    TABLE(Order) {
+        +id: Integer {PK}
+        +position_id: Integer {Index}
+        +user_id: Integer {Index}
+        +ticker: String {Index}
+        +order_type: String
+        +trigger_price: Float
+        +execution_price: Float
+        +status: String {Index}
+        +created_at: DateTime
+        +executed_at: DateTime
+    }
+    
+    TABLE(Transaction) {
+        +id: Integer {PK}
+        +user_id: Integer {Index}
+        +position_id: Integer {Index}
+        +ticker: String
+        +transaction_type: String
+        +position_type: String
+        +quantity: Integer
+        +price: Float
+        +amount: Float
+        +pnl: Float
+        +balance_after: Float
+        +created_at: DateTime {Index}
+    }
+}
+
+' ==================== PYDANTIC SCHEMAS ====================
+
+package "Pydantic Schemas" {
+    
+    SCHEMA(StockDataBase) {
+        +date: date
+        +open: float
+        +high: float
+        +low: float
+        +close: float
+        +adj_close: float
+        +volume: int
+    }
+    
+    SCHEMA(StockDataResponse) {
+        {inherits StockDataBase}
+    }
+    
+    SCHEMA(StockFetchRequest) {
+        +ticker: str
+    }
+    
+    SCHEMA(UserRegister) {
+        +email: EmailStr
+        +password: str
+        +full_name: Optional[str]
+    }
+    
+    SCHEMA(UserLogin) {
+        +email: EmailStr
+        +password: str
+    }
+    
+    SCHEMA(UserResponse) {
+        +user_id: int
+        +email: str
+        +full_name: Optional[str]
+        +virtual_balance: float
+        +is_verified: bool
+        +created_at: datetime
+    }
+    
+    SCHEMA(TokenResponse) {
+        +access_token: str
+        +token_type: str
+        +user: UserResponse
+    }
+    
+    SCHEMA(VerifyEmailRequest) {
+        +token: Optional[str]
+        +otp: Optional[str]
+    }
+    
+    SCHEMA(ForgotPasswordRequest) {
+        +email: EmailStr
+    }
+    
+    SCHEMA(ResetPasswordRequest) {
+        +token: str
+        +new_password: str
+    }
+    
+    SCHEMA(ResendVerificationRequest) {
+        +email: EmailStr
+    }
+    
+    SCHEMA(MessageResponse) {
+        +message: str
+    }
+    
+    SCHEMA(PlaceOrderRequest) {
+        +ticker: str
+        +position_type: str
+        +quantity: int
+        +entry_price: float
+        +take_profit: Optional[float]
+        +stop_loss: Optional[float]
+    }
+    
+    SCHEMA(SetLimitsRequest) {
+        +position_id: int
+        +take_profit: Optional[float]
+        +stop_loss: Optional[float]
+    }
+    
+    SCHEMA(ClosePositionRequest) {
+        +position_id: int
+        +closing_price: float
+    }
+    
+    SCHEMA(PositionResponse) {
+        +id: int
+        +ticker: str
+        +position_type: str
+        +quantity: int
+        +entry_price: float
+        +closing_price: Optional[float]
+        +total_investment: float
+        +realized_pnl: Optional[float]
+        +status: str
+        +close_type: Optional[str]
+        +created_at: datetime
+        +closed_at: Optional[datetime]
+        +unrealized_pnl: Optional[float]
+        +pnl_percentage: Optional[float]
+        +duration: Optional[str]
+    }
+    
+    SCHEMA(OrderResponse) {
+        +id: int
+        +position_id: int
+        +ticker: str
+        +order_type: str
+        +trigger_price: float
+        +execution_price: Optional[float]
+        +status: str
+        +created_at: datetime
+        +executed_at: Optional[datetime]
+    }
+    
+    SCHEMA(TransactionResponse) {
+        +id: int
+        +position_id: Optional[int]
+        +ticker: Optional[str]
+        +transaction_type: str
+        +position_type: Optional[str]
+        +quantity: Optional[int]
+        +price: Optional[float]
+        +amount: float
+        +pnl: Optional[float]
+        +balance_after: float
+        +created_at: datetime
+    }
+    
+    SCHEMA(PortfolioSummary) {
+        +current_balance: float
+        +total_invested: float
+        +total_realized_pnl: float
+        +total_unrealized_pnl: float
+        +total_positions: int
+        +open_positions: int
+        +closed_positions: int
+        +win_rate: float
+        +total_wins: int
+        +total_losses: int
+    }
+    
+    SCHEMA(PaginatedPositions) {
+        +positions: List[PositionResponse]
+        +total: int
+        +page: int
+        +pages: int
+    }
+    
+    SCHEMA(PaginatedTransactions) {
+        +transactions: List[TransactionResponse]
+        +total: int
+        +page: int
+        +pages: int
+    }
+}
+
+' ==================== SERVICES ====================
+
+package "Business Logic Services" {
+    
+    SERVICE(TradingService) {
+        {static} +MAX_TP_SL_EDITS: int = 3
+        --
+        {static} +validate_balance(db, user_id, required_amount): bool
+        {static} +validate_tp_sl(position_type, entry_price, tp, sl): Tuple
+        {static} +open_position(db, user_id, ticker, position_type, quantity, entry_price, take_profit, stop_loss): Tuple
+        {static} +close_position(db, user_id, position_id, closing_price, close_type): Tuple
+        {static} +set_limits(db, user_id, position_id, take_profit, stop_loss): Tuple
+        {static} +get_open_positions(db, user_id): List
+        {static} +get_position_orders(db, position_id): Dict
+        {static} +get_portfolio_summary(db, user_id): Dict
+    }
+    
+    SERVICE(PriceMonitorService) {
+        -is_running: bool
+        -check_interval: int
+        -price_cache: Dict[str, float]
+        -cache_ttl: int
+        -last_cache_update: datetime
+        --
+        +start(): async
+        +stop(): void
+        -check_pending_orders(): async
+        -get_current_prices(db, tickers): async Dict
+        -should_execute_order(db, order, current_price): bool
+        -execute_order(db, order, execution_price): async
+    }
+}
+
+' ==================== AUTHENTICATION MODULE ====================
+
+package "Authentication Module" {
+    
+    SERVICE(AuthService) {
+        {static} +validate_password(password): void
+        {static} +generate_token(length): str
+        {static} +generate_otp(): str
+        {static} +verify_password(plain_password, hashed_password): bool
+        {static} +get_password_hash(password): str
+        {static} +create_access_token(data, expires_delta): str
+        {static} +decode_token(token): dict
+        {static} +log_login_attempt(db, email, success, request, failure_reason): void
+        {static} +check_account_locked(user): Tuple
+        {static} +handle_failed_login(db, user): int
+        {static} +reset_failed_attempts(db, user): void
+        {static} +is_token_blacklisted(db, jti): bool
+        {static} +blacklist_token(db, jti): void
+        {static} +send_email(to_email, subject, html_content): void
+        {static} +send_verification_email(email, otp, name, token): void
+        {static} +send_welcome_email(email, name): void
+        {static} +send_account_deleted_email(email, name): void
+        {static} +send_password_reset_email(email, token, name): void
+        {static} +send_password_reset_confirmation_email(email, name): void
+        {static} +get_current_user(credentials, db): User
+    }
+}
+
+' ==================== WEBSOCKET MANAGERS ====================
+
+package "WebSocket Managers" {
+    
+    MANAGER(ConnectionManager) {
+        -active_connections: Dict[str, List[WebSocket]]
+        --
+        +connect(websocket, ticker): async
+        +disconnect(websocket, ticker): void
+        +broadcast(message, ticker): async
+    }
+    
+    MANAGER(UserConnectionManager) {
+        -active_connections: Dict[int, List[WebSocket]]
+        --
+        +connect(user_id, websocket): async
+        +disconnect(user_id, websocket): void
+        +send_personal_message(message, user_id): async
+    }
+}
+
+' ==================== DATABASE MODULE ====================
+
+package "Database Module" {
+    
+    class Database {
+        {static} +engine: Engine
+        {static} +SessionLocal: sessionmaker
+        {static} +Base: DeclarativeMeta
+        --
+        {static} +get_ist_now(): datetime
+        {static} +get_db(): Generator
+    }
+}
+
+' ==================== RELATIONSHIPS ====================
+
+' User relationships
+User "1" -- "0..*" Position : owns >
+User "1" -- "0..*" Transaction : has >
+User "1" -- "0..*" VerificationToken : has >
+User "1" -- "0..*" Order : places >
+
+' Position relationships
+Position "1" -- "0..*" Order : has >
+Position "1" -- "0..*" Transaction : generates >
+
+' Stock data relationships
+StockData "1" -- "0..*" CurrentDayCandle : updates to >
+StockData "1" -- "0..*" IntradayTick : aggregates from >
+
+' Service dependencies
+TradingService ..> User : uses
+TradingService ..> Position : manages
+TradingService ..> Order : creates
+TradingService ..> Transaction : records
+TradingService ..> Database : queries
+
+PriceMonitorService ..> Order : monitors
+PriceMonitorService ..> Position : closes
+PriceMonitorService ..> CurrentDayCandle : reads
+PriceMonitorService ..> StockData : reads
+PriceMonitorService ..> TradingService : uses
+PriceMonitorService ..> UserConnectionManager : notifies
+
+AuthService ..> User : authenticates
+AuthService ..> LoginAttempt : logs
+AuthService ..> VerificationToken : manages
+AuthService ..> TokenBlacklist : manages
+
+' WebSocket Manager dependencies
+ConnectionManager ..> CurrentDayCandle : broadcasts
+UserConnectionManager ..> User : notifies
+
+' Schema to Model mappings
+UserResponse ..> User : maps from
+PositionResponse ..> Position : maps from
+OrderResponse ..> Order : maps from
+TransactionResponse ..> Transaction : maps from
+StockDataResponse ..> StockData : maps from
+
+note right of TradingService
+  Core business logic for:
+  - Opening/closing positions
+  - Setting TP/SL limits
+  - Validating trades
+  - Portfolio calculations
+end note
+
+note right of PriceMonitorService
+  Background service that:
+  - Monitors pending orders
+  - Executes TP/SL automatically
+  - Updates prices from DB
+  - Sends WebSocket notifications
+end note
+
+note right of AuthService
+  Handles all authentication:
+  - Password hashing (bcrypt)
+  - JWT token management
+  - Email verification
+  - Password reset
+  - Account lockout
+  - Audit logging
+end note
+
+note right of ConnectionManager
+  Manages stock price
+  WebSocket connections
+  per ticker
+end note
+
+note right of UserConnectionManager
+  Manages user-specific
+  WebSocket connections
+  for order notifications
+end note
+
+@enduml

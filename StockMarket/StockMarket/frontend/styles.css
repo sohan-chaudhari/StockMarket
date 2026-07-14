@@ -1,0 +1,1044 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    /* Allow scrolling so chart + bottom panel are both visible */
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #0A0A0B;
+    color: #d1d4dc;
+    padding: 20px;
+    overscroll-behavior: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+
+.container {
+    max-width: 1600px;
+    margin: 0 auto;
+    width: 100%;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* LEVERAGE Logo - Clickable to go home */
+.logo-container {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0px;
+    margin-right: 20px;
+    text-decoration: none;
+}
+
+.logo-icon {
+    height: 72px;
+    width: auto;
+    display: block;
+    border-radius: 12px;
+}
+
+/* Brand Text Image Wrapper */
+.brand-image-wrapper {
+    height: 72px;
+    width: 240px;
+    overflow: hidden;
+    margin-left: 0px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+.brand-image {
+    height: 100%;
+    width: auto;
+    display: block;
+    transform: scale(3.5) translateX(20px);
+    transform-origin: center;
+}
+
+/* Header Rows */
+.header-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding: 15px 20px;
+    background: #0b0f19;
+    border-radius: 12px;
+    position: relative;
+    z-index: 500;
+}
+
+.header-identity {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 0 10px;
+}
+
+.ticker-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    /* Space between items */
+}
+
+.ticker-branding {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.ticker-branding h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    /* Slightly smaller to fit name */
+    color: #e4e4e7;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.ticker-text-group {
+    display: flex;
+    flex-direction: column;
+}
+
+#ticker-symbol-small {
+    font-size: 0.85rem;
+    color: #a1a1aa;
+    font-weight: 500;
+}
+
+.ticker-logo {
+    width: 48px;
+    /* Larger for Main Header */
+    height: 48px;
+    margin-right: 15px;
+    border-radius: 50%;
+    object-fit: contain;
+    background-color: white;
+    padding: 2px;
+    border: 2px solid #2a2e39;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.header-identity .status {
+    color: #26a69a;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.stock-badge {
+    background: #1e1e1e;
+    color: #a1a1aa;
+    padding: 2px 8px;
+    /* Slightly wider */
+    border-radius: 4px;
+    font-size: 0.75rem;
+    border: 1px solid #333;
+    font-weight: 600;
+    text-transform: uppercase;
+    display: inline-block;
+    align-self: center;
+    /* Align with H1 */
+}
+
+/* Legacy .search-container removed to use index.css styles */
+
+/* Legacy .search-input removed to use index.css styles */
+
+/* Legacy .search-btn removed */
+
+/* Home Button */
+.home-btn {
+    background: linear-gradient(135deg, #646cff 0%, #8b5cf6 100%);
+    border: none;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.3s ease;
+    margin-right: 16px;
+}
+
+.home-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(100, 108, 255, 0.4);
+}
+
+.home-btn:active {
+    transform: translateY(0);
+}
+
+/* Sticky Header Container */
+.sticky-header-container {
+    background: #0b0f19;
+    padding-bottom: 2px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+/* Primary Price Panel (Top Sticky Part) */
+.primary-price-panel {
+    background: #000000;
+    border: none;
+    /* border-radius removed to merge visual */
+    padding: 10px 24px;
+    margin-bottom: 0px;
+    box-shadow: none;
+    display: none;
+    /* Toggled via JS */
+}
+
+/* OHLC Details Panel (Scrollable Bottom Part) */
+.ohlc-details-panel {
+    background: #000000;
+    border-bottom: none;
+    /* Removed */
+    padding: 0 24px 24px 24px;
+    margin-bottom: 20px;
+}
+
+.live-price-panel {
+    /* Legacy override or shared styles */
+    display: none;
+}
+
+.current-price-display {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin: 8px 0;
+}
+
+.price-big {
+    font-size: 42px;
+    /* Slightly smaller for compactness */
+    font-weight: bold;
+    color: #fff;
+    font-family: 'Roboto Mono', monospace;
+    transition: all 0.3s;
+}
+
+.price-big.flash {
+    animation: priceFlash 0.3s ease;
+}
+
+@keyframes priceFlash {
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+
+    50% {
+        transform: scale(1.05);
+        opacity: 0.8;
+    }
+}
+
+.change-indicator {
+    font-size: 20px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ohlc-display {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    padding: 15px 0;
+    margin: 10px 0;
+    border-top: 1px dashed #2a2e39;
+    /* Divider from main price */
+}
+
+.ohlc-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ohlc-item .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #787b86;
+}
+
+.ohlc-item .value {
+    font-size: 18px;
+    font-weight: 600;
+    color: #d1d4dc;
+    font-family: 'Roboto Mono', monospace;
+}
+
+.ohlc-item .value.green {
+    color: #26a69a;
+}
+
+.ohlc-item .value.red {
+    color: #ef5350;
+}
+
+.live-pulse {
+    animation: pulse 2s infinite;
+    color: #ef5350;
+    font-weight: bold;
+    margin-right: 5px;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Chart */
+#chart {
+    width: 100%;
+    height: 100%;
+    /* Fill parent */
+    background: #131722;
+    border: 1px solid #374151;
+    border-radius: 12px;
+    overflow: hidden;
+    /* Ensure corners are clipped */
+}
+
+#chart-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    /* Give an explicit height so chart is always visible */
+    height: clamp(420px, 62vh, 780px);
+    min-height: 420px;
+    margin-bottom: 20px;
+}
+
+
+.range-selector button {
+    padding: 8px 16px;
+    margin-left: 5px;
+    background: #1a1a1a;
+    border: 1px solid #2a2e39;
+    color: #d1d4dc;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.range-selector button.active {
+    background: #2962ff;
+    border-color: #2962ff;
+    color: white;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: #d1d4dc;
+    display: none;
+}
+
+.error {
+    color: #ef5350;
+    background: rgba(239, 83, 80, 0.1);
+    padding: 20px;
+    display: none;
+    text-align: center;
+    border-radius: 8px;
+}
+
+/* ========================================= */
+/* IMPORTED FROM index.css FOR SEARCH PANEL  */
+/* ========================================= */
+
+.search-panel {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px;
+    /* Increased to 600px */
+    max-width: 600px;
+}
+
+.search-panel-unified {
+    width: 600px;
+    max-width: 600px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.search-container {
+    position: relative;
+    /* Reset flex if existed or override */
+    display: block;
+    background: transparent;
+    border: none;
+    padding: 0;
+    width: auto;
+    height: auto;
+    flex: 1;
+    /* Take remaining space */
+}
+
+.search-input {
+    width: 100%;
+    background: #111;
+    border: 1px solid #333;
+    box-shadow: 0 0 12px rgba(74, 144, 226, 0.15);
+    /* Constant Glow */
+    color: white;
+    padding: 12px 16px 12px 48px;
+    /* Room for icon */
+    border-radius: 99px;
+    /* Pill shape */
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* Use chart font or var */
+    font-size: 0.95rem;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.search-input:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+    /* Strong Glow */
+}
+
+/* Scrolling Placeholder Styles - Consolidated */
+.search-container {
+    position: relative;
+    /* Ensure child absolute elements are positioned relative to this */
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.placeholder-overlay {
+    position: absolute;
+    left: 48px;
+    /* Match padding-left of search-input */
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    font-size: 0.95rem;
+    color: #71717a;
+    /* Muted text color */
+    white-space: nowrap;
+    transition: opacity 0.2s ease, visibility 0.2s;
+    z-index: 5;
+    line-height: normal;
+}
+
+/* Hide overlay only when input has value (placeholder is NOT shown) */
+.search-input:not(:placeholder-shown)~.placeholder-overlay {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.scrolling-wrapper {
+    height: 1.4rem;
+    overflow: hidden !important;
+    margin-left: 5px;
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.scrolling-content {
+    display: flex;
+    flex-direction: column;
+    animation: scrollPlaceholder 12s cubic-bezier(0.645, 0.045, 0.355, 1) infinite;
+}
+
+.scrolling-item {
+    height: 1.4rem;
+    line-height: 1.4rem;
+    color: #4A90E2;
+    font-weight: 700;
+}
+
+@keyframes scrollPlaceholder {
+    0%, 16% { transform: translateY(0); }
+    20%, 36% { transform: translateY(-1.4rem); }
+    40%, 56% { transform: translateY(-2.8rem); }
+    60%, 76% { transform: translateY(-4.2rem); }
+    80%, 96% { transform: translateY(-5.6rem); }
+    100% { transform: translateY(-7.0rem); }
+}
+
+.search-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 1.1rem;
+}
+
+/* Search Results Dropdown */
+.search-results {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: #0a0a0a;
+    border: 1px solid #ffffff;
+    border-radius: var(--radius-md);
+    max-height: 400px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* Prevent Body Scroll */
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.8);
+    display: none;
+    /* Hidden by default */
+    z-index: 200;
+}
+
+.search-results.visible {
+    display: block;
+}
+
+.result-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #1a1a1a;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.result-item:hover {
+    background: #151515;
+}
+
+.result-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #222;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    margin-right: 12px;
+    border: none;
+    box-shadow: none;
+}
+
+.result-info {
+    flex: 1;
+}
+
+.result-name {
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 0.9rem;
+}
+
+.result-ticker {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+}
+
+.result-meta {
+    display: flex;
+    align-items: center;
+}
+
+.search-launch-btn {
+    background: var(--accent-blue);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateX(10px);
+    transition: all 0.2s ease;
+    pointer-events: none;
+}
+
+.result-item:hover .search-launch-btn {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.search-launch-btn:hover {
+    background: var(--accent-blue-hover);
+}
+
+/* Range Dropdown */
+.range-dropdown {
+    position: relative;
+    /* Was absolute, now relative to flow in flex */
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #1a1a1a;
+    border: 1px solid #2a2e39;
+    color: #d1d4dc;
+    border-radius: 6px;
+    padding: 8px 16px;
+    cursor: pointer;
+    min-width: 100px;
+    user-select: none;
+    transition: all 0.2s;
+    z-index: 50;
+    margin-left: 20px;
+    /* Add spacing from search */
+}
+
+.range-dropdown:hover {
+    border-color: #4A90E2;
+    background: #222;
+}
+
+.trade-btn {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    color: white;
+    font-size: 0.9rem;
+    transition: transform 0.1s;
+}
+
+.trade-btn:active {
+    transform: scale(0.95);
+}
+
+.trade-btn.buy {
+    background: #00C853;
+}
+
+.trade-btn.sell {
+    background: #FF5252;
+}
+
+.trade-btn:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+/* ============================================
+   USER DROPDOWN (Ported from index.css)
+   ============================================ */
+.user-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.user-profile-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid #333;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.user-profile-btn:hover,
+.user-dropdown.active .user-profile-btn {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #4A90E2;
+    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
+.user-balance {
+    color: #00C853;
+    font-weight: 600;
+    padding: 4px 8px;
+    background: rgba(0, 200, 83, 0.1);
+    border-radius: 4px;
+}
+
+.user-name {
+    font-weight: 500;
+    color: #ffffff;
+}
+
+.dropdown-arrow {
+    font-size: 10px;
+    color: #a1a1aa;
+    transition: transform 0.2s ease;
+}
+
+.user-dropdown.active .dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+.dropdown-content {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 100%;
+    margin-top: 8px;
+    min-width: 200px;
+    background: rgba(17, 17, 17, 0.95);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    overflow: hidden;
+    padding: 6px;
+}
+
+.dropdown-content.show {
+    display: block;
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    color: #a1a1aa;
+    text-decoration: none;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    font-size: 14px;
+}
+
+.dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #ffffff;
+}
+
+.dropdown-item .icon {
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+}
+
+.logout-item:hover {
+    color: #ffd700;
+}
+
+.delete-item:hover {
+    background: rgba(255, 82, 82, 0.1);
+    color: #FF5252;
+}
+
+.range-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 100%;
+    width: max-content;
+    background: #1a1a1a;
+    border: 1px solid #374151;
+    border-radius: 6px;
+    z-index: 200;
+    display: none;
+    overflow: hidden;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.range-menu.visible {
+    display: block;
+}
+
+.range-item {
+    padding: 10px 16px;
+    transition: background 0.2s;
+    font-size: 0.9rem;
+    text-align: left;
+    color: #d1d4dc;
+}
+
+.range-item:hover {
+    background: #2a2e39;
+    color: white;
+}
+
+.range-item.active {
+    background: #2962ff;
+    color: white;
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(5px);
+    justify-content: center;
+    align-items: center;
+}
+
+.modal.visible {
+    display: flex;
+}
+
+.modal-content {
+    background-color: #111;
+    border: 1px solid #333;
+    border-radius: 16px;
+    padding: 32px;
+    text-align: center;
+    min-width: 320px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    animation: modalPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes modalPop {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #2ed573 0%, #1cb859 100%);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    transition: all 0.2s ease;
+    margin-bottom: 12px;
+    font-size: 1rem;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(46, 213, 115, 0.4);
+}
+
+.btn-secondary {
+    background: transparent;
+    color: #a1a1aa;
+    border: 1px solid #333;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    transition: all 0.2s ease;
+    font-size: 1rem;
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+    border-color: #666;
+}
+
+.btn-danger {
+    background-color: #ff4444;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    transition: background 0.2s;
+    font-family: inherit;
+    margin-top: 10px;
+}
+
+.btn-danger:hover {
+    background-color: #cc3333;
+}
+/* Indicator Dropdown Styles */
+.indicator-item { transition: background 0.2s; cursor: pointer; }
+.indicator-item:hover { background: #2a2e39; }
+.indicator-dropdown:hover { background: rgba(255,255,255,0.1); }
+
+/* ============================================
+   NEWS SECTION (ELITE LIST VIEW)
+   ============================================ */
+.news-grid {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  margin-top: 1.5rem !important;
+  text-align: left !important;
+}
+
+.modal-content .news-grid {
+  text-align: left !important;
+}
+
+#newsModal .modal-content {
+  text-align: left !important;
+  padding: 40px !important;
+}
+
+.news-list-item {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 1.5rem 0.5rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  text-align: left !important;
+}
+
+.news-list-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+  padding-left: 1rem;
+}
+
+.news-item-title-row {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 12px !important;
+  margin-bottom: 8px !important;
+}
+
+.news-item-title {
+  font-size: 1.2rem !important;
+  font-weight: 600 !important;
+  color: #ffffff !important;
+  text-decoration: none !important;
+  line-height: 1.4 !important;
+  flex: 1;
+}
+
+.news-item-title:hover {
+  color: #4A90E2 !important;
+}
+
+.external-icon {
+  color: #4A90E2;
+  font-size: 0.9rem;
+  opacity: 0.5;
+  margin-top: 4px;
+}
+
+.news-item-badges {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.news-score-badge {
+  font-size: 0.75rem !important;
+  font-weight: 800 !important;
+  padding: 2px 10px !important;
+  border-radius: 6px !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.news-score-badge.positive { color: #00e676 !important; }
+.news-score-badge.negative { color: #ff1744 !important; }
+
+.news-sentiment-badge {
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  padding: 3px 10px !important;
+  border-radius: 6px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.news-sentiment-badge.positive { background: rgba(0, 230, 118, 0.1) !important; color: #00e676 !important; }
+.news-sentiment-badge.negative { background: rgba(255, 23, 68, 0.1) !important; color: #ff1744 !important; }
+
+.news-item-meta {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  font-size: 0.85rem !important;
+  color: #71717a !important;
+  margin-bottom: 12px !important;
+}
+
+.news-item-source {
+  font-weight: 600;
+  color: #4A90E2;
+}
+
+.news-item-summary {
+  font-size: 0.95rem !important;
+  color: #a1a1aa !important;
+  line-height: 1.6 !important;
+  margin: 0 !important;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+:focus-visible {
+  outline: 2px solid var(--accent-blue, #2563EB);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+

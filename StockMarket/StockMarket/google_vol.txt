@@ -1,0 +1,6 @@
+
+Checking https://www.google.com/finance/quote/NIFTY_BANK:INDEXNSE...
+Volume label NOT found.
+
+Checking https://www.google.com/finance/quote/SENSEX:INDEXBOM...
+Volume label NOT found.

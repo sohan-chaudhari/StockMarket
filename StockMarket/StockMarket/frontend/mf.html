@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mutual Funds - LEVERAGE</title>
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nav.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background: #0A0A0B; color: #fff; font-family: 'Inter', sans-serif; }
+        .page-content { max-width: 1000px; margin: 0 auto; padding: 4rem 2rem; }
+        .page-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+        .page-subtitle { color: #a1a1aa; font-size: 0.9rem; margin-bottom: 2rem; }
+        .mf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+        .mf-card { background: #111; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.25rem; }
+        .mf-name { font-weight: 600; font-size: 0.9rem; margin-bottom: 4px; }
+        .mf-category { font-size: 0.7rem; color: #4A90E2; margin-bottom: 8px; }
+        .mf-return { font-family: 'Roboto Mono', monospace; font-weight: 600; font-size: 0.85rem; }
+        .mf-nav { font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 1rem; }
+        .text-green { color: #00E676; } .text-red { color: #FF0055; }
+        .returns-row { display: flex; gap: 1rem; margin-top: 8px; }
+        .returns-row > div { flex: 1; text-align: center; padding: 6px; background: rgba(255,255,255,0.03); border-radius: 6px; }
+        .returns-row label { display: block; font-size: 0.65rem; color: #a1a1aa; text-transform: uppercase; }
+    </style>
+    <script src="page-cache.js"></script>
+</head>
+<body>
+    <div id="nav-root"></div>
+    <main class="page-content">
+        <h1 class="page-title">Mutual Funds</h1>
+        <p class="page-subtitle">Top-performing mutual funds across categories</p>
+        <div class="mf-grid" id="mfContainer">
+            <div style="grid-column:1/-1;text-align:center;color:var(--text-secondary);padding:3rem;">Loading...</div>
+        </div>
+    </main>
+    <script>
+        var MFs = [
+            {name:'Quant Small Cap Fund',category:'Small Cap',nav:245.60,1y:38.5,3y:28.2,5y:22.1},
+            {name:'SBI Contra Fund',category:'Value / Contra',nav:198.75,1y:32.1,3y:24.5,5y:18.8},
+            {name:'HDFC Flexi Cap Fund',category:'Flexi Cap',nav:567.30,1y:28.4,3y:21.8,5y:16.5},
+            {name:'ICICI Pru Bluechip Fund',category:'Large Cap',nav:112.45,1y:22.6,3y:18.4,5y:15.2},
+            {name:'Nippon India Midcap Fund',category:'Mid Cap',nav:189.80,1y:35.2,3y:26.8,5y:20.3},
+            {name:'Mirae Asset Large & Midcap',category:'Large & Mid',nav:167.25,1y:26.8,3y:20.5,5y:17.1},
+            {name:'Kotak Emerging Equity Fund',category:'Mid Cap',nav:134.90,1y:31.5,3y:23.6,5y:19.4},
+            {name:'Axis Bluechip Fund',category:'Large Cap',nav:88.65,1y:20.4,3y:16.2,5y:13.8},
+            {name:'Parag Parikh Flexi Cap',category:'Flexi Cap',nav:78.40,1y:24.8,3y:19.6,5y:16.9},
+            {name:'DSP Small Cap Fund',category:'Small Cap',nav:156.75,1y:36.9,3y:27.4,5y:21.7},
+        ];
+        function loadMFs(){
+            var container = document.getElementById('mfContainer');
+            container.innerHTML = MFs.map(function(m){
+                function fmt(v){return (v>=0?'+':'')+v.toFixed(1)+'%';}
+                return '<div class="mf-card">' +
+                    '<div class="mf-name">'+m.name+'</div>' +
+                    '<div class="mf-category">'+m.category+'</div>' +
+                    '<div class="mf-nav">\u20B9'+m.nav.toFixed(2)+'</div>' +
+                    '<div class="returns-row">' +
+                        '<div><label>1Y</label><div class="mf-return '+(m[('1y')]>=0?'text-green':'text-red')+'">'+fmt(m[('1y')])+'</div></div>' +
+                        '<div><label>3Y</label><div class="mf-return '+(m[('3y')]>=0?'text-green':'text-red')+'">'+fmt(m[('3y')])+'</div></div>' +
+                        '<div><label>5Y</label><div class="mf-return '+(m[('5y')]>=0?'text-green':'text-red')+'">'+fmt(m[('5y')])+'</div></div>' +
+                    '</div></div>';
+            }).join('');
+        }
+        loadMFs();
+    </script>
+    <script src="nav.js?v=3"></script>
+</body>
+</html>

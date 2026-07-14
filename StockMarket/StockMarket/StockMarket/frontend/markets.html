@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markets - LEVERAGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nav.css">
+    <style>
+        :root { --font-ui: 'Inter', sans-serif; --text-secondary: #a1a1aa; --accent-blue: #4A90E2; }
+        .markets-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; }
+        .markets-card { background: #111; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.5rem; }
+        .markets-card.full { grid-column: 1 / -1; }
+        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; }
+        .card-header h3 { font-size: 1.1rem; font-weight: 600; color: #fff; }
+        .badge { font-size: 0.7rem; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge-blue { background: rgba(74,144,226,0.15); color: #4A90E2; }
+        .badge-green { background: rgba(0,230,118,0.15); color: #00E676; }
+        .badge-red { background: rgba(255,0,85,0.15); color: #FF0055; }
+        .index-row { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .index-row:last-child { border-bottom: none; }
+        .index-name { font-weight: 500; color: #fff; font-size: 0.9rem; }
+        .index-price { font-family: 'Roboto Mono', monospace; font-weight: 600; font-size: 0.9rem; }
+        .index-change { font-family: 'Roboto Mono', monospace; font-size: 0.85rem; font-weight: 500; min-width: 110px; text-align: right; }
+        .text-green { color: #00E676; } .text-red { color: #FF0055; } .text-muted { color: #52525b; }
+        .tabs { display: flex; gap: 4px; background: #1a1a1a; border-radius: 8px; padding: 3px; margin-bottom: 1.25rem; flex-wrap: wrap; }
+        .tab { padding: 6px 16px; border-radius: 6px; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); cursor: pointer; border: none; background: none; transition: all 0.2s; font-family: var(--font-ui); }
+        .tab.active { background: #333; color: #fff; }
+        .tab:hover:not(.active) { color: #fff; }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
+        .stat-item { text-align: center; padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px; }
+        .stat-label { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }
+        .stat-value { font-size: 1.3rem; font-weight: 700; font-family: 'Roboto Mono', monospace; }
+        .stat-sub { font-size: 0.75rem; font-weight: 500; margin-top: 2px; }
+        .sector-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .sector-row:last-child { border-bottom: none; }
+        .sector-name { font-size: 0.85rem; font-weight: 500; color: #fff; }
+        .sector-bar { flex: 1; height: 6px; background: #1a1a1a; border-radius: 3px; margin: 0 1rem; overflow: hidden; }
+        .sector-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+        .sector-pct { font-family: 'Roboto Mono', monospace; font-size: 0.85rem; font-weight: 600; min-width: 50px; text-align: right; }
+        .page-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+        .page-subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 2rem; }
+        .heatmap-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.5rem; }
+        .heatmap-cell { padding: 0.75rem; border-radius: 6px; text-align: center; font-size: 0.8rem; font-weight: 500; }
+        .heatmap-cell .hm-name { font-size: 0.7rem; color: rgba(255,255,255,0.7); margin-bottom: 2px; }
+        .heatmap-cell .hm-pct { font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 0.9rem; }
+        .global-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .global-row:last-child { border-bottom: none; }
+        .global-name { font-weight: 500; color: #fff; font-size: 0.85rem; }
+        .global-flag { margin-right: 8px; }
+        .fii-row { display: flex; align-items: center; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.85rem; }
+        .fii-row:last-child { border-bottom: none; }
+        .fii-label { color: var(--text-secondary); }
+        .fii-value { font-family: 'Roboto Mono', monospace; font-weight: 600; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .status-dot.open { background: #00E676; box-shadow: 0 0 6px rgba(0,230,118,0.5); }
+        .status-dot.closed { background: #52525b; }
+        @media (max-width: 768px) { .markets-grid { grid-template-columns: 1fr; } .stat-grid { grid-template-columns: repeat(2, 1fr); } .heatmap-grid { grid-template-columns: repeat(2, 1fr); } }
+    </style>
+</head>
+<body style="background-color: #0A0A0B;">
+    <div id="nav-root"></div>
+    <main class="page-content">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem;">
+            <h1 class="page-title" style="margin-bottom:0;">Markets</h1>
+            <div id="marketStatusBanner" style="font-size:0.8rem;color:var(--text-secondary);"></div>
+        </div>
+        <p class="page-subtitle">Complete market overview across segments</p>
+
+        <div id="lastUpdated" style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:1rem;"></div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchMarketTab('nse',this)">NSE</button>
+            <button class="tab" onclick="switchMarketTab('bse',this)">BSE</button>
+            <button class="tab" onclick="switchMarketTab('global',this)">Global</button>
+            <button class="tab" onclick="switchMarketTab('crypto',this)">Crypto</button>
+        </div>
+
+        <div id="marketTabNSE" class="tab-content active">
+            <div class="markets-grid">
+                <div class="markets-card">
+                    <div class="card-header"><h3>Indian Indices</h3><span class="badge badge-blue">LIVE</span></div>
+                    <div id="indicesContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading...</div></div>
+                    <div class="index-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:0.25rem;">
+                        <span class="index-name">India VIX</span>
+                        <span class="index-price" style="color:#ff9800;font-weight:600;" id="vixValue">--</span>
+                        <span class="index-change" id="vixChange"></span>
+                    </div>
+                </div>
+                <div class="markets-card">
+                    <div class="card-header"><h3>Market Stats</h3></div>
+                    <div class="stat-grid" id="marketStats">
+                        <div class="stat-item"><div class="stat-label">Advance</div><div class="stat-value text-green" id="advanceVal">--</div><div class="stat-sub" id="advanceSub">---</div></div>
+                        <div class="stat-item"><div class="stat-label">Decline</div><div class="stat-value text-red" id="declineVal">--</div><div class="stat-sub" id="declineSub">---</div></div>
+                        <div class="stat-item"><div class="stat-label">A/D Ratio</div><div class="stat-value" id="adRatioVal">--</div></div>
+                        <div class="stat-item"><div class="stat-label">Market Mood</div><div class="stat-value" id="marketMoodVal" style="font-size:1.8rem;">--</div></div>
+                    </div>
+                </div>
+                <div class="markets-card">
+                    <div class="card-header"><h3>FII / DII Activity</h3><span class="badge badge-blue" id="fiiBadge">Today</span></div>
+                    <div id="fiiContainer">
+                        <div class="fii-row"><span class="fii-label">FII (Cash)</span><span class="fii-value" id="fiiCashVal" style="color:#FF0055;">-- Cr</span></div>
+                        <div class="fii-row"><span class="fii-label">FII (F&O)</span><span class="fii-value" id="fiiFoVal">-- Cr</span></div>
+                        <div class="fii-row"><span class="fii-label">DII (Cash)</span><span class="fii-value" id="diiCashVal" style="color:#00E676;">-- Cr</span></div>
+                        <div class="fii-row"><span class="fii-label">Net Total</span><span class="fii-value" id="fiiNetVal">-- Cr</span></div>
+                        <div style="margin-top:0.75rem;padding:0.5rem;background:rgba(255,255,255,0.03);border-radius:8px;font-size:0.75rem;color:var(--text-secondary);text-align:center;" id="fiiSource"></div>
+                    </div>
+                </div>
+                <div class="markets-card">
+                    <div class="card-header"><h3>Market Breadth</h3></div>
+                    <div style="padding:0.5rem 0;text-align:center;color:var(--text-secondary);font-size:0.85rem;">
+                        <div style="display:flex;justify-content:space-around;margin-bottom:1.5rem;">
+                            <div><div style="font-size:2rem;font-weight:700;color:#00E676;" id="breadthGainersNum">--</div><div style="font-size:0.75rem;">Gainers</div></div>
+                            <div><div style="font-size:2rem;font-weight:700;" id="breadthUnchangedNum">--</div><div style="font-size:0.75rem;">Unchanged</div></div>
+                            <div><div style="font-size:2rem;font-weight:700;color:#FF0055;" id="breadthLosersNum">--</div><div style="font-size:0.75rem;">Losers</div></div>
+                        </div>
+                        <div style="height:8px;background:#1a1a1a;border-radius:4px;overflow:hidden;display:flex;">
+                            <div id="breadthGainers" style="background:#00E676;transition:width 0.5s;"></div>
+                            <div id="breadthUnchanged" style="background:#52525b;transition:width 0.5s;"></div>
+                            <div id="breadthLosers" style="background:#FF0055;transition:width 0.5s;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="markets-card">
+                    <div class="card-header"><h3>Sector Performance</h3><span class="badge badge-green">Today</span></div>
+                    <div id="sectorsContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading...</div></div>
+                </div>
+                <div class="markets-card">
+                    <div class="card-header"><h3>Sector Leaders</h3><span class="badge badge-blue">Top Stock</span></div>
+                    <div class="heatmap-grid" id="sectorLeadersContainer">
+                        <div style="color:var(--text-secondary);padding:1rem 0;text-align:center;grid-column:1/-1;">Loading...</div>
+                    </div>
+                </div>
+                <div class="markets-card full">
+                    <div class="card-header"><h3>Trending Sectors</h3></div>
+                    <div id="trendingSectorsContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading...</div></div>
+                </div>
+                <div class="markets-card full">
+                    <div class="card-header"><h3>Market Heatmap</h3><span class="badge badge-blue">Stock Level</span></div>
+                    <div id="heatmapSectorsContainer" style="margin-bottom:0.75rem;">
+                        <div style="display:flex;flex-wrap:wrap;gap:4px;padding:0.5rem 0;">
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-secondary);"><div style="width:12px;height:12px;border-radius:3px;background:rgba(255,0,85,0.8);"></div> -5%+</div>
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-secondary);"><div style="width:12px;height:12px;border-radius:3px;background:rgba(255,0,85,0.4);"></div> -2%</div>
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-secondary);"><div style="width:12px;height:12px;border-radius:3px;background:rgba(255,255,255,0.08);"></div> 0%</div>
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-secondary);"><div style="width:12px;height:12px;border-radius:3px;background:rgba(0,230,118,0.4);"></div> +2%</div>
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-secondary);"><div style="width:12px;height:12px;border-radius:3px;background:rgba(0,230,118,0.8);"></div> +5%+</div>
+                        </div>
+                    </div>
+                    <div id="heatmapContainer" class="heatmap-grid" style="grid-template-columns:repeat(6,1fr);">
+                        <div style="color:var(--text-secondary);padding:1rem 0;text-align:center;grid-column:1/-1;">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="marketTabBSE" class="tab-content">
+            <div class="markets-card">
+                <div class="card-header"><h3>BSE Indices</h3><span class="badge badge-blue">LIVE</span></div>
+                <div id="bseIndicesContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading...</div></div>
+            </div>
+            <div style="padding:1rem;text-align:center;color:var(--text-secondary);font-size:0.8rem;background:rgba(255,255,255,0.02);border-radius:8px;">
+                ⚠️ BSE sector indices (BSE500, Midcap, Smallcap, Bankex, etc.) are currently unavailable via our data providers. Only SENSEX is shown while we explore additional data sources.
+            </div>
+        </div>
+        <div id="marketTabGlobal" class="tab-content">
+            <div class="markets-card" style="max-width:600px;margin:0 auto;">
+                <div class="card-header"><h3>Global Indices</h3><span class="badge badge-blue">LIVE</span></div>
+                <div id="globalContainer">
+                    <div class="global-row"><span><span class="global-flag">🇺🇸</span><span class="global-name">S&P 500</span></span><span class="fii-value" id="sp500Val">--</span><span class="index-change" id="sp500Chg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇺🇸</span><span class="global-name">NASDAQ</span></span><span class="fii-value" id="nasdaqVal">--</span><span class="index-change" id="nasdaqChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇯🇵</span><span class="global-name">Nikkei 225</span></span><span class="fii-value" id="nikkeiVal">--</span><span class="index-change" id="nikkeiChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇭🇰</span><span class="global-name">Hang Seng</span></span><span class="fii-value" id="hsiVal">--</span><span class="index-change" id="hsiChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇩🇪</span><span class="global-name">DAX</span></span><span class="fii-value" id="daxVal">--</span><span class="index-change" id="daxChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇬🇧</span><span class="global-name">FTSE 100</span></span><span class="fii-value" id="ftseVal">--</span><span class="index-change" id="ftseChg"></span></div>
+                </div>
+            </div>
+        </div>
+        <div id="marketTabCrypto" class="tab-content">
+            <div class="markets-card" style="max-width:600px;margin:0 auto;">
+                <div class="card-header"><h3>Cryptocurrencies</h3><span class="badge badge-blue">LIVE</span></div>
+                <div id="cryptoContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading crypto prices...</div></div>
+            </div>
+        </div>
+    </main>
+    <script>
+        (function () {
+            var INDICES = ['NIFTY','SENSEX','BANKNIFTY','FINNIFTY','MIDCAP','SMALLCAP'];
+            var BSE_INDICES = ['SENSEX'];
+            var lastUpdatedTime = Date.now();
+            var marketOpen = false;
+            var lastMoversData = null;
+
+            // NSE sector indices — fetched live from /api/live-prices
+            var SECTOR_INDICES = [
+                {ticker:'BANKNIFTY',    name:'Banking'},
+                {ticker:'NIFTY_AUTO',   name:'Auto'},
+                {ticker:'NIFTY_IT',     name:'IT'},
+                {ticker:'NIFTY_PHARMA', name:'Pharma'},
+                {ticker:'NIFTY_FMCG',   name:'FMCG'},
+                {ticker:'NIFTY_METAL',  name:'Metal'},
+                {ticker:'NIFTY_ENERGY', name:'Energy'},
+                {ticker:'NIFTY_MEDIA',  name:'Media'},
+                {ticker:'NIFTY_PSU_BANK', name:'PSU Banks'},
+                {ticker:'NIFTY_REALTY', name:'Realty'},
+                {ticker:'FINNIFTY',     name:'Fin. Services'},
+            ];
+            var sectorPcts = {};
+
+            async function fetchIndices() {
+                try {
+                    var res = await fetch('/api/live-prices', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({tickers: INDICES})
+                    });
+                    var data = await res.json();
+                    var container = document.getElementById('indicesContainer');
+                    container.innerHTML = INDICES.map(function(t){
+                        var d = data[t]||{}; var price=d.current||0; var prev=d.prev_close||d.open||price;
+                        var diff=price-prev; var pct=prev>0?(diff/prev)*100:0;
+                        var cls=diff>=0?'text-green':'text-red'; var sign=diff>=0?'+':'';
+                        return '<div class="index-row" onclick="window.location.href=\'index_chart.html?ticker='+encodeURIComponent(t)+'\'" style="cursor:pointer;"><span class="index-name">'+t+'</span><span class="index-price" style="color:#fff;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                    }).join('');
+                } catch(e){
+                    document.getElementById('indicesContainer').innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Start backend server</div>';
+                }
+            }
+
+            async function fetchAllMarketData() {
+                try {
+                    var res = await fetch('/api/market-movers');
+                    var data = await res.json();
+                    lastMoversData = data;
+                    marketOpen = data.market_open === true;
+                    var adv = data.advance_count || 0;
+                    var dec = data.decline_count || 0;
+                    var total = adv + dec || 1;
+
+                    document.getElementById('advanceVal').textContent = adv;
+                    document.getElementById('declineVal').textContent = dec;
+                    var ratio = dec > 0 ? (adv/dec).toFixed(2) : adv;
+                    document.getElementById('adRatioVal').textContent = ratio;
+                    document.getElementById('advanceSub').textContent = adv > dec ? 'Bulls in control' : 'Bears in control';
+                    document.getElementById('declineSub').textContent = dec > adv ? 'Under pressure' : 'Holding well';
+                    document.getElementById('breadthGainersNum').textContent = adv;
+                    document.getElementById('breadthLosersNum').textContent = dec;
+                    document.getElementById('breadthUnchangedNum').textContent = 0;
+                    var gPct = (adv/total)*100; var lPct = (dec/total)*100;
+                    document.getElementById('breadthGainers').style.width = gPct+'%';
+                    document.getElementById('breadthLosers').style.width = lPct+'%';
+                    document.getElementById('breadthUnchanged').style.width = (100-gPct-lPct)+'%';
+                    document.getElementById('marketMoodVal').textContent = ratio >= 1 ? '🐂' : '🐻';
+
+                    var statusEl = document.getElementById('marketStatusLabel');
+                    if(statusEl) statusEl.innerHTML = '<span class="status-dot '+(marketOpen?'open':'closed')+'"></span>'+(marketOpen?'Market Open':'Market Closed');
+
+                    renderSectors();
+                    renderTrending();
+                } catch(e) {
+                    console.error("Failed to load market data", e);
+                }
+            }
+
+            async function fetchSectorIndices() {
+                var sTickers = SECTOR_INDICES.map(function(s){ return s.ticker; });
+                try {
+                    var res = await fetch('/api/live-prices', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({tickers: sTickers})
+                    });
+                    var data = await res.json();
+                    updateSectorsFromData(data);
+                } catch(e) {
+                    SECTOR_INDICES.forEach(function(s){ sectorPcts[s.name] = 0; });
+                }
+                renderSectors();
+                renderTrending();
+            }
+
+            function updateSectorsFromData(data) {
+                SECTOR_INDICES.forEach(function(s){
+                    var d = data[s.ticker];
+                    if (!d) return;
+                    var price = d.current || 0;
+                    var prev = d.prev_close || d.open || price;
+                    var diff = price - prev;
+                    sectorPcts[s.name] = prev > 0 ? (diff / prev) * 100 : 0;
+                });
+                renderSectors();
+                renderTrending();
+            }
+
+            // ── WebSocket for real-time sector index updates ──
+            var sectorWs = null;
+            var sectorWsReconnectTimer = null;
+            var sectorWsReconnectAttempt = 0;
+
+            function connectSectorWS() {
+                var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                var url = proto + '//' + window.location.host + '/ws/dashboard';
+                sectorWs = new WebSocket(url);
+
+                sectorWs.onopen = function() {
+                    sectorWsReconnectAttempt = 0;
+                    if (sectorWsReconnectTimer) { clearTimeout(sectorWsReconnectTimer); sectorWsReconnectTimer = null; }
+                    var allTickers = INDICES.concat(
+                        SECTOR_INDICES.map(function(s){ return s.ticker; }),
+                        BSE_INDICES, ['^INDIAVIX']
+                    );
+                    allTickers = allTickers.filter(function(t,i,self){ return self.indexOf(t) === i; });
+                    sectorWs.send(JSON.stringify({ type: 'subscribe', topics: allTickers }));
+                };
+
+                function updateIndicesFromTicks(batch){
+                    var container = document.getElementById('indicesContainer');
+                    if (container) {
+                        var html = INDICES.map(function(t){
+                            if (!batch[t] || !batch[t].current) return '';
+                            var d = batch[t]; var price = d.current; var prev = d.prev_close || d.open || price;
+                            var diff = price - prev; var pct = prev > 0 ? (diff / prev) * 100 : 0;
+                            var cls = diff >= 0 ? 'text-green' : 'text-red'; var sign = diff >= 0 ? '+' : '';
+                            return '<div class="index-row" onclick="window.location.href=\'index_chart.html?ticker='+encodeURIComponent(t)+'\'" style="cursor:pointer;"><span class="index-name">'+t+'</span><span class="index-price" style="color:#fff;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                        }).filter(function(r){ return r !== ''; }).join('');
+                        if (html) container.innerHTML = html;
+                    }
+                    // VIX
+                    if (batch['^INDIAVIX']) {
+                        var d = batch['^INDIAVIX']; var vix = d.current;
+                        var el = document.getElementById('vixValue');
+                        var chgEl = document.getElementById('vixChange');
+                        if (el && vix) el.textContent = vix.toFixed(2);
+                        if (chgEl && vix && d.prev_close) {
+                            var diff = vix - d.prev_close;
+                            chgEl.textContent = (diff >= 0 ? '+' : '') + diff.toFixed(2);
+                            chgEl.style.color = diff >= 0 ? '#FF0055' : '#00E676';
+                        }
+                    }
+                    // BSE
+                    var bseContainer = document.getElementById('bseIndicesContainer');
+                    if (bseContainer) {
+                        var bseHtml = BSE_INDICES.map(function(t){
+                            if (!batch[t] || !batch[t].current) return '';
+                            var d = batch[t]; var price = d.current; var prev = d.prev_close || d.open || price;
+                            var diff = price - prev; var pct = prev > 0 ? (diff / prev) * 100 : 0;
+                            var cls = diff >= 0 ? 'text-green' : 'text-red'; var sign = diff >= 0 ? '+' : '';
+                            return '<div class="index-row"><span class="index-name">'+t+'</span><span class="index-price" style="color:#fff;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                        }).filter(function(r){ return r !== ''; }).join('');
+                        if (bseHtml) bseContainer.innerHTML = bseHtml;
+                    }
+                }
+
+                sectorWs.onmessage = function(evt) {
+                    try {
+                        var msg = JSON.parse(evt.data);
+                        if (msg.type === 'price_update' && msg.data) {
+                            var batch = {};
+                            SECTOR_INDICES.forEach(function(s){
+                                if (msg.data[s.ticker]) batch[s.ticker] = msg.data[s.ticker];
+                            });
+                            if (Object.keys(batch).length > 0) updateSectorsFromData(batch);
+                            // Also update main indices + BSE + VIX from same batch
+                            updateIndicesFromTicks(msg.data);
+                            // Update heatmap
+                            if (typeof updateHeatmapFromTicks === 'function') updateHeatmapFromTicks(msg.data);
+                        } else if (msg.type === 'connected') {
+                            // subscribed
+                        }
+                    } catch(e) {}
+                };
+
+                sectorWs.onclose = function() {
+                    sectorWs = null;
+                    scheduleSectorWSReconnect();
+                };
+
+                sectorWs.onerror = function() {
+                    sectorWs = null;
+                    scheduleSectorWSReconnect();
+                };
+            }
+
+            function scheduleSectorWSReconnect() {
+                if (sectorWsReconnectTimer) return;
+                var delay = Math.min(1000 * Math.pow(2, sectorWsReconnectAttempt), 30000) + Math.random() * 1000;
+                sectorWsReconnectAttempt = Math.min(sectorWsReconnectAttempt + 1, 10);
+                sectorWsReconnectTimer = setTimeout(function() {
+                    sectorWsReconnectTimer = null;
+                    connectSectorWS();
+                }, delay);
+            }
+
+            function renderSectors(){
+                var container = document.getElementById('sectorsContainer');
+                container.innerHTML = SECTOR_INDICES.map(function(s){
+                    var p = sectorPcts[s.name] || 0; var cls = p >= 0 ? 'text-green' : 'text-red';
+                    var fillCls = p >= 0 ? '#00E676' : '#FF0055';
+                    return '<div class="sector-row"><span class="sector-name">'+s.name+'</span><div class="sector-bar"><div class="sector-fill" style="width:'+Math.min(Math.abs(p)*15,100)+'%;background:'+fillCls+';"></div></div><span class="sector-pct '+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</span></div>';
+                }).join('');
+            }
+
+            // ── Sector Leaders ──
+            var sectorLeadersCache = null;
+
+            async function fetchSectorLeaders() {
+                try {
+                    var res = await fetch('/api/sector-leaders');
+                    sectorLeadersCache = await res.json();
+                } catch(e) {
+                    console.error("Failed to load sector leaders", e);
+                }
+                renderSectorLeaders();
+            }
+
+            function renderSectorLeaders(){
+                var container = document.getElementById('sectorLeadersContainer');
+                if (!sectorLeadersCache || sectorLeadersCache.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;grid-column:1/-1;">No live data</div>';
+                    return;
+                }
+                container.innerHTML = sectorLeadersCache.map(function(s){
+                    var p = s.change || 0; var cls = p >= 0 ? 'text-green' : 'text-red';
+                    var intensity = Math.min(Math.abs(p)/3, 1);
+                    var bg = p >= 0 ? 'rgba(0,'+Math.floor(230-(1-intensity)*180)+','+Math.floor(118-(1-intensity)*100)+',0.25)' : 'rgba('+Math.floor(255-(1-intensity)*200)+',0,'+Math.floor(85-(1-intensity)*70)+',0.25)';
+                    return '<div class="heatmap-cell" style="background:'+bg+';border:1px solid rgba(255,255,255,0.06);cursor:pointer;" onclick="showSectorTop5(\''+s.sector+'\')"><div class="hm-name">'+s.sector+'</div><div style="font-size:0.85rem;font-weight:600;color:#fff;margin:2px 0;">'+s.symbol+'</div><div class="hm-pct" style="color:'+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</div></div>';
+                }).join('');
+            }
+
+            // ── Sector Top-5 Modal (optional enhancement) ──
+            var sectorTop5Cache = {};
+
+            function showSectorTop5(sectorName) {
+                var sector = sectorLeadersCache ? sectorLeadersCache.find(function(s){ return s.sector === sectorName; }) : null;
+                if (!sector || !sector.top5) return;
+                var overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                overlay.onclick = function(e){ if (e.target === overlay) document.body.removeChild(overlay); };
+                var modal = document.createElement('div');
+                modal.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:1.5rem;min-width:280px;max-width:360px;';
+                var title = document.createElement('h3');
+                title.style.cssText = 'font-size:1.1rem;font-weight:600;color:#fff;margin-bottom:1rem;';
+                title.textContent = sectorName;
+                modal.appendChild(title);
+                sector.top5.forEach(function(stock){
+                    var cls = stock.change >= 0 ? '#00E676' : '#FF0055';
+                    var sign = stock.change >= 0 ? '+' : '';
+                    var row = document.createElement('div');
+                    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.85rem;';
+                    row.innerHTML = '<span style="color:#fff;font-weight:500;">'+stock.symbol+'</span><span style="color:'+cls+';font-family:\'Roboto Mono\',monospace;font-weight:600;">'+sign+stock.change.toFixed(2)+'%</span>';
+                    modal.appendChild(row);
+                });
+                overlay.appendChild(modal);
+                document.body.appendChild(overlay);
+                overlay.addEventListener('keydown', function(e){ if (e.key === 'Escape') document.body.removeChild(overlay); });
+                overlay.focus();
+            }
+
+            function renderTrending(){
+                var sorted = SECTOR_INDICES.slice().sort(function(a,b){ return Math.abs(sectorPcts[b.name]||0)-Math.abs(sectorPcts[a.name]||0); });
+                var container = document.getElementById('trendingSectorsContainer');
+                container.innerHTML = sorted.map(function(s){
+                    var p = sectorPcts[s.name] || 0; var cls = p >= 0 ? 'text-green' : 'text-red';
+                    return '<div class="sector-row"><span class="sector-name">'+s.name+'</span><span style="font-size:0.8rem;color:var(--text-secondary);">NSE Index</span><span class="sector-pct '+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</span></div>';
+                }).join('');
+            }
+
+            // ── Market Heatmap ──
+            var _heatmapTickers = [];
+            async function loadHeatmapTickers() {
+                try {
+                    var res = await fetch('/api/market-movers');
+                    var data = await res.json();
+                    _heatmapTickers = (data.advancing||[]).concat(data.declining||[]).slice(0,150).map(function(m){ return m.ticker; });
+                } catch(e) {}
+                renderHeatmap();
+            }
+
+            async function renderHeatmap() {
+                var container = document.getElementById('heatmapContainer');
+                if (!container) return;
+                if (_heatmapTickers.length === 0) {
+                    try {
+                        var res = await fetch('/api/screener');
+                        var data = await res.json();
+                        _heatmapTickers = data.slice(0,150).map(function(s){ return s.ticker; });
+                    } catch(e) { return; }
+                }
+                try {
+                    var res = await fetch('/api/live-prices', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({tickers: _heatmapTickers})
+                    });
+                    var raw = await res.json();
+                    var items = _heatmapTickers.map(function(t){
+                        var d = raw[t]||{};
+                        var cp = d.current_price || d.current || 0;
+                        var prev = d.prev_close || d.open || cp;
+                        var pct = prev > 0 ? ((cp - prev)/prev*100) : 0;
+                        return { ticker: t, price: cp, pct: pct, name: (STOCK_META[t]||{}).name || t };
+                    });
+                    items.sort(function(a,b){ return Math.abs(b.pct) - Math.abs(a.pct); });
+                    container.innerHTML = items.slice(0,96).map(function(s){
+                        var p = s.pct;
+                        var cls = p >= 0 ? '#00E676' : '#FF0055';
+                        var intensity = Math.min(Math.abs(p)/4, 1);
+                        var bg;
+                        if (p >= 0) {
+                            var g = Math.floor(230 - (1-intensity)*180);
+                            var b = Math.floor(118 - (1-intensity)*100);
+                            bg = 'rgba(0,'+g+','+b+',0.35)';
+                        } else {
+                            var r = Math.floor(255 - (1-intensity)*200);
+                            var gb = Math.floor(85 - (1-intensity)*70);
+                            bg = 'rgba('+r+',0,'+gb+',0.35)';
+                        }
+                        return '<div id="hm-cell-'+s.ticker+'" class="heatmap-cell" style="background:'+bg+';border:1px solid rgba(255,255,255,0.06);cursor:pointer;" onclick="window.location.href=\'stock.html?ticker='+s.ticker+'\'"><div class="hm-name">'+s.name.substring(0,14)+'</div><div id="hm-pct-'+s.ticker+'" class="hm-pct" style="color:'+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</div></div>';
+                    }).join('');
+                } catch(e) {
+                    container.innerHTML = '<div style="color:var(--text-secondary);text-align:center;grid-column:1/-1;padding:1rem;">Failed to load heatmap</div>';
+                }
+                
+                // Subscribe to live updates for these tickers
+                if (sectorWs && sectorWs.readyState === WebSocket.OPEN) {
+                    sectorWs.send(JSON.stringify({ type: 'subscribe', topics: _heatmapTickers }));
+                }
+            }
+
+            function updateHeatmapFromTicks(batch) {
+                if (!_heatmapTickers || _heatmapTickers.length === 0) return;
+                _heatmapTickers.forEach(function(t) {
+                    if (batch[t] && batch[t].current) {
+                        var d = batch[t];
+                        var price = d.current;
+                        var prev = d.prev_close || d.open || price;
+                        var pct = prev > 0 ? ((price - prev) / prev * 100) : 0;
+                        var cellEl = document.getElementById('hm-cell-' + t);
+                        var pctEl = document.getElementById('hm-pct-' + t);
+                        if (cellEl && pctEl) {
+                            var p = pct;
+                            var cls = p >= 0 ? '#00E676' : '#FF0055';
+                            var intensity = Math.min(Math.abs(p)/4, 1);
+                            var bg;
+                            if (p >= 0) {
+                                var g = Math.floor(230 - (1-intensity)*180);
+                                var b = Math.floor(118 - (1-intensity)*100);
+                                bg = 'rgba(0,'+g+','+b+',0.35)';
+                            } else {
+                                var r = Math.floor(255 - (1-intensity)*200);
+                                var gb = Math.floor(85 - (1-intensity)*70);
+                                bg = 'rgba('+r+',0,'+gb+',0.35)';
+                            }
+                            cellEl.style.background = bg;
+                            pctEl.style.color = cls;
+                            pctEl.textContent = (p >= 0 ? '+' : '') + p.toFixed(2) + '%';
+                        }
+                    }
+                });
+            }
+
+            async function fetchGlobalIndices(){
+                try {
+                    var res = await fetch('/api/live-prices', {
+                        method: 'POST', headers: {'Content-Type':'application/json'},
+                        body: JSON.stringify({tickers: ['^GSPC','^IXIC','^N225','^HSI','^GDAXI','^FTSE']})
+                    });
+                    var data = await res.json();
+                    var globals = [
+                        {id:'sp500',flag:'🇺🇸',name:'S&P 500',key:'^GSPC'},
+                        {id:'nasdaq',flag:'🇺🇸',name:'NASDAQ',key:'^IXIC'},
+                        {id:'nikkei',flag:'🇯🇵',name:'Nikkei 225',key:'^N225'},
+                        {id:'hsi',flag:'🇭🇰',name:'Hang Seng',key:'^HSI'},
+                        {id:'dax',flag:'🇩🇪',name:'DAX',key:'^GDAXI'},
+                        {id:'ftse',flag:'🇬🇧',name:'FTSE 100',key:'^FTSE'}
+                    ];
+                    globals.forEach(function(g){
+                        var d = data[g.key]||{};
+                        var price = d.current;
+                        var valEl = document.getElementById(g.id+'Val');
+                        var chgEl = document.getElementById(g.id+'Chg');
+                        if(valEl) {
+                            if(price) {
+                                valEl.textContent = price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+                            } else {
+                                valEl.textContent = '--';
+                            }
+                        }
+                        if(chgEl && d.current) {
+                            var base = d.prev_close || d.open || d.current;
+                            var diff = d.current - base;
+                            var pct = base > 0 ? (diff/base)*100 : 0;
+                            chgEl.textContent = (diff>=0?'+':'')+pct.toFixed(2)+'%';
+                            chgEl.style.color = diff>=0?'#00E676':'#FF0055';
+                        } else if(chgEl) {
+                            chgEl.textContent = '';
+                        }
+                    });
+                } catch(e) {
+                }
+            }
+
+            async function fetchFiiDii(){
+                try {
+                    var res = await fetch('/api/fii-dii');
+                    var data = await res.json();
+                    var entries = data.entries;
+                    if(entries && entries.length > 0) {
+                        var latest = entries[0];
+                        function fmt(val){
+                            var n = parseFloat(val) || 0;
+                            return (n >= 0 ? '+' : '-') + '₹' + Math.abs(n).toFixed(2) + ' Cr';
+                        }
+                        document.getElementById('fiiCashVal').textContent = fmt(latest.fii_cash_cr);
+                        document.getElementById('fiiCashVal').style.color = (parseFloat(latest.fii_cash_cr)||0) >= 0 ? '#00E676' : '#FF0055';
+                        document.getElementById('fiiFoVal').textContent = fmt(latest.fii_fo_cr);
+                        document.getElementById('fiiFoVal').style.color = (parseFloat(latest.fii_fo_cr)||0) >= 0 ? '#00E676' : '#FF0055';
+                        document.getElementById('diiCashVal').textContent = fmt(latest.dii_cash_cr);
+                        document.getElementById('diiCashVal').style.color = (parseFloat(latest.dii_cash_cr)||0) >= 0 ? '#00E676' : '#FF0055';
+                        document.getElementById('fiiNetVal').textContent = fmt(latest.net_total_cr);
+                        document.getElementById('fiiNetVal').style.color = (parseFloat(latest.net_total_cr)||0) >= 0 ? '#00E676' : '#FF0055';
+                        var badgeDate = latest.date || 'Today';
+                        var badgeEl = document.getElementById('fiiBadge');
+                        if(badgeEl) badgeEl.textContent = badgeDate;
+                        document.getElementById('fiiSource').textContent = 'Source: ' + (data.source||'NSE') + ' | ' + badgeDate;
+                    } else {
+                        // No entries returned — show unavailable notice
+                        ['fiiCashVal','fiiFoVal','diiCashVal','fiiNetVal'].forEach(function(id){
+                            var el = document.getElementById(id);
+                            if(el){ el.textContent = 'N/A'; el.style.color = '#52525b'; }
+                        });
+                        document.getElementById('fiiSource').innerHTML =
+                            '<span style="color:#a1a1aa;font-size:0.72rem;">⚠️ NSE restricts direct server access for FII/DII data. Data will appear when available.</span>';
+                    }
+                } catch(e){
+                    ['fiiCashVal','fiiFoVal','diiCashVal','fiiNetVal'].forEach(function(id){
+                        var el = document.getElementById(id);
+                        if(el){ el.textContent = 'N/A'; el.style.color = '#52525b'; }
+                    });
+                    document.getElementById('fiiSource').innerHTML =
+                        '<span style="color:#a1a1aa;font-size:0.72rem;">⚠️ FII/DII data unavailable — backend unreachable</span>';
+                }
+            }
+
+            async function fetchBSEIndices(){
+                try {
+                    var res = await fetch('/api/live-prices', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({tickers: BSE_INDICES})
+                    });
+                    var data = await res.json();
+                    var mainContainer = document.getElementById('bseIndicesContainer');
+                    mainContainer.innerHTML = BSE_INDICES.map(function(t){
+                        var d = data[t]||{}; var price=d.current||0; var prev=d.prev_close||d.open||price;
+                        var diff=price-prev; var pct=prev>0?(diff/prev)*100:0;
+                        var cls=diff>=0?'text-green':'text-red'; var sign=diff>=0?'+':'';
+                        return '<div class="index-row"><span class="index-name">'+t+'</span><span class="index-price" style="color:#fff;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                    }).join('');
+                } catch(e) {
+                    document.getElementById('bseIndicesContainer').innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Start backend server</div>';
+                }
+            }
+
+            async function fetchIndiaVIX(){
+                try {
+                    var res = await fetch('/api/live-prices', {
+                        method:'POST', headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({tickers:['^INDIAVIX']})
+                    });
+                    var data = await res.json();
+                    var d = data['^INDIAVIX']||{};
+                    var vix = d.current||0;
+                    var el = document.getElementById('vixValue');
+                    var chgEl = document.getElementById('vixChange');
+                    if(el) el.textContent = vix ? vix.toFixed(2) : '--';
+                    if(chgEl && vix && d.prev_close) {
+                        var diff = vix - d.prev_close;
+                        chgEl.textContent = (diff>=0?'+':'')+diff.toFixed(2);
+                        chgEl.style.color = diff>=0?'#FF0055':'#00E676';
+                    }
+                } catch(e) {}
+            }
+
+            function updateLastUpdated(){
+                lastUpdatedTime = Date.now();
+                var el = document.getElementById('lastUpdated');
+                if(el) {
+                    var d = new Date();
+                    var timeStr = d.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+                    el.textContent = 'Last updated: ' + timeStr;
+                }
+            }
+
+            async function fetchCrypto(){
+                try {
+                    var res = await fetch('/api/crypto-prices');
+                    var data = await res.json();
+                    var container = document.getElementById('cryptoContainer');
+                    if(!data || data.length === 0){
+                        container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Crypto data temporarily unavailable</div>';
+                        return;
+                    }
+                    container.innerHTML = data.map(function(c){
+                        var cls = c.change_24h >= 0 ? 'text-green' : 'text-red';
+                        var sign = c.change_24h >= 0 ? '+' : '';
+                        var mcapStr = c.market_cap ? '$' + (c.market_cap >= 1e12 ? (c.market_cap/1e12).toFixed(2)+'T' : c.market_cap >= 1e9 ? (c.market_cap/1e9).toFixed(2)+'B' : (c.market_cap/1e6).toFixed(2)+'M') : '--';
+                        return '<div class="global-row"><span><span style="font-weight:600;color:#fff;">'+c.symbol+'</span><span style="color:var(--text-secondary);font-size:0.8rem;margin-left:8px;">'+c.name+'</span></span><span style="font-family:\'Roboto Mono\',monospace;font-weight:600;">$'+c.price.toLocaleString('en-US')+'</span><span class="index-change '+cls+'">'+sign+c.change_24h.toFixed(2)+'%</span></div>';
+                    }).join('');
+                } catch(e) {
+                    document.getElementById('cryptoContainer').innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Start backend server</div>';
+                }
+            }
+
+            function refreshAll(){
+                var marketStatusEl = document.getElementById('marketStatusBanner');
+                if(marketStatusEl) {
+                    marketStatusEl.innerHTML = '<span id="marketStatusLabel"><span class="status-dot closed"></span>Loading...</span>';
+                }
+                fetchIndices();
+                fetchAllMarketData();
+                fetchSectorIndices();
+                fetchSectorLeaders();
+                loadHeatmapTickers();
+                fetchGlobalIndices();
+                fetchFiiDii();
+                fetchBSEIndices();
+                fetchIndiaVIX();
+                fetchCrypto();
+                updateLastUpdated();
+            }
+
+            window.switchMarketTab = function(name,btn){
+                document.querySelectorAll('.tab').forEach(function(t){t.classList.remove('active');}); btn.classList.add('active');
+                document.querySelectorAll('.tab-content').forEach(function(tc){tc.classList.remove('active');});
+                var tabEl = document.getElementById('marketTab'+name.charAt(0).toUpperCase()+name.slice(1));
+                if(tabEl) tabEl.classList.add('active');
+            };
+
+            function seedUIFromCache() {
+                try {
+                    var raw = localStorage.getItem('llp');
+                    if (!raw) return;
+                    var ts = parseInt(localStorage.getItem('llp_ts') || '0', 10);
+                    if (Date.now() - ts > 600000) return; // 10-min TTL
+                    var data = JSON.parse(raw);
+                    
+                    // 1. Seed Indices
+                    var container = document.getElementById('indicesContainer');
+                    var seededIndices = false;
+                    var html = INDICES.map(function(t) {
+                        var d = data[t];
+                        if (!d || !d.current) return '';
+                        seededIndices = true;
+                        var price = d.current; var prev = d.prev_close || d.open || price;
+                        var diff = price - prev; var pct = prev > 0 ? (diff / prev) * 100 : 0;
+                        var cls = diff >= 0 ? 'text-green' : 'text-red'; var sign = diff >= 0 ? '+' : '';
+                        return '<div class="index-row" onclick="window.location.href=\'index_chart.html?ticker='+t+'\'" style="cursor:pointer;"><span class="index-name">'+t+'</span><span class="index-price" style="color:#fff;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                    }).join('');
+                    if (seededIndices && html.length > 0) container.innerHTML = html;
+
+                    // 2. Seed Globals
+                    var globals = [
+                        {id:'sp500',key:'^GSPC'}, {id:'nasdaq',key:'^IXIC'},
+                        {id:'nikkei',key:'^N225'}, {id:'hsi',key:'^HSI'},
+                        {id:'dax',key:'^GDAXI'}, {id:'ftse',key:'^FTSE'}
+                    ];
+                    globals.forEach(function(g) {
+                        var d = data[g.key];
+                        if (!d || !d.current) return;
+                        var price = d.current;
+                        var valEl = document.getElementById(g.id+'Val');
+                        var chgEl = document.getElementById(g.id+'Chg');
+                        if (valEl) valEl.textContent = price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+                        if (chgEl) {
+                            var base = d.prev_close || d.open || d.current || price;
+                            var diff = d.current - base; var pct = base > 0 ? (diff / base) * 100 : 0;
+                            chgEl.textContent = (diff >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+                            chgEl.style.color = diff >= 0 ? '#00E676' : '#FF0055';
+                        }
+                    });
+                } catch(e) {}
+            }
+
+            seedUIFromCache();
+            refreshAll(); var _mkInterval = setInterval(refreshAll, 15000);
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) { clearInterval(_mkInterval); _mkInterval = null; }
+                else if (!_mkInterval) { _mkInterval = setInterval(refreshAll, 15000); refreshAll(); }
+            });
+            connectSectorWS();  // real-time 2s sector index updates via WebSocket
+        })();
+    </script>
+    <script src="stocks.js"></script>
+    <script src="nav.js?v=3"></script>
+</body>
+</html>

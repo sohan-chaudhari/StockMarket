@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News - LEVERAGE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <link rel="stylesheet" href="nav.css">
+    <style>
+        :root{--text-secondary:#a1a1aa;--accent-blue:#4A90E2;}
+        .news-layout{display:grid;grid-template-columns:220px 1fr;gap:1.5rem;}
+        .sidebar{display:flex;flex-direction:column;gap:0.25rem;}
+        .sidebar-btn{padding:0.6rem 1rem;background:transparent;border:none;color:var(--text-secondary);text-align:left;font-size:0.85rem;font-weight:500;border-radius:8px;cursor:pointer;transition:all 0.15s;font-family:'Inter',sans-serif;}
+        .sidebar-btn:hover{background:rgba(255,255,255,0.05);color:#fff;}
+        .sidebar-btn.active{background:rgba(74,144,226,0.15);color:#4A90E2;}
+        .featured-headline{background:linear-gradient(135deg,#1a1a2e,#111);border:1px solid rgba(74,144,226,0.2);border-radius:12px;padding:2rem;margin-bottom:1.5rem;cursor:pointer;transition:all 0.2s;position:relative;}
+        .featured-headline:hover{border-color:rgba(74,144,226,0.4);}
+        .featured-headline h2{font-size:1.5rem;font-weight:700;margin-bottom:0.5rem;}
+        .featured-headline p{color:var(--text-secondary);font-size:0.9rem;}
+        .featured-badge{display:inline-block;padding:3px 10px;background:rgba(0,230,118,0.15);color:#00E676;border-radius:20px;font-size:0.7rem;font-weight:600;margin-bottom:0.75rem;}
+        .news-list{display:flex;flex-direction:column;gap:0.75rem;}
+        .news-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1.25rem;cursor:pointer;transition:all 0.2s;position:relative;}
+        .news-card:hover{border-color:rgba(255,255,255,0.15);transform:translateY(-1px);}
+        .news-card .meta{display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;font-size:0.75rem;color:var(--text-secondary);}
+        .news-card .title{font-size:1rem;font-weight:600;color:#fff;margin-bottom:0.35rem;padding-right:1.5rem;}
+        .news-card .excerpt{font-size:0.85rem;color:var(--text-secondary);line-height:1.4;}
+        .sentiment-tag{padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;}
+        .sentiment-bullish{background:rgba(0,230,118,0.15);color:#00E676;}
+        .sentiment-bearish{background:rgba(255,0,85,0.15);color:#FF0055;}
+        .sentiment-neutral{background:rgba(255,255,255,0.1);color:var(--text-secondary);}
+        .page-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
+        .page-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:2rem;}
+        .search-news{display:flex;gap:0.75rem;margin-bottom:1.5rem;flex-wrap:wrap;}
+        .search-news input{flex:1;min-width:200px;padding:0.65rem 1rem;background:#1a1a1a;border:1px solid #333;border-radius:8px;color:#fff;font-family:'Inter',sans-serif;font-size:0.9rem;outline:none;}
+        .search-news input:focus{border-color:var(--accent-blue);}
+        .bookmark-btn{position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:1rem;padding:4px;border-radius:4px;transition:all 0.15s;}
+        .bookmark-btn:hover{color:#ffd700;background:rgba(255,215,0,0.1);}
+        .bookmark-btn.saved{color:#ffd700;}
+        .bookmarked-section{margin-bottom:1rem;}
+        .bookmarked-section .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem;}
+        .bookmarked-section .hdr h3{font-size:1rem;font-weight:600;color:#fff;}
+        .bookmarked-section .hdr .clear-btn{font-size:0.75rem;color:var(--text-secondary);cursor:pointer;background:none;border:none;font-family:'Inter',sans-serif;}
+        .bookmarked-section .hdr .clear-btn:hover{color:#FF0055;}
+        @media(max-width:768px){.news-layout{grid-template-columns:1fr;}}
+    </style>
+</head>
+<body style="background-color: #0A0A0B;">
+    <div id="nav-root"></div>
+    <main class="page-content">
+        <h1 class="page-title">News</h1>
+        <p class="page-subtitle">Market news with AI-powered sentiment analysis — bookmark what matters</p>
+        <div class="search-news">
+            <input type="text" id="newsSearch" placeholder="Search by stock ticker or keyword..." oninput="filterNews(this.value)">
+            <input type="text" id="stockFilter" placeholder="Filter by ticker (e.g. RELIANCE)" style="max-width:200px;" oninput="filterNews(document.getElementById('newsSearch').value)">
+        </div>
+        <div class="news-layout">
+            <aside class="sidebar" id="newsCategories">
+                <button class="sidebar-btn active" onclick="switchCategory('latest',this)">📰 Latest</button>
+                <button class="sidebar-btn" onclick="switchCategory('bullish',this)">📈 Bullish</button>
+                <button class="sidebar-btn" onclick="switchCategory('bearish',this)">📉 Bearish</button>
+                <button class="sidebar-btn" onclick="switchCategory('earnings',this)">💰 Earnings</button>
+                <button class="sidebar-btn" onclick="switchCategory('ipo',this)">🏢 IPO</button>
+                <button class="sidebar-btn" onclick="switchCategory('economy',this)">📊 Economy</button>
+                <button class="sidebar-btn" onclick="showBookmarked(this)" style="margin-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);padding-top:0.75rem;">🔖 Bookmarks <span id="bookmarkCount" style="font-size:0.75rem;color:var(--text-secondary);margin-left:4px;">(0)</span></button>
+            </aside>
+            <div>
+                <div class="featured-headline" id="featuredHeadline" onclick="window.open('https://www.google.com/finance','_blank')">
+                    <span class="featured-badge">🔴 LIVE</span>
+                    <h2 id="featuredTitle">Markets open higher tracking positive global cues</h2>
+                    <p id="featuredExcerpt">Indian equity benchmarks opened in the green with Nifty above 22,500. Banking and IT stocks lead the rally.</p>
+                </div>
+                <div id="newsStatus" style="display:none;background:rgba(255,193,7,0.15);border:1px solid rgba(255,193,7,0.3);color:#FFC107;padding:0.5rem 1rem;border-radius:8px;margin-bottom:0.75rem;font-size:0.85rem;text-align:center;"></div>
+                <div class="news-list" id="newsContainer"><div style="color:var(--text-secondary);padding:2rem;text-align:center;">Loading news...</div></div>
+            </div>
+        </div>
+    </main>
+    <script>
+        (function(){
+            var allNews = []; var currentCategory = 'latest'; var bookmarks = JSON.parse(localStorage.getItem('leverage_bookmarks')||'[]');
+
+            function saveBookmarks(){ localStorage.setItem('leverage_bookmarks',JSON.stringify(bookmarks)); updateBookmarkCount(); }
+
+            function updateBookmarkCount(){ var el=document.getElementById('bookmarkCount'); if(el)el.textContent='('+bookmarks.length+')'; }
+
+            window.switchCategory = function(cat,btn){
+                currentCategory=cat;
+                document.querySelectorAll('.sidebar-btn').forEach(function(b){b.classList.remove('active');});
+                if(btn)btn.classList.add('active');
+                renderNews();
+            };
+
+            window.filterNews = function(q){
+                var searchVal = q.toLowerCase().trim();
+                var stockVal = document.getElementById('stockFilter').value.trim().toUpperCase();
+                var filtered = allNews;
+                if(searchVal) filtered = filtered.filter(function(n){ return (n.title&&n.title.toLowerCase().includes(searchVal))||(n.excerpt&&n.excerpt.toLowerCase().includes(searchVal)); });
+                if(stockVal) filtered = filtered.filter(function(n){ return n.ticker&&n.ticker.toUpperCase().includes(stockVal); });
+                renderList(filtered);
+            };
+
+            window.showBookmarked = function(btn){
+                currentCategory='bookmarked';
+                document.querySelectorAll('.sidebar-btn').forEach(function(b){b.classList.remove('active');});
+                if(btn)btn.classList.add('active');
+                var bookmarkedNews = allNews.filter(function(n,i){ return bookmarks.indexOf(n.url||i+'')>=0; });
+                if(bookmarkedNews.length===0&&bookmarks.length>0){
+                    var placeholder = bookmarks.map(function(url){
+                        return {ticker:'--',title:'Bookmarked: '+url,url:url,excerpt:'',published_at:null,sentiment:{label:'neutral'}};
+                    });
+                    renderList(placeholder);
+                } else {
+                    renderList(bookmarkedNews);
+                }
+            };
+
+            window.toggleBookmark = function(url,el){
+                if(!url) return;
+                var idx = bookmarks.indexOf(url);
+                if(idx>=0){ bookmarks.splice(idx,1); if(el)el.classList.remove('saved'); }
+                else { bookmarks.push(url); if(el)el.classList.add('saved'); }
+                saveBookmarks();
+            };
+
+            function renderNews(){
+                var filtered = allNews;
+                if(currentCategory==='bullish') filtered = allNews.filter(function(n){var s=n.sentiment||{};return s.label==='Bullish'||s.label==='positive';});
+                else if(currentCategory==='bearish') filtered = allNews.filter(function(n){var s=n.sentiment||{};return s.label==='Bearish'||s.label==='negative';});
+                else if(currentCategory==='bookmarked') return showBookmarked(document.querySelector('.sidebar-btn:last-child'));
+                renderList(filtered);
+            }
+
+            function renderList(items){
+                var container = document.getElementById('newsContainer');
+                if(!items||items.length===0){ container.innerHTML='<div style="color:var(--text-secondary);padding:2rem;text-align:center;">No news found</div>'; return; }
+                window._newsPageArticles = items;
+                container.innerHTML = items.slice(0,30).map(function(n,i){
+                    var s=n.sentiment||{}; var label=s.label||'neutral';
+                    var sentClass = label==='Bullish'||label==='positive'?'sentiment-bullish':(label==='Bearish'||label==='negative'?'sentiment-bearish':'sentiment-neutral');
+                    var timeAgo=''; if(n.published_at){ var d=new Date(n.published_at); var sec=Math.floor((new Date()-d)/1000); if(sec<60)timeAgo='just now'; else if(sec<3600)timeAgo=Math.floor(sec/60)+'m ago'; else if(sec<86400)timeAgo=Math.floor(sec/3600)+'h ago'; else timeAgo=Math.floor(sec/86400)+'d ago'; }
+                    var cleanTitle=(n.title||'').replace(/\s*-\s*scanx\.trade\s*$/i,'');
+                    var url=n.url||'#'+i; var isBookmarked=bookmarks.indexOf(url)>=0;
+                    return '<div class="news-card" onclick="openPageNewsDetail('+i+')" style="cursor:pointer;"><div class="meta"><span style="color:var(--accent-blue);font-weight:600;">'+(n.ticker||'NIFTY')+'</span><span>'+timeAgo+'</span>'+(s.label?'<span class="sentiment-tag '+sentClass+'">'+s.label+'</span>':'')+'</div><div class="title">'+cleanTitle+'</div>'+(n.excerpt?'<div class="excerpt">'+n.excerpt+'</div>':'')+'<button class="bookmark-btn '+(isBookmarked?'saved':'')+'" onclick="event.stopPropagation();toggleBookmark(\''+url+'\',this)" title="Bookmark">🔖</button></div>';
+                }).join('');
+            }
+
+            function openPageNewsDetail(idx) {
+                var items = window._newsPageArticles || [];
+                var n = items[idx];
+                if (!n) return;
+                var s = n.sentiment||{}; var label = s.label||'neutral';
+                var sentClass = label==='Bullish'||label==='positive'?'positive':(label==='Bearish'||label==='negative'?'negative':'neutral');
+                var sentColor = sentClass==='positive'?'#00E676':(sentClass==='negative'?'#FF0055':'#a1a1aa');
+                var sentEmoji = sentClass==='positive'?'📈':(sentClass==='negative'?'📉':'🎯');
+                var summary = n.excerpt||n.summary||n.snippet||'No details available.';
+                var overlay = document.createElement('div');
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                overlay.onclick = function(e) { if (e.target === overlay) document.body.removeChild(overlay); };
+                var modal = document.createElement('div');
+                modal.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:2rem;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;';
+                var h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">' +
+                    '<div style="font-size:0.8rem;color:'+sentColor+';background:rgba(255,255,255,0.05);padding:4px 12px;border-radius:20px;font-weight:600;">'+sentEmoji+' '+label+'</div>' +
+                    (n.ticker?'<div style="font-size:0.8rem;color:#4A90E2;font-weight:600;padding:4px 12px;background:rgba(74,144,226,0.1);border-radius:20px;">'+n.ticker+'</div>':'') +
+                    '</div>' +
+                    '<h2 style="font-size:1.3rem;font-weight:700;color:#fff;margin-bottom:0.75rem;line-height:1.4;">'+(n.title||'')+'</h2>' +
+                    '<div style="display:flex;gap:1rem;font-size:0.8rem;color:#a1a1aa;margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,0.06);">' +
+                    '<span>'+(n.source||'Market News')+'</span><span>•</span><span>'+new Date(n.published_at||Date.now()).toLocaleDateString()+'</span></div>' +
+                    '<div style="font-size:0.95rem;color:#d1d1d6;line-height:1.7;">'+summary+'</div>';
+                var linkUrl = n.url ? n.url : (n.ticker ? 'index_chart.html?ticker=' + n.ticker : null);
+                var readMoreBtn = linkUrl ? '<a href="'+linkUrl+'" target="_blank" style="padding:0.6rem 1.5rem;background:#4A90E2;border:none;border-radius:8px;color:#fff;cursor:pointer;font-family:\\'Inter\\',sans-serif;font-size:0.85rem;text-decoration:none;display:inline-block;">Read More</a>' : '';
+                var closeBtn = '<button onclick="document.body.removeChild(this.parentElement.parentElement.parentElement)" style="padding:0.6rem 1.5rem;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;cursor:pointer;font-family:\\'Inter\\',sans-serif;font-size:0.85rem;">Close</button>';
+                var actionsHtml = '<div style="display:flex;gap:1rem;margin-top:1.5rem;">' + readMoreBtn + closeBtn + '</div>';
+                modal.innerHTML = h + actionsHtml;
+                overlay.appendChild(modal);
+                document.body.appendChild(overlay);
+                overlay.focus();
+                overlay.addEventListener('keydown', function(e){ if (e.key === 'Escape') document.body.removeChild(overlay); });
+            }
+
+            async function loadNews(){
+                try { var res = await fetch('/api/news/general'); if(res.ok){ var data=await res.json();                 allNews=(data.articles||[]).map(function(a){ return {ticker:a.ticker||a.title.split(' ')[0],title:a.title,excerpt:a.summary,published_at:a.published_at,sentiment:{label:a.sentiment},url:a.url}; }); } } catch(e){ allNews=[]; }
+                if(!allNews||allNews.length===0){
+                    var statusEl = document.getElementById('newsStatus');
+                    if(statusEl) { statusEl.textContent = 'Live news unavailable — showing sample data'; statusEl.style.display = 'block'; }
+                    var now = new Date();
+                    allNews = [
+                        {ticker:'NIFTY',title:'Nifty holds 22,500 as bulls maintain control',excerpt:'The benchmark index traded in a narrow range with positive bias. AI analysis suggests continued bullish momentum.',published_at:now.toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'RELIANCE',title:'Reliance Industries gains on retail biz expansion plans',excerpt:'The company announced new store openings across tier-2 cities. AI sentiment: Strong Buy.',published_at:new Date(now-3600000).toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'HDFCBANK',title:'HDFC Bank leads banking pack, Nifty Bank up 0.8%',excerpt:'Private sector banks outperform on strong Q3 expectations. AI sentiment: Positive.',published_at:new Date(now-7200000).toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'TCS',title:'IT stocks mixed as rupee strengthens — AI analysis',excerpt:'TCS and Infosys saw mild profit booking after recent rally. AI suggests short-term caution.',published_at:new Date(now-10800000).toISOString(),sentiment:{label:'Bearish'}},
+                        {ticker:'SBIN',title:'PSU banks under pressure on valuation concerns',excerpt:'SBI, PNB, and Canara Bank slipped 1-2%. AI recommends waiting for support levels.',published_at:new Date(now-14400000).toISOString(),sentiment:{label:'Bearish'}},
+                        {ticker:'ICICIBANK',title:'ICICI Bank hits new 52-week high on strong fundamentals',excerpt:'The stock continued its uptrend. AI sentiment: Strong Bullish with target upgrade.',published_at:new Date(now-18000000).toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'LT',title:'L&T secures ₹5,000 Cr infrastructure contract',excerpt:'The engineering major won a major contract for highway development. AI rates as positive.',published_at:new Date(now-21600000).toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'INFY',title:'Infosys announces strategic partnership with Google Cloud',excerpt:'The collaboration aims to accelerate AI adoption for enterprises. Sentiment: Bullish.',published_at:new Date(now-25200000).toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'MARUTI',title:'Maruti Suzuki sales rise 12% YoY in November',excerpt:'Auto sector sees recovery with strong festive season demand. AI predicts uptrend.',published_at:new Date(now-28800000).toISOString(),sentiment:{label:'Bullish'}},
+                        {ticker:'BHARTIARTL',title:'Airtel stock dips on tariff war concerns',excerpt:'Competitive pricing pressures in telecom sector weigh on sentiment. AI advises hold.',published_at:new Date(now-32400000).toISOString(),sentiment:{label:'Bearish'}},
+                    ];
+                    document.getElementById('featuredTitle').textContent = 'AI-Powered Market Summary: Bullish bias with selective profit booking';
+                    document.getElementById('featuredExcerpt').textContent = 'Nifty outlook positive. Banking and IT lead. Pharma shows strength. Metals under pressure. AI confidence score: 78% bullish.';
+                } else {
+                    var statusEl = document.getElementById('newsStatus');
+                    if(statusEl) { statusEl.style.display = 'none'; }
+                }
+                renderNews(); updateBookmarkCount();
+            }
+
+            loadNews(); var _newsInterval = setInterval(loadNews, 60000);
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) { clearInterval(_newsInterval); _newsInterval = null; }
+                else if (!_newsInterval) { _newsInterval = setInterval(loadNews, 60000); loadNews(); }
+            });
+        })();
+    </script>
+    <script src="stocks.js"></script>
+    <script src="nav.js?v=3"></script>
+</body>
+</html>

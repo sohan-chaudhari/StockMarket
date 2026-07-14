@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Market - LEVERAGE</title>
+  <script src="lightweight-charts.js"></script>
+  <link rel="stylesheet" href="index.css?v=66">
+  <link rel="stylesheet" href="drawings.css?v=3">
+  <link rel="stylesheet" href="nav.css?v=4">
+  <link rel="stylesheet" href="loader.css?v=4">
+  <link rel="stylesheet" href="nav.css">
+  <link rel="stylesheet" href="responsive.css?v=1">
+  <style>
+    .market-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin:1.5rem 0;}
+    .market-stat-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1.25rem;}
+    .market-stat-card .lbl{font-size:0.75rem;color:#a1a1aa;margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;}
+    .market-stat-card .val{font-size:1.2rem;font-weight:600;font-family:'Roboto Mono',monospace;}
+    .market-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;}
+    .market-detail-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:1.5rem;}
+    .market-detail-card h3{font-size:1rem;font-weight:600;margin-bottom:1rem;color:#fff;}
+    .mover-row,.sector-row-d{display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.85rem;}
+    .mover-row:last-child,.sector-row-d:last-child{border-bottom:none;}
+    .sector-bar-w{flex:1;margin:0 0.75rem;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;}
+    .sector-bar-f{height:100%;border-radius:3px;}
+    .loading-place{padding:1rem;text-align:center;color:#a1a1aa;}
+    .text-green{color:#00E676;}.text-red{color:#FF0055;}
+    .range-selector{display:flex;gap:0.35rem;margin-left:15px;}
+    .range-selector button{padding:4px 12px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:transparent;color:#a1a1aa;font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;}
+    .range-selector button:hover{border-color:#4A90E2;color:#fff;}
+    .range-selector button.active{background:#4A90E2;border-color:#4A90E2;color:#fff;}
+    @media(max-width:768px){
+      .market-stats-grid{grid-template-columns:repeat(2,1fr);}
+      .market-detail-grid{grid-template-columns:1fr;}
+      .range-selector{margin-left:0;margin-top:8px;}
+    }
+  /* Hide duplicate logo when nav-root is present (nav.js injects its own logo) */
+  #nav-root ~ .container .sticky-header-container .header-controls > .logo-container { display: none; }
+  </style>
+    <script src="page-cache.js"></script>
+</head>
+<body style="background-color: #0A0A0B;">
+  <div id="nav-root"></div>
+  <div class="container">
+    <div class="sticky-header-container">
+      <div class="header-controls">
+        <a href="home.html" class="logo-container">
+          <img src="logo.jpeg" alt="Logo" class="logo-icon">
+          <div class="brand-image-wrapper">
+            <img src="leverage_logo.jpg" alt="LEVERAGE" class="brand-image">
+          </div>
+        </a>
+        <div class="range-selector" id="rangeButtons">
+          <button onclick="loadData('5m')">5m</button>
+          <button onclick="loadData('15m')">15m</button>
+          <button onclick="loadData('30m')">30m</button>
+          <button onclick="loadData('1h')">1H</button>
+          <button onclick="loadData('1D')">1D</button>
+          <button onclick="loadData('1W')">1W</button>
+          <button onclick="loadData('1M')">1M</button>
+          <button onclick="loadData('3M')">3M</button>
+          <button onclick="loadData('6M')">6M</button>
+          <button onclick="loadData('1Y')">1Y</button>
+          <button class="active" onclick="loadData('ALL')">ALL</button>
+        </div>
+      </div>
+      <div class="header-identity">
+        <div class="ticker-branding">
+          <img id="ticker-logo" class="ticker-logo" src="" alt="" style="display:none;">
+          <div class="ticker-text-group">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <h1 id="ticker-name">--</h1>
+              <span id="ticker-badge" class="stock-badge">--</span>
+              <span id="sector-tag" class="sector-tag" style="display:none;font-size:12px;padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.08);color:#b2b5be;border:1px solid rgba(255,255,255,0.1);white-space:nowrap;"></span>
+            </div>
+            <div id="ticker-symbol-small">--</div>
+          </div>
+          <div style="display:flex;flex-direction:column;margin-left:24px;">
+            <div style="display:flex;align-items:baseline;gap:10px;">
+              <span id="header-price" style="font-size:28px;font-weight:700;font-family:'Roboto Mono',monospace;color:#fff;">--</span>
+              <span id="header-change" style="font-size:16px;font-weight:600;">--</span>
+            </div>
+            <div style="display:flex;gap:15px;font-family:'Roboto Mono',monospace;font-size:14px;color:#b2b5be;margin-top:4px;">
+              <span><span style="font-weight:700;">O:</span> <span id="ohlc-open" style="color:#d1d4dc;font-weight:700;">--</span></span>
+              <span><span style="font-weight:700;">H:</span> <span id="ohlc-high" style="color:#d1d4dc;font-weight:700;">--</span></span>
+              <span><span style="font-weight:700;">L:</span> <span id="ohlc-low" style="color:#d1d4dc;font-weight:700;">--</span></span>
+              <span><span style="font-weight:700;">C:</span> <span id="ohlc-close" style="color:#d1d4dc;font-weight:700;">--</span></span>
+            </div>
+          </div>
+        </div>
+        <span class="status" id="ws-status">● Live</span>
+      </div>
+    </div>
+    <div id="chart-container" style="position:relative;">
+      <div class="loading" id="loading" style="display:none;">Loading...</div>
+      <div class="error" id="error-msg"></div>
+      <div id="chart"></div>
+      <div id="drawing-canvas-container">
+        <canvas id="drawing-canvas"></canvas>
+      </div>
+    </div>
+    <div class="market-stats-grid">
+      <div class="market-stat-card"><div class="lbl">Open</div><div class="val" id="statOpen">--</div></div>
+      <div class="market-stat-card"><div class="lbl">Day High</div><div class="val" id="statHigh">--</div></div>
+      <div class="market-stat-card"><div class="lbl">Day Low</div><div class="val" id="statLow">--</div></div>
+      <div class="market-stat-card"><div class="lbl">Volume</div><div class="val" id="statVolume">--</div></div>
+    </div>
+    <div class="market-detail-grid">
+      <div class="market-detail-card">
+        <h3>Top Movers</h3>
+        <div id="topMovers"><div class="loading-place">Loading...</div></div>
+      </div>
+      <div class="market-detail-card">
+        <h3>Sector Weightage</h3>
+        <div id="sectorWeightage"><div class="loading-place">Loading...</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="leverage-loader-overlay" id="leverage-loader">
+    <div class="leverage-loader simple-glow-theme">
+      <div class="loader-logo-wrapper">
+        <div class="logo-glow-effect"></div>
+        <img src="logo.jpeg" class="loader-main-logo" alt="LEVERAGE">
+      </div>
+      <div class="loader-text-clean">
+        <span class="loader-dot-pulse"></span>
+        <span class="loader-message-text">Loading chart data...</span>
+      </div>
+    </div>
+  </div>
+  <script src="stocks.js"></script>
+  <script src="loader.js"></script>
+  <script src="news.js"></script>
+  <script src="nav.js"></script>
+  <script src="drawings.js"></script>
+  <script src="cache.js?v=1"></script>
+  <script>
+  (function(){
+    var ticker = new URLSearchParams(window.location.search).get('ticker') || 'NIFTY';
+    document.getElementById('ticker-name').textContent = ticker;
+    document.getElementById('ticker-badge').textContent = ticker;
+    document.getElementById('ticker-symbol-small').textContent = ticker + ' - INDEX';
+    document.title = ticker + ' - Market - LEVERAGE';
+    var chart = null, candleSeries = null;
+
+    function fmt(p){ if(p==null)return '--'; return Number(p).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+    function fmtL(n){ if(n==null)return '--'; if(n>=10000000)return (n/10000000).toFixed(2)+' Cr'; if(n>=100000)return (n/100000).toFixed(2)+' L'; return Number(n).toLocaleString('en-IN'); }
+
+    var loader = document.getElementById('leverage-loader');
+
+    function initChart(){
+      var c = document.getElementById('chart');
+      if(!c) return;
+      chart = LightweightCharts.createChart(c, {
+        layout:{background:{type:'solid',color:'#131722'},textColor:'#d1d4dc'},
+        grid:{vertLines:{color:'rgba(42,46,57,0.5)'},horzLines:{color:'rgba(42,46,57,0.5)'}},
+        crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
+        rightPriceScale:{borderColor:'rgba(197,203,206,0.8)'},
+        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true},
+      });
+      candleSeries = chart.addCandlestickSeries({
+        upColor:'#26a69a',downColor:'#ef5350',
+        borderDownColor:'#ef5350',borderUpColor:'#26a69a',
+        wickDownColor:'#ef5350',wickUpColor:'#26a69a',
+      });
+      window.getChartCoordinateAPI = function () {
+        if (!chart || !candleSeries) return null;
+        return {
+          coordToPixel: function (coord) {
+            if (!coord) return null;
+            var x = chart.timeScale().timeToCoordinate(coord.time);
+            var y = candleSeries.priceToCoordinate(coord.price);
+            if (x == null || y == null) return null;
+            return { x: x, y: y };
+          },
+          pixelToCoord: function (x, y) {
+            var time = chart.timeScale().coordinateToTime(x);
+            var price = candleSeries.coordinateToPrice(y);
+            return { time: time, price: price };
+          },
+          getMagnetPoint: function (x, y) {
+            return this.pixelToCoord(x, y);
+          },
+          getBarSpacing: function () {
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            if (!lr) return 20;
+            return chart.timeScale().width() / (lr[1] - lr[0] || 1);
+          }
+        };
+      };
+      if (chart && window.toolManager) {
+        chart.timeScale().subscribeVisibleTimeRangeChange(function () {
+          window.toolManager.redraw();
+        });
+        chart.subscribeCrosshairMove(function () {
+          window.toolManager.redraw();
+        });
+      }
+      var chartContainer = document.getElementById('chart-container');
+      if(!chartContainer) chartContainer = c;
+      new ResizeObserver(function(e){
+        if(e.length===0)return;
+        var r=e[0].contentRect;
+        chart.applyOptions({height:r.height,width:r.width});
+        if (window.toolManager) window.toolManager.resizeCanvas();
+      }).observe(chartContainer);
+    }
+
+    window.loadData = async function(range){
+      if(!candleSeries) return;
+      if(loader) loader.style.display='flex';
+
+      if(_loadController) try{_loadController.abort();}catch(e){}
+      var myLoadId = ++_loadId;
+      _loadController = new AbortController();
+      var signal = _loadController.signal;
+
+      var cacheInterval = range;
+      if(range==='1D') cacheInterval='5m';
+      else if(range==='1W') cacheInterval='15m';
+      var memKey = ticker+'|'+cacheInterval+'|'+range;
+      var memData = window._recentRanges ? window._recentRanges.get(memKey) : null;
+      if(memData){ renderChartCached(memData,range); if(loader)loader.style.display='none'; return; }
+
+      if(window._idbGetCandles){
+        var idbData = await window._idbGetCandles(ticker, cacheInterval, range);
+        if(idbData){
+          if(window._recentRanges) window._recentRanges.set(memKey, idbData);
+          renderChartCached(idbData,range);
+          if(loader)loader.style.display='none';
+          return;
+        }
+      }
+
+      try{
+        var url = "/api/stock-data/range?ticker="+encodeURIComponent(ticker)+"&range="+range;
+        if(range==='1D') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval=5m";
+        else if(range==='1W') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval=15m";
+        else if(range==='5m'||range==='15m'||range==='30m'||range==='1h') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval="+range;
+
+        var res = await fetch(url, {signal:signal});
+        if(myLoadId!==_loadId){if(loader)loader.style.display='none';return;}
+        if (!res.ok) { throw new Error('HTTP ' + res.status + ' for ' + range + ' data'); }
+        var data = await res.json();
+
+        if(myLoadId!==_loadId){if(loader)loader.style.display='none';return;}
+
+        document.querySelectorAll('.range-selector button').forEach(function(b){b.classList.remove('active');});
+        var btn = document.querySelector('.range-selector button[onclick*="'+range+'"]');
+        if(btn) btn.classList.add('active');
+
+        if(Array.isArray(data)&&data.length>0){
+          renderChartCached(data,range);
+        }
+        window._loadedRange = range;
+        // Write to caches on successful API fetch
+        try{
+          if(window._recentRanges) window._recentRanges.set(memKey, data);
+          if(window._idbSetCandles) window._idbSetCandles(ticker, cacheInterval, range, data);
+        }catch(e){}
+      }catch(e){
+        if(e.name==='AbortError'){if(loader)loader.style.display='none';return;}
+        console.error('Chart error:',e);
+      }
+      finally{if(loader) loader.style.display='none';}
+    };
+
+    var _chartDataCache = null, _earliestLoadedTime = null, _isLoadingMore = false, _lazyLoadSubscribed = false;
+    var _loadId = 0, _loadController = null;
+
+    function _setupLazyLoad(){
+      if(!chart||_lazyLoadSubscribed)return;
+      _lazyLoadSubscribed=true;
+      chart.timeScale().subscribeVisibleTimeRangeChange(function(){
+        if(_isLoadingMore)return;
+        var r=window._loadedRange;
+        if(!r||!_earliestLoadedTime)return;
+        var tr=chart.timeScale().getVisibleRange();
+        if(!tr)return;
+        var im={'5m':300,'15m':900,'30m':1800,'1h':3600};
+        var ts=im[r];
+        var buf=ts?ts*10:86400*5;
+        if(tr.from>=_earliestLoadedTime+buf)return;
+        _fetchMoreData(_earliestLoadedTime,r);
+      });
+    }
+
+    function _fetchMoreData(beforeTime,range){
+      _isLoadingMore=true;
+      var isIntraday=['5m','15m','30m','1h'].indexOf(range)!==-1;
+      var url;
+      if(isIntraday){
+        url='/api/stock-data/intraday/paginated?ticker='+encodeURIComponent(ticker)+'&interval='+range+'&before='+beforeTime+'&limit=200';
+      }else{
+        var beforeDate=new Date(beforeTime*1000).toISOString().split('T')[0];
+        url='/api/stock-data/range/paginated?ticker='+encodeURIComponent(ticker)+'&range='+range+'&before='+beforeDate+'&limit=200';
+      }
+      fetch(url).then(function(r){return r.json();}).then(function(resp){
+        if(resp&&resp.data&&resp.data.length>0){
+          var incoming=resp.data.map(function(p){
+            var t=toTimeNum(p.time); if(t==null)return null;
+            return {time:Math.floor(t),open:p.open,high:p.high,low:p.low,close:p.close};
+          }).filter(function(p){return p!=null;});
+          var combined=_chartDataCache? _chartDataCache.slice():[];
+          var et={};
+          combined.forEach(function(c){et[c.time]=true;});
+          incoming.forEach(function(c){if(!et[c.time]){combined.push(c);et[c.time]=true;}});
+          combined.sort(function(a,b){return a.time-b.time;});
+          _chartDataCache=combined;
+          _earliestLoadedTime=combined.length>0?combined[0].time:null;
+          candleSeries.setData(combined);
+          chart.timeScale().scrollToPosition(0,false);
+        }
+        _isLoadingMore=false;
+      }).catch(function(){_isLoadingMore=false;});
+    }
+
+    function toTimeNum(v){
+      if(v==null)return 0;
+      if(typeof v==='number')return v;
+      if(typeof v==='string'){
+        var n=Number(v);if(!isNaN(n))return n;
+        if(/^\d{4}-\d{2}-\d{2}$/.test(v)){var ms=new Date(v+'T00:00:00Z').getTime();return isNaN(ms)?0:Math.floor(ms/1000);}
+        var ms=new Date(v).getTime();return isNaN(ms)?0:Math.floor(ms/1000);
+      }
+      return 0;
+    }
+
+    function renderChartCached(data,range){
+      var f = data.map(function(p){
+        var t = toTimeNum(p.time);
+        if(t==null)return null;
+        return {time:Math.floor(t),open:p.open,high:p.high,low:p.low,close:p.close};
+      }).filter(function(p){return p!=null&&p.time!=null;});
+      f.sort(function(a,b){ return a.time-b.time; });
+      var u=[],seen=new Set();
+      f.forEach(function(p){if(!seen.has(p.time)){seen.add(p.time);u.push(p);}});
+      _chartDataCache = u.slice();
+      _earliestLoadedTime = u.length>0 ? u[0].time : null;
+      candleSeries.setData(u);
+      _setupLazyLoad();
+      chart.timeScale().fitContent();
+      var last = u[u.length-1];
+      if(last){
+        document.getElementById('statOpen').textContent = fmt(last.open);
+      }
+    }
+
+    async function fetchLive(){
+      try{
+        var res = await fetch('/api/live-prices',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({tickers:[ticker]})
+        });
+        var data = await res.json();
+        if(data&&data[ticker]){
+          var d=data[ticker], p=d.current||0, prev=d.prev_close||d.open||p;
+          var diff=p-prev, pct=prev>0?(diff/prev)*100:0;
+          var cls=diff>=0?'text-green':'text-red', sn=diff>=0?'+':'';
+          document.getElementById('header-price').textContent = fmt(p);
+          document.getElementById('header-price').style.color = diff>=0?'#00E676':'#FF0055';
+          var chg = document.getElementById('header-change');
+          chg.textContent = sn+diff.toFixed(2)+' ('+sn+pct.toFixed(2)+'%)';
+          chg.style.color = diff>=0?'#00E676':'#FF0055';
+          document.getElementById('statVolume').textContent = fmtL(d.volume||d.volumne||0);
+          // Sync OHLC header from live data — only overwrite when valid (>0)
+          // to preserve chart-candle values when source (e.g. AngelOne WS
+          // for indices) doesn't provide daily open/high/low.
+          if (d.open != null && d.open > 0) {
+            document.getElementById('statOpen').textContent = fmt(d.open);
+            document.getElementById('ohlc-open').textContent = fmt(d.open);
+          }
+          if (d.high != null && d.high > 0) {
+            document.getElementById('statHigh').textContent = fmt(d.high);
+            document.getElementById('ohlc-high').textContent = fmt(d.high);
+          }
+          if (d.low != null && d.low > 0) {
+            document.getElementById('statLow').textContent = fmt(d.low);
+            document.getElementById('ohlc-low').textContent = fmt(d.low);
+          }
+          document.getElementById('ohlc-close').textContent = fmt(p);
+          // Update sector tag from live-prices response
+          var secEl = document.getElementById('sector-tag');
+          if (secEl && d.sector) {
+            var secText = d.sector;
+            if (d.sectorPct != null) {
+              var secSn = d.sectorPct >= 0 ? '+' : '';
+              secText += ' (' + secSn + d.sectorPct.toFixed(2) + '%)';
+            }
+            secEl.textContent = secText;
+            secEl.style.display = 'inline-block';
+            secEl.style.color = d.sectorPct >= 0 ? '#26a69a' : '#ef5350';
+          } else if (secEl) {
+            secEl.style.display = 'none';
+          }
+        }
+      }catch(e){console.error('Live error:',e);}
+    }
+
+    async function renderMovers(){
+      try{
+        var fetchPromise = window._fetchCached ? window._fetchCached('/api/market-movers', 30000) : fetch('/api/market-movers').then(r=>r.json());
+        var data = await fetchPromise;
+        if (!data) return;
+        var dataCopy = JSON.parse(JSON.stringify(data));
+        if (dataCopy.gainers) dataCopy.gainers = dataCopy.gainers.slice(0, 8);
+        if (dataCopy.losers) dataCopy.losers = dataCopy.losers.slice(0, 8);
+        var allTickers = [];
+        (dataCopy.gainers||[]).concat(dataCopy.losers||[]).forEach(function(s){if(s&&s.ticker)allTickers.push(s.ticker);});
+        var liveData = {};
+        try {
+          var lr = await fetch('/api/live-prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers:allTickers})});
+          if(lr.ok) liveData = await lr.json();
+        } catch(e){}
+        var all = [];
+        (dataCopy.gainers||[]).concat(dataCopy.losers||[]).forEach(function(s){
+          if(!s) return;
+          var live = liveData[s.ticker];
+          var curr = (live&&live.current!=null) ? live.current : s.current_price;
+          var prev = (live&&live.prev_close!=null) ? live.prev_close : (s.prev_close || curr);
+          var chg = prev>0 ? (curr-prev)/prev*100 : 0;
+          all.push({name:s.ticker,chg:chg,current:curr});
+        });
+        all.sort(function(a,b){return Math.abs(b.chg)-Math.abs(a.chg);});
+        document.getElementById('topMovers').innerHTML = all.map(function(x){
+          var c=x.chg>=0?'text-green':'text-red',sn=x.chg>=0?'+':'';
+          return '<div class="mover-row"><span style="font-weight:500;color:#fff;">'+x.name+'</span><span class="'+c+'">'+sn+x.chg.toFixed(2)+'%</span></div>';
+        }).join('');
+      }catch(e){
+        document.getElementById('topMovers').innerHTML = '<div class="loading-place">Start backend server</div>';
+      }
+    }
+
+    function renderSectors(){
+      var sec=[{name:'Banking',pct:32},{name:'IT',pct:16},{name:'Finance',pct:13},{name:'Auto',pct:8},{name:'Energy',pct:11},{name:'FMCG',pct:7},{name:'Pharma',pct:5},{name:'Other',pct:8}];
+      document.getElementById('sectorWeightage').innerHTML = sec.map(function(s){
+        return '<div class="sector-row-d"><span>'+s.name+'</span><div class="sector-bar-w"><div class="sector-bar-f" style="width:'+s.pct+'%;background:#4A90E2;"></div></div><span style="font-family:Roboto Mono,monospace;font-size:0.8rem;">'+s.pct+'%</span></div>';
+      }).join('');
+    }
+
+    function seedUIFromCache() {
+      try {
+        var raw = localStorage.getItem('llp');
+        if (!raw) return;
+        var ts = parseInt(localStorage.getItem('llp_ts') || '0', 10);
+        if (Date.now() - ts > 600000) return; // 10-min TTL
+        var data = JSON.parse(raw);
+        var d = data[ticker];
+        if (!d || !d.current) return;
+        var p = d.current; var prev = d.prev_close || d.open || p;
+        var diff = p - prev; var pct = prev > 0 ? (diff / prev) * 100 : 0;
+        var cls = diff >= 0 ? '#00E676' : '#FF0055'; var sn = diff >= 0 ? '+' : '';
+        document.getElementById('header-price').textContent = fmt(p);
+        document.getElementById('header-price').style.color = cls;
+        var chg = document.getElementById('header-change');
+        chg.textContent = sn + diff.toFixed(2) + ' (' + sn + pct.toFixed(2) + '%)';
+        chg.style.color = cls;
+        document.getElementById('statOpen').textContent = fmt(d.open||0);
+        if(d.high) document.getElementById('statHigh').textContent = fmt(d.high);
+        if(d.low) document.getElementById('statLow').textContent = fmt(d.low);
+        if(d.volume) document.getElementById('statVolume').textContent = fmtL(d.volume);
+      } catch(e) {}
+    }
+
+    function updateMarketStatusUI() {
+      var el = document.getElementById('ws-status');
+      if (!el) return;
+      if (window._marketOpen) {
+        el.textContent = '● Live';
+        el.style.color = '#26a69a';
+      } else {
+        el.textContent = '● Closed';
+        el.style.color = '#ef5350';
+      }
+    }
+
+    async function refreshMarketStatus() {
+      try {
+        var r = await fetch('/api/market-movers');
+        var d = await r.json();
+        window._marketOpen = d.market_open === true;
+      } catch (e) { window._marketOpen = false; }
+      updateMarketStatusUI();
+    }
+
+    initChart();
+    seedUIFromCache();
+    loadData('ALL');
+    fetchLive();
+    renderMovers();
+    renderSectors();
+    refreshMarketStatus();
+    var _intFetch = setInterval(fetchLive, 15000);
+    var _intMovers = setInterval(renderMovers, 30000);
+    var _intStatus = setInterval(refreshMarketStatus, 60000);
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(_intFetch); _intFetch = null;
+            clearInterval(_intMovers); _intMovers = null;
+            clearInterval(_intStatus); _intStatus = null;
+        } else {
+            if (!_intFetch) { _intFetch = setInterval(fetchLive, 15000); fetchLive(); }
+            if (!_intMovers) { _intMovers = setInterval(renderMovers, 30000); renderMovers(); }
+            if (!_intStatus) { _intStatus = setInterval(refreshMarketStatus, 60000); refreshMarketStatus(); }
+        }
+    });
+  })();
+  </script>
+</body>
+</html>
