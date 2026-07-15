@@ -471,18 +471,30 @@
     }
 
     function switchPanelTab(tab) {
-      // Update tab buttons
-      document.getElementById('tabPanelOpen').style.background = tab === 'open' ? '#4A90E2' : '#333';
-      document.getElementById('tabPanelOpen').style.color = tab === 'open' ? '#fff' : '#888';
-      document.getElementById('tabPanelClosed').style.background = tab === 'closed' ? '#4A90E2' : '#333';
-      document.getElementById('tabPanelClosed').style.color = tab === 'closed' ? '#fff' : '#888';
-      document.getElementById('tabPanelTransactions').style.background = tab === 'transactions' ? '#4A90E2' : '#333';
-      document.getElementById('tabPanelTransactions').style.color = tab === 'transactions' ? '#fff' : '#888';
+      // Update tab buttons safely
+      var tOpen = document.getElementById('tabPanelOpen');
+      if (tOpen) {
+        tOpen.style.background = tab === 'open' ? '#4A90E2' : '#333';
+        tOpen.style.color = tab === 'open' ? '#fff' : '#888';
+      }
+      var tClosed = document.getElementById('tabPanelClosed');
+      if (tClosed) {
+        tClosed.style.background = tab === 'closed' ? '#4A90E2' : '#333';
+        tClosed.style.color = tab === 'closed' ? '#fff' : '#888';
+      }
+      var tTrans = document.getElementById('tabPanelTransactions');
+      if (tTrans) {
+        tTrans.style.background = tab === 'transactions' ? '#4A90E2' : '#333';
+        tTrans.style.color = tab === 'transactions' ? '#fff' : '#888';
+      }
 
       // Show/hide content
-      document.getElementById('panelOpenContent').style.display = tab === 'open' ? 'block' : 'none';
-      document.getElementById('panelClosedContent').style.display = tab === 'closed' ? 'block' : 'none';
-      document.getElementById('panelTransactionsContent').style.display = tab === 'transactions' ? 'block' : 'none';
+      var cOpen = document.getElementById('panelOpenContent');
+      if (cOpen) cOpen.style.display = tab === 'open' ? 'block' : 'none';
+      var cClosed = document.getElementById('panelClosedContent');
+      if (cClosed) cClosed.style.display = tab === 'closed' ? 'block' : 'none';
+      var cTrans = document.getElementById('panelTransactionsContent');
+      if (cTrans) cTrans.style.display = tab === 'transactions' ? 'block' : 'none';
 
       // Load data if needed
       if (tab === 'closed') loadPanelClosedPositions();
@@ -701,7 +713,10 @@
       }
 
       try {
-        if (btn) btn.disabled = true;
+        if (btn) {
+          btn.disabled = true;
+          btn.innerText = 'Closing...';
+        }
         const csrfRes = await fetch(`${API_BASE}/api/csrf-token`);
         if (!csrfRes.ok) throw new Error('CSRF token fetch failed');
         const csrfData = await csrfRes.json();
@@ -740,9 +755,14 @@
         } else {
           msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(data.detail || 'Failed to close position') + '</div>';
         }
-        if (btn) btn.disabled = false;
+        
       } catch (e) {
         msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">Network error. Please try again.</div>';
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = 'Yes, Close';
+        }
       }
     }
 

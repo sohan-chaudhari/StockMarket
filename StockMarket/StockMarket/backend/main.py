@@ -239,9 +239,9 @@ viewed_ticker_mgr = None  # initialized in startup
 
 # ── YFinance concurrent download limiter ──
 # Prevents 100 concurrent yfinance calls when many users request different tickers.
-_yf_semaphore = threading.BoundedSemaphore(3)
+_yf_semaphore = threading.BoundedSemaphore(10)
 # Separate semaphore for background tasks (daily prefill, prewarm) so user requests aren't starved
-_yf_bg_semaphore = threading.BoundedSemaphore(3)
+_yf_bg_semaphore = threading.BoundedSemaphore(10)
 
 def _yf_bg_download(yf_ticker: str, period: str, interval: str, timeout=8):
     """Wrapper around yf.download for background tasks (separate semaphore from user requests)."""
@@ -2644,13 +2644,13 @@ def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db
     clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     # Lowered from 100→50: new listings and SME stocks have fewer than 100 days of history
     # so 100 caused unnecessary yfinance re-fetches for perfectly valid DB data.
-    MIN_DAILY_RECORDS = 50 if range.upper() == "ALL" else 20
+    MIN_DAILY_RECORDS = 10 if range.upper() == "ALL" else 5
     if len(records) < MIN_DAILY_RECORDS and not _is_yfinance_failed(clean_ticker):
         try:
             yf_ticker = _yfinance_ticker(clean_ticker)
             period_days = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y"}.get(range.upper(), "5y")
             yf_data, yf_err = yf_downloader.download_single(
-                yf_ticker, period=period_days, interval="1d", timeout=15
+                yf_ticker, period=period_days, interval="1d", timeout=8
             )
             if yf_err is None and yf_data is not None and not yf_data.empty:
                 if isinstance(yf_data.columns, pd.MultiIndex):
