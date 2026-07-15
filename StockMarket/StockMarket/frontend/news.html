@@ -291,16 +291,66 @@
                 if (btn) btn.classList.add('active');
                 renderNews();
             },
+            filterNewsTimeout: null,
+            searchAbortController: null,
             filterNews: function (q) {
-                var searchVal = (q || '').toLowerCase().trim();
-                var stockVal = (document.getElementById('stockFilter').value || '').trim().toUpperCase();
-                var filtered = allNews;
-                if (searchVal) filtered = filtered.filter(function (n) {
-                    return (n.title && n.title.toLowerCase().includes(searchVal)) ||
-                           (n.excerpt && n.excerpt.toLowerCase().includes(searchVal));
-                });
-                if (stockVal) filtered = filtered.filter(function (n) { return n.ticker && n.ticker.toUpperCase().includes(stockVal); });
-                renderList(filtered);
+                var self = this;
+                if (self.filterNewsTimeout) {
+                    clearTimeout(self.filterNewsTimeout);
+                }
+                
+                self.filterNewsTimeout = setTimeout(async function() {
+                    var searchVal = (q || '').trim();
+                    // Autocorrect common typos
+                    if (searchVal.toLowerCase() === 'relience') searchVal = 'RELIANCE';
+                    
+                    var stockVal = (document.getElementById('stockFilter').value || '').trim().toUpperCase();
+                    var query = stockVal || searchVal.toUpperCase();
+                    
+                    if (!query) {
+                        if (self.searchAbortController) self.searchAbortController.abort();
+                        renderList(allNews);
+                        var container = document.getElementById('news-container');
+                        if (container) container.style.opacity = '1';
+                        return;
+                    }
+                    
+                    if (self.searchAbortController) {
+                        self.searchAbortController.abort();
+                    }
+                    self.searchAbortController = new AbortController();
+                    
+                    var container = document.getElementById('newsContainer');
+                    if (container) {
+                        // Show a massive, obvious loading spinner right in the middle
+                        container.style.opacity = '1';
+                        container.innerHTML = '<div style="padding:4rem;text-align:center;color:#4A90E2;"><div style="width:40px;height:40px;border:4px solid rgba(74,144,226,0.2);border-top-color:#4A90E2;border-radius:50%;animation:dashNewsSpinAnim 0.8s linear infinite;margin:0 auto 1rem;"></div><div style="font-size:1.2rem;font-weight:600;">Searching live news for "' + _escHtml(query) + '"...</div><div style="color:#a1a1aa;font-size:0.9rem;margin-top:10px;">Please wait while we query ScanX.</div></div>';
+                    }
+                    
+                    try {
+                        var resp = await fetch('/api/scanx/news/fast/' + encodeURIComponent(query), {
+                            signal: self.searchAbortController.signal
+                        });
+                        
+                        if (resp.ok) {
+                            var data = await resp.json();
+                            if (Array.isArray(data) && data.length > 0) {
+                                var normalised = data.map(function(a) { return _normaliseArticle(a, 'ScanX'); });
+                                renderList(normalised);
+                            } else {
+                                if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#a1a1aa;">No news found for "' + _escHtml(query) + '".</div>';
+                            }
+                        } else {
+                            console.error('Failed to fetch search results');
+                            if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#FF0055;">Failed to fetch news. Please try again.</div>';
+                        }
+                    } catch(e) {
+                        if (e.name !== 'AbortError') {
+                            console.error('Search error:', e);
+                            if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#FF0055;">Failed to fetch news. Please check your connection.</div>';
+                        }
+                    }
+                }, 400);
             },
             toggleBookmark: function (url, el) {
                 if (!url) return;
@@ -325,45 +375,29 @@
             };
         }
 
-        // Fallback: parse Google News RSS via allorigins proxy for live market headlines
         async function _fetchGoogleNewsRSS() {
-            var queries = [
-                'NSE+India+stock+market+today',
-                'Nifty+Sensex+today',
-                'RBI+SEBI+Indian+economy'
-            ];
+            var queries = ['NSE India stock market today'];
             var articles = [];
             for (var i = 0; i < queries.length; i++) {
                 try {
-                    var rssUrl = 'https://news.google.com/rss/search?q=' + queries[i] + '&hl=en-IN&gl=IN&ceid=IN:en';
-                    var proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(rssUrl);
-                    var resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(8000) });
+                    // Use our own fast RSS backend endpoint instead of unreliable allorigins.win
+                    var resp = await fetch('/api/scanx/news/fast/' + encodeURIComponent(queries[i]), { signal: AbortSignal.timeout(8000) });
                     if (!resp.ok) continue;
                     var data = await resp.json();
-                    var xml = data.contents || '';
-                    var parser = new DOMParser();
-                    var doc = parser.parseFromString(xml, 'text/xml');
-                    var items = doc.querySelectorAll('item');
-                    items.forEach(function (item) {
-                        var title = item.querySelector('title') ? item.querySelector('title').textContent : '';
-                        var link  = item.querySelector('link')  ? item.querySelector('link').textContent : (item.querySelector('guid') ? item.querySelector('guid').textContent : '');
-                        var pub   = item.querySelector('pubDate') ? item.querySelector('pubDate').textContent : '';
-                        var desc  = item.querySelector('description') ? item.querySelector('description').textContent : '';
-                        // Strip HTML tags from description
-                        var tmpDiv = document.createElement('div'); tmpDiv.innerHTML = desc;
-                        var plainDesc = tmpDiv.textContent || '';
-                        if (title && title.length > 5) {
+                    
+                    if (Array.isArray(data)) {
+                        data.forEach(function(a) {
                             articles.push({
                                 ticker: 'MARKET',
-                                title: title.replace(/\s*-\s*[^-]+$/, '').trim(),  // Remove "- Source Name" suffix
-                                excerpt: plainDesc.substring(0, 200),
-                                published_at: pub ? new Date(pub).toISOString() : new Date().toISOString(),
-                                sentiment: { label: 'Neutral' },
-                                url: link || '',
+                                title: a.title || '',
+                                excerpt: a.excerpt || '',
+                                published_at: a.published_at || new Date().toISOString(),
+                                sentiment: a.sentiment || { label: 'Neutral' },
+                                url: a.url || '',
                                 source: 'Google News'
                             });
-                        }
-                    });
+                        });
+                    }
                 } catch(e) {
                     console.warn('[News] Google RSS fetch failed for query', queries[i], e);
                 }
@@ -377,37 +411,44 @@
             var combined = [];
             var sources = [];
 
-            // ── 1. Main backend: /api/news/general (market data articles) ──
-            try {
-                var res = await fetch('/api/news/general');
-                if (res.ok) {
-                    var data = await res.json();
-                    var mainArticles = (data.articles || []).map(function (a) { return _normaliseArticle(a, 'Market Data'); });
-                    if (mainArticles.length) { combined = combined.concat(mainArticles); sources.push('Market Data'); }
-                }
-            } catch(e) { console.warn('[News] Main backend fetch failed:', e); }
-
-            // ── 2. ScanX proxy: /api/scanx/news/full/all (proxied via main backend → port 8003) ──
-            try {
-                var scanxRes = await fetch('/api/scanx/news/full/all?limit=20');
-                if (scanxRes.ok) {
-                    var scanxData = await scanxRes.json();
-                    if (Array.isArray(scanxData) && scanxData.length > 0) {
-                        var scanxArticles = scanxData.map(function (a) { return _normaliseArticle(a, 'ScanX'); });
-                        combined = combined.concat(scanxArticles);
-                        sources.push('ScanX');
-                    } else {
-                        console.warn('[News] ScanX returned empty array — service may not be running');
-                    }
-                }
-            } catch(e) { console.warn('[News] ScanX fetch failed:', e); }
-
-            // ── 3. Google News RSS fallback (always fetch to pad with real news) ──
-            if (combined.length < 5) {
+            // Helper to fetch with timeout
+            const fetchWithTimeout = async (url, ms = 5000) => {
+                const controller = new AbortController();
+                const id = setTimeout(() => controller.abort(), ms);
                 try {
-                    var rssArticles = await _fetchGoogleNewsRSS();
-                    if (rssArticles.length > 0) { combined = combined.concat(rssArticles); sources.push('Google News'); }
-                } catch(e) { console.warn('[News] Google RSS fallback failed:', e); }
+                    const response = await fetch(url, { signal: controller.signal });
+                    clearTimeout(id);
+                    return response;
+                } catch (err) {
+                    clearTimeout(id);
+                    throw err;
+                }
+            };
+
+            // Run all fetches in parallel for speed
+            const [mainRes, scanxRes, rssRes] = await Promise.allSettled([
+                fetchWithTimeout('/api/news/general', 5000)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => d ? (d.articles || []).map(a => _normaliseArticle(a, 'Market Data')) : []),
+                    
+                fetchWithTimeout('/api/scanx/news/full/all?limit=20', 8000) // 8s max wait for scanx
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => (Array.isArray(d) && d.length > 0) ? d.map(a => _normaliseArticle(a, 'ScanX')) : []),
+                    
+                _fetchGoogleNewsRSS() // always fetch RSS as fallback in parallel
+            ]);
+
+            if (mainRes.status === 'fulfilled' && mainRes.value.length) {
+                combined = combined.concat(mainRes.value);
+                sources.push('Market Data');
+            }
+            if (scanxRes.status === 'fulfilled' && scanxRes.value.length) {
+                combined = combined.concat(scanxRes.value);
+                sources.push('ScanX');
+            }
+            if (rssRes.status === 'fulfilled' && rssRes.value.length) {
+                combined = combined.concat(rssRes.value);
+                sources.push('Google News');
             }
 
             // ── 4. Deduplicate by normalised title ──
@@ -464,7 +505,13 @@
                 }
             }
 
-            renderNews();
+            // Only re-render if the user isn't currently looking at search results
+            var activeSearch = (document.getElementById('searchFilter') && document.getElementById('searchFilter').value.trim() !== '') || 
+                               (document.getElementById('stockFilter') && document.getElementById('stockFilter').value.trim() !== '');
+            
+            if (!activeSearch) {
+                renderNews();
+            }
             updateBookmarkCount();
         }
 

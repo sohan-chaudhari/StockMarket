@@ -229,12 +229,16 @@
       };
 
       try {
+        const csrfRes = await fetch(`${API_BASE}/api/csrf-token`);
+        if (!csrfRes.ok) throw new Error('CSRF token fetch failed');
+        const csrfData = await csrfRes.json();
+
         const res = await fetch(`${API_BASE}/api/trade/place-order`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
-            'X-CSRF-Token': csrfToken
+            'X-CSRF-Token': csrfData.csrf_token
           },
           body: JSON.stringify(payload)
         });

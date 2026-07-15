@@ -234,6 +234,98 @@ async def get_scanx_news_full_by_ticker(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching full news for {ticker}: {str(e)}")
 
+# Cache for fast endpoint
+_fast_news_cache = {}
+CACHE_TTL = 300 # 5 minutes
+
+@router.get("/scanx/news/fast/{ticker}")
+async def get_scanx_news_fast_by_ticker(
+    ticker: str,
+    limit: int = Query(20, ge=1, le=100)
+):
+    """
+    Fast RSS-based fetch for ticker news. 
+    Completes in <1s instead of 20s.
+    """
+    try:
+        current_time = time.time()
+        cache_key = f"{ticker.upper()}_{limit}"
+        
+        # Check cache
+        if cache_key in _fast_news_cache:
+            cache_entry = _fast_news_cache[cache_key]
+            if current_time - cache_entry['timestamp'] < CACHE_TTL:
+                return cache_entry['data']
+                
+        from app.utils.sentiment_helper import get_sentiment
+        import httpx
+        import xml.etree.ElementTree as ET
+        from urllib.parse import quote_plus
+        from email.utils import parsedate_to_datetime
+        
+        # Prepend scanx.trade\ to curate results from the scanx.trade platform as requested
+        search_term = f"scanx.trade\\{ticker}"
+        query = quote_plus(search_term)
+        url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+        
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10.0)
+            
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to fetch RSS")
+            
+        root = ET.fromstring(resp.text)
+        items = root.findall(".//item")
+        
+        # Parse dates and sort descending to mimic Google News UI "recent" ordering
+        parsed_items = []
+        for item in items:
+            pubDate = item.findtext("pubDate", "")
+            dt = datetime.now()
+            if pubDate:
+                try:
+                    dt = parsedate_to_datetime(pubDate)
+                except Exception:
+                    pass
+            parsed_items.append({'item': item, 'dt': dt})
+            
+        parsed_items.sort(key=lambda x: x['dt'], reverse=True)
+        
+        response = []
+        for idx, wrapper in enumerate(parsed_items[:limit]):
+            item = wrapper['item']
+            dt = wrapper['dt']
+            title = item.findtext("title", "")
+            link = item.findtext("link", "")
+            description = item.findtext("description", "")
+            
+            snippet = re.sub('<[^<]+>', '', description) if description else ""
+            clean_title = re.sub(r'\s*-\s*[^-]+$', '', title).strip()
+            
+            sentiment = get_sentiment(clean_title, ticker, "Google News", snippet)
+            
+            response.append({
+                'id': f"fast_{ticker}_{idx}",
+                'ticker': ticker.upper(),
+                'title': clean_title,
+                'url': link,
+                'source': "Google News",
+                'published_at': dt.isoformat(),
+                'excerpt': snippet[:200],
+                'logo_url': "",
+                'sentiment': sentiment
+            })
+            
+        # Save to cache
+        _fast_news_cache[cache_key] = {
+            'timestamp': current_time,
+            'data': response
+        }
+            
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching fast news for {ticker}: {str(e)}")
+
 @router.get("/scanx/news/market-sentiment")
 async def get_market_sentiment(background_tasks: BackgroundTasks = None):
     """

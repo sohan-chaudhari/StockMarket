@@ -518,6 +518,11 @@ function onPriceUpdate(evt) {
 function onMarketMovers(evt) {
   var data = evt.detail;
   if (!data) return;
+  if (data.market_open !== undefined) {
+    window._marketOpen = data.market_open;
+    updateMarketStatusUI();
+    try { localStorage.setItem('market_open', data.market_open ? 'true' : 'false'); } catch(e) {}
+  }
   var allMovers = (data.gainers || []).concat(data.losers || []);
   var seenTickers = {};
   allMovers.forEach(function (s) { if (s && s.ticker) seenTickers[s.ticker] = true; });
@@ -586,16 +591,15 @@ function updateTickerStrip(prices) {
     var sign = diff >= 0 ? '▲ +' : '▼ ';
 
     var prevText = priceEl.innerText;
+    window._lastTickPrices = window._lastTickPrices || {};
+    var lastTick = window._lastTickPrices[ticker];
     var newText = '₹' + d.current.toLocaleString('en-IN', { minimumFractionDigits: 2 });
     
-    if (prevText !== newText && prevText !== '--') {
-      priceEl.style.transition = 'none';
-      priceEl.style.color = diff >= 0 ? '#10b981' : '#ef4444';
-      setTimeout(function() {
-        priceEl.style.transition = 'color 0.5s';
-        priceEl.style.color = 'inherit';
-      }, 50);
+    // Removed flash animation
+    if (lastTick != null && d.current !== lastTick && prevText !== '--') {
+      // Intentionally left empty as user requested to remove the flash background
     }
+    window._lastTickPrices[ticker] = d.current;
     
     priceEl.innerText  = newText;
     changeEl.innerText = sign + diff.toFixed(2) + ' (' + pct.toFixed(2) + '%)';
@@ -971,17 +975,16 @@ function updateMarketStatusUI() {
 }
 
 async function refreshMarketStatus() {
-  // If market was already confirmed closed and we haven't cached it recently, skip
   try {
     var mo = localStorage.getItem('market_open');
     var moTs = parseInt(localStorage.getItem('market_open_ts') || '0', 10);
-    if (mo === 'false' && (Date.now() - moTs < 600000)) return; // re-check every 10 min if closed
+    if (mo !== null && (Date.now() - moTs < 600000)) {
+      window._marketOpen = mo === 'true';
+      updateMarketStatusUI();
+      return;
+    }
   } catch(e) {}
-  try {
-    var r = await fetch('/api/market-movers');
-    var d = await r.json();
-    window._marketOpen = d.market_open === true;
-  } catch (e) { window._marketOpen = false; }
+  if (window.DashboardWS && window.DashboardWS.isConnected()) return;
   updateMarketStatusUI();
 }
 
@@ -1113,6 +1116,94 @@ async function initBigChart() {
   bigChart.priceScale('').applyOptions({
     scaleMargins: { top: 0.85, bottom: 0 },
   });
+
+  // --- Candle Countdown Timer Logic ---
+  chartContainer.style.position = 'relative';
+
+  var countdownEl = document.createElement('div');
+  countdownEl.id = 'candle-countdown';
+  countdownEl.style.position = 'absolute';
+  countdownEl.style.right = '0px';
+  countdownEl.style.width = '60px'; // Approx width of the right scale
+  countdownEl.style.height = '18px';
+  countdownEl.style.backgroundColor = 'transparent';
+  countdownEl.style.color = '#fff';
+  countdownEl.style.fontSize = '12px';
+  countdownEl.style.fontWeight = '500';
+  countdownEl.style.textAlign = 'center';
+  countdownEl.style.lineHeight = '18px';
+  countdownEl.style.zIndex = '100';
+  countdownEl.style.pointerEvents = 'none';
+  countdownEl.style.display = 'none';
+  countdownEl.style.borderBottomLeftRadius = '4px';
+  chartContainer.appendChild(countdownEl);
+
+  setInterval(function() {
+    if (!window.bigCandleSeries || !window.activeRange || !window.lastLivePrice) {
+      countdownEl.style.display = 'none';
+      return;
+    }
+    
+    var intervalMin = { '1m':1, '5m':5, '15m':15, '30m':30, '1h':60 }[window.activeRange];
+    if (!intervalMin) {
+      countdownEl.style.display = 'none';
+      return; // Not intraday
+    }
+    
+    var now = new Date();
+    var ms = intervalMin * 60 * 1000;
+    var SESSION_START_MIN = 9 * 60 + 15;
+    var SESSION_END_MIN = 15 * 60 + 30; // 3:30 PM
+    var IST_OFFSET_MS = 5.5 * 3600 * 1000;
+    
+    var utcMs = now.getTime();
+    var istDayStartMs = (Math.floor((utcMs + IST_OFFSET_MS) / 86400000) * 86400000) - IST_OFFSET_MS;
+    var sessionStartMs = istDayStartMs + SESSION_START_MIN * 60000;
+    var offsetFromSession = utcMs - sessionStartMs;
+    
+    if (offsetFromSession > (SESSION_END_MIN - SESSION_START_MIN) * 60000) {
+       countdownEl.style.display = 'none';
+       return; // Market closed for the day
+    }
+    
+    var nextCloseMs;
+    if (offsetFromSession < 0) {
+      nextCloseMs = sessionStartMs; // Countdown to open
+    } else {
+      var currentCandleStart = sessionStartMs + Math.floor(offsetFromSession / ms) * ms;
+      nextCloseMs = currentCandleStart + ms;
+    }
+    
+    var diff = nextCloseMs - utcMs;
+    if (diff < 0) diff = 0;
+    
+    var totalSeconds = Math.floor(diff / 1000);
+    var mm = Math.floor(totalSeconds / 60);
+    var ss = totalSeconds % 60;
+    var timeStr = String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+    
+    countdownEl.innerText = timeStr;
+    
+    var y = window.bigCandleSeries.priceToCoordinate(window.lastLivePrice);
+    if (y === null || y < 0 || y > chartContainer.clientHeight) {
+      countdownEl.style.display = 'none';
+      return;
+    }
+    
+    // The native price label height is around 22px, centered on Y.
+    countdownEl.style.top = (y + 11) + 'px';
+    countdownEl.style.display = 'block';
+    
+    var fc = window._formingCandles && window._formingCandles['i'];
+    if (fc) {
+       var isUp = fc.close >= fc.open;
+       countdownEl.style.backgroundColor = isUp ? '#26a69a' : '#ef5350';
+    } else {
+       countdownEl.style.backgroundColor = '#26a69a';
+    }
+    
+  }, 1000);
+  // ------------------------------------------
   
   var toolTip = document.createElement('div');
   toolTip.className = 'floating-tooltip';
@@ -1450,7 +1541,9 @@ async function initBigChart() {
     window._pendingRange = range;
     _updateURLParam('range', range);
     document.querySelectorAll('.range-item, .range-selector button').forEach(function(el) {
-      if (el.textContent === range || el.getAttribute('data-range') === range) {
+      var r = el.getAttribute('data-range') || el.textContent;
+      if (r === '1H') r = '1h';
+      if (r === range) {
         el.classList.add('active');
       } else {
         el.classList.remove('active');
@@ -1705,20 +1798,7 @@ async function initBigChart() {
       }
     }
 
-    // Flash animation on header price
-    if (pEl2 && window.lastLivePrice != null) {
-      var prevPrice = window.lastLivePrice;
-      if (Math.abs(price - prevPrice) > 0.01) {
-        var flashColor = price > prevPrice ? 'rgba(0,230,118,0.15)' : 'rgba(255,0,85,0.15)';
-        pEl2.style.transition = 'background 0s';
-        pEl2.style.background = flashColor;
-        pEl2.style.borderRadius = '4px';
-        pEl2.style.padding = '2px 6px';
-        setTimeout(function () {
-          if (pEl2) { pEl2.style.transition = 'background 0.8s'; pEl2.style.background = 'transparent'; }
-        }, 300);
-      }
-    }
+    // Flash animation on header price removed as requested
     if (pEl2) window.lastLivePrice = price;
 
     // Update sector tag
@@ -1744,7 +1824,12 @@ async function initBigChart() {
     // (still compute in-memory candle so it's ready when data loads)
     if (window._pendingRange) return;
 
-    var activeRange = (document.querySelector('.range-item.active') || {}).textContent || 'ALL';
+    var activeRange = 'ALL';
+    var activeEl = document.querySelector('.range-item.active, .range-selector button.active');
+    if (activeEl) {
+      activeRange = activeEl.getAttribute('data-range') || activeEl.textContent;
+      if (activeRange === '1H') activeRange = '1h';
+    }
 
     // Only build forming candle if the series data matches the active range
     if (activeRange !== window._loadedRange) return;

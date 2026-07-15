@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from typing import List, Optional, Dict, Tuple
@@ -1739,63 +1740,66 @@ async def proxy_scanx_news_ticker(ticker: str, limit: int = 20):
     except Exception as e:
         print(f"[Proxy /api/scanx/news/full/{ticker}] Error reaching News Sentiment service: {e}")
         return []
+
+@app.get("/api/scanx/news/fast/{ticker}")
+async def proxy_scanx_news_fast_ticker(ticker: str, limit: int = 20):
+    """Proxy: forward fast ticker-specific ScanX news request to the News Sentiment service."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # We don't use upper() here to preserve lowercase if it matters for the RSS query
+            resp = await client.get(
+                f"{NEWS_SENTIMENT_BASE}/api/scanx/news/fast/{ticker}",
+                params={"limit": limit}
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        print(f"[Proxy /api/scanx/news/fast/{ticker}] Error reaching News Sentiment service: {e}")
+        return []
 # ---------------------------------------------------------------------------
 
 @app.get("/api/scanx/news/market-sentiment")
 async def proxy_market_sentiment(db: Session = Depends(get_db)):
     try:
-        # Generate sentiment from actual market data
+        # Generate sentiment from actual live market data
+        try:
+            live = await fetch_batch_live_data(['NIFTY', 'SENSEX', 'BANKNIFTY'])
+            live_scores = []
+            for t in ['NIFTY', 'SENSEX', 'BANKNIFTY']:
+                p = live.get(t, {})
+                cp = _safe_float(p.get('current_price') or p.get('current'))
+                op = _safe_float(p.get('open') or 0)
+                prev = _safe_float(p.get('prev_close')) or op
+                if cp and prev and prev > 0:
+                    live_scores.append(((cp - prev) / prev) * 100)
+            
+            if live_scores:
+                avg = sum(live_scores) / len(live_scores)
+                label = "positive" if avg > 0.3 else ("negative" if avg < -0.3 else "neutral")
+                score = max(0, min(100, 50 + int(avg * 10)))
+                summary = f"Markets are {label} based on live prices (avg change {avg:+.2f}%)."
+                return {"sentiment": label, "label": label, "score": score, "summary": summary}
+        except Exception as e:
+            print(f"[Sentiment] Live fetch failed: {e}")
+
+        # Fallback to last available trading day if live data is completely down
         today = date.today()
-        indices = ['NIFTY', 'SENSEX', 'BANKNIFTY']
-        scores = []
-        for t in indices:
-            row = db.query(models.StockData).filter(
-                models.StockData.ticker == t,
-                models.StockData.date == today
-            ).first()
-            if row and row.open and row.close:
-                chg_pct = ((row.close - row.open) / row.open) * 100
-                scores.append(chg_pct)
-        if scores:
-            avg = sum(scores) / len(scores)
-            if avg > 0.3:
-                label, score = "positive", min(100, 50 + int(avg * 10))
-            elif avg < -0.3:
-                label, score = "negative", max(0, 50 + int(avg * 10))
-            else:
-                label, score = "neutral", 50
-            summary = f"Markets are {label} today with average change of {avg:+.2f}% across major indices."
-        else:
-            # Fallback to last available trading day
-            row = db.query(models.StockData).filter(
-                models.StockData.ticker == 'NIFTY'
-            ).order_by(models.StockData.date.desc()).first()
-            if row and row.open and row.close and row.date == today:
-                chg_pct = ((row.close - row.open) / row.open) * 100
+        row = db.query(models.StockData).filter(
+            models.StockData.ticker == 'NIFTY'
+        ).order_by(models.StockData.date.desc()).limit(2).all()
+        
+        if row and len(row) > 0:
+            current_day = row[0]
+            prev_close = row[1].close if len(row) > 1 else current_day.open
+            if current_day.close and prev_close and prev_close > 0:
+                chg_pct = ((current_day.close - prev_close) / prev_close) * 100
                 label = "positive" if chg_pct > 0.3 else ("negative" if chg_pct < -0.3 else "neutral")
                 score = max(0, min(100, 50 + int(chg_pct * 10)))
-                summary = f"Based on last trading day ({row.date}), market sentiment is {label}."
-            else:
-                # Fallback to live yfinance data
-                try:
-                    live = await fetch_batch_live_data(['NIFTY', 'SENSEX', 'BANKNIFTY'])
-                    live_scores = []
-                    for t in ['NIFTY', 'SENSEX', 'BANKNIFTY']:
-                        p = live.get(t, {})
-                        cp = _safe_float(p.get('current_price') or p.get('current'))
-                        op = _safe_float(p.get('open') or 0)
-                        if cp and op and op > 0:
-                            live_scores.append(((cp - op) / op) * 100)
-                    if live_scores:
-                        avg = sum(live_scores) / len(live_scores)
-                        label = "positive" if avg > 0.3 else ("negative" if avg < -0.3 else "neutral")
-                        score = max(0, min(100, 50 + int(avg * 10)))
-                        summary = f"Markets are {label} based on live prices (avg change {avg:+.2f}%)."
-                    else:
-                        label, score, summary = "neutral", 50, "Market data is being processed."
-                except Exception:
-                    label, score, summary = "neutral", 50, "Market data is being processed."
-        return {"sentiment": label, "label": label, "score": score, "summary": summary}
+                summary = f"Based on last trading day ({current_day.date}), market sentiment is {label}."
+                return {"sentiment": label, "label": label, "score": score, "summary": summary}
+
+        return {"sentiment": "neutral", "label": "neutral", "score": 50, "summary": "Market data is being processed."}
     except Exception as e:
         print(f"[Sentiment] Error: {e}")
         return {"sentiment": "neutral", "label": "neutral", "score": 50, "summary": "Market sentiment temporarily unavailable", "error": str(e)}
@@ -1826,15 +1830,17 @@ async def proxy_news_general(db: Session = Depends(get_db)):
             
         today_date = datetime.now(IST).strftime("%Y-%m-%d")
 
-        # fallback DB (fetch only latest row per ticker, using thread to avoid blocking event loop)
         def fetch_latest():
             res = {}
-            for t in ticker_list:
-                row = db.query(models.StockData).filter(models.StockData.ticker == t).order_by(models.StockData.date.desc()).first()
-                if row:
-                    res[t] = row
+            rows = db.query(models.StockData).filter(
+                models.StockData.ticker.in_(ticker_list)
+            ).distinct(models.StockData.ticker).order_by(
+                models.StockData.ticker, models.StockData.date.desc()
+            ).all()
+            for row in rows:
+                res[row.ticker] = row
             return res
-        
+
         latest_by_ticker = fetch_latest()
 
         # ── Stock-level articles with sector context ──
@@ -1905,12 +1911,13 @@ async def proxy_news_general(db: Session = Depends(get_db)):
             else:
                 def fetch_indices():
                     indices = ['NIFTY', 'SENSEX', 'BANKNIFTY']
-                    res = {}
-                    for i in indices:
-                        r = db.query(models.StockData).filter(models.StockData.ticker == i).order_by(models.StockData.date.desc()).first()
-                        if r: res[i] = r
-                    return res
-                
+                    rows = db.query(models.StockData).filter(
+                        models.StockData.ticker.in_(indices)
+                    ).distinct(models.StockData.ticker).order_by(
+                        models.StockData.ticker, models.StockData.date.desc()
+                    ).all()
+                    return {r.ticker: r for r in rows}
+
                 idx_map = fetch_indices()
                 nifty = idx_map.get('NIFTY')
                 if nifty and nifty.close and nifty.open:
@@ -2853,8 +2860,8 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     from aggregator import snap_to_nse_session, fix_ohlc
 
     yf_ticker = _yfinance_ticker(clean_ticker)
-    period_map = {"1m": "7d", "5m": "5d", "15m": "1mo", "30m": "1mo", "1h": "1mo"}
-    yf_period = period_map.get(interval, "5d")
+    period_map = {"1m": "7d", "5m": "60d", "15m": "60d", "30m": "60d", "1h": "730d"}
+    yf_period = period_map.get(interval, "60d")
 
     # Acquire semaphore (separate pool for background tasks)
     sem = _yf_bg_semaphore if use_bg_semaphore else _yf_semaphore
@@ -3126,36 +3133,6 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         return JSONResponse(status_code=400, content={"error": f"Unsupported interval: {interval}"})
     q_base = db.query(model).filter(model.ticker.in_(db_tickers))
 
-    # === AUTO GAP FILL (Synchronous on first page load) ===
-    if before is None:
-        try:
-            now = database.get_ist_now()
-            ist_time = now.time()
-            market_open = ist_time >= __import__('datetime').time(9, 15)
-            # Fetch the very last stored candle
-            latest_candle = q_base.order_by(model.timestamp.desc()).first()
-            
-            if latest_candle:
-                last_stored_dt = latest_candle.timestamp
-                gap_minutes = (now - last_stored_dt).total_seconds() / 60
-            else:
-                # No data exists at all for this timeframe, force a full backfill (e.g. 14 days)
-                last_stored_dt = now - __import__('datetime').timedelta(days=14)
-                gap_minutes = 999999
-                
-            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
-            # Fill gap if:
-            #  - During market hours: gap > 2 candle periods (standard behaviour)
-            #  - Any time: gap > 1 full trading day (375 min) — catches multi-day stale data
-            should_fill = (gap_minutes > (bucket_min * 2) and market_open) or (gap_minutes > 375)
-            if should_fill:
-                clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
-                print(f"[GapFill] Sync trigger for {clean_ticker} {interval}: gap={gap_minutes:.0f}min from {last_stored_dt}")
-                # Run synchronously so we can return the fresh data immediately
-                perform_on_demand_backfill(clean_ticker, interval, last_stored_dt, now)
-        except Exception as _gf_err:
-            print(f"[GapFill] Error checking gap: {_gf_err}")
-
     # === REGISTER VIEWER for live higher-timeframe candle building ===
     if before is None and interval in ("15m", "30m", "1h"):
         clean_t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
@@ -3169,6 +3146,49 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         q = q.filter(model.timestamp > _epoch_to_ist_dt(after))
     
     records = q.order_by(model.timestamp.desc()).limit(limit + 1).all()
+
+    # === AUTO GAP FILL (Synchronous on first page load) ===
+    # Check for gaps inside the fetched data (handles cases where a few recent live candles hide a massive historical gap)
+    if before is None:
+        try:
+            now = database.get_ist_now()
+            ist_time = now.time()
+            market_open = ist_time >= __import__('datetime').time(9, 15)
+            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+            
+            clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+            
+            if not records:
+                # No data exists at all for this timeframe, force a full backfill (e.g. 14 days)
+                last_stored_dt = now - __import__('datetime').timedelta(days=14)
+                print(f"[GapFill] Sync trigger for {clean_ticker} {interval}: completely empty DB")
+                perform_on_demand_backfill(clean_ticker, interval, last_stored_dt, now)
+                records = q.order_by(model.timestamp.desc()).limit(limit + 1).all()
+            else:
+                # 1. Check tip gap
+                tip_gap_minutes = (now - records[0].timestamp).total_seconds() / 60
+                has_tip_gap = (tip_gap_minutes > (bucket_min * 2) and market_open) or (tip_gap_minutes > 375)
+                
+                # 2. Check internal gaps
+                oldest_gap_start = None
+                for i in range(len(records) - 1):
+                    # records are ordered newest to oldest
+                    t_new = records[i].timestamp
+                    t_old = records[i+1].timestamp
+                    internal_gap = (t_new - t_old).total_seconds() / 60
+                    # If gap is larger than 1 trading day (375 mins), we found a missing day/session
+                    if internal_gap > 375:
+                        oldest_gap_start = t_old
+                        # Keep looping to find the absolute oldest gap in the fetched records so we fill them all at once
+                
+                if has_tip_gap or oldest_gap_start:
+                    fill_start = oldest_gap_start if oldest_gap_start else records[0].timestamp
+                    print(f"[GapFill] Sync trigger for {clean_ticker} {interval}: filling from {fill_start}")
+                    perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
+                    records = q.order_by(model.timestamp.desc()).limit(limit + 1).all()
+        except Exception as _gf_err:
+            print(f"[GapFill] Error checking gap: {_gf_err}")
+
     has_more = len(records) > limit
     if has_more:
         records = records[:limit]
@@ -3912,6 +3932,27 @@ async def startup():
         print(f"[Startup] Migration v006 error: {e}")
     finally:
         if db_migrate2: db_migrate2.close()
+
+    # ── Migration v007: performance indexes ──
+    try:
+        from database import SessionLocal as SessIdx
+        sess_idx = SessIdx()
+        index_sql = [
+            "CREATE INDEX IF NOT EXISTS ix_candle_ticker_tf_ts ON candles (ticker, timeframe, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_currentdaycandle_ticker_date ON current_day_candle (ticker, trading_date DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_metadata_is_premium ON stock_metadata (is_premium) WHERE is_premium = TRUE",
+            "CREATE INDEX IF NOT EXISTS ix_stock_data_ticker_date_desc ON stock_data (ticker, date DESC)",
+        ]
+        for stmt in index_sql:
+            try:
+                sess_idx.execute(sa_text(stmt))
+            except Exception as idx_e:
+                print(f"[Startup] Index error: {idx_e}")
+        sess_idx.commit()
+        sess_idx.close()
+        print("[Startup] Performance indexes created/verified (v007)")
+    except Exception as e:
+        print(f"[Startup] Migration v007 error: {e}")
 
     # ── Refresh MOVER_TICKERS from DB (premium stocks + indices) ──
     try:
