@@ -38,7 +38,7 @@
     position: absolute;
     width: 140px;
     height: 140px;
-    background: radial-gradient(circle, rgba(0, 122, 255, 0.8) 0%, rgba(0, 122, 255, 0) 70%);
+    background: radial-gradient(circle, rgba(37, 99, 235, 0.8) 0%, rgba(37, 99, 235, 0) 70%);
     border-radius: 50%;
     animation: pulseGlow 2s ease-in-out infinite alternate;
     z-index: 0;
@@ -55,8 +55,7 @@
     border-radius: 12px;
     object-fit: contain;
     z-index: 1;
-    box-shadow: 0 0 30px rgba(0, 122, 255, 0.6);
-    /* Strong Blue Glow */
+    box-shadow: 0 0 30px rgba(37, 99, 235, 0.6);
 }
 
 /* Text Container */
@@ -76,11 +75,10 @@
 .loader-dot-pulse {
     width: 8px;
     height: 8px;
-    background-color: #007AFF;
-    /* iOS Blue */
+    background-color: #2563EB;
     border-radius: 50%;
     animation: dotPulse 1.5s infinite ease-in-out;
-    box-shadow: 0 0 10px rgba(0, 122, 255, 0.8);
+    box-shadow: 0 0 10px rgba(37, 99, 235, 0.8);
 }
 
 @keyframes pulseGlow {

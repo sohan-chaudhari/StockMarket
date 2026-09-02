@@ -243,6 +243,18 @@ body {
   display: flex;
   align-items: center;
   gap: 28px;
+  min-width: 0; /* flex items default to min-width:auto, which blocks shrinking below content's
+                   natural width and forces the page to overflow horizontally instead of this
+                   list scrolling internally */
+  /* Unconditional (not just the mobile media query below) — on any viewport where the 7 links
+     plus the market-status pill don't both fit (e.g. a ~900-1000px laptop window, well above
+     the 768px mobile breakpoint), the links need to scroll internally instead of visually
+     overflowing into the status pill next to them. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-links::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-link {
@@ -281,7 +293,8 @@ body {
   margin-left: 4px;
 }
 
-.nav-dropdown:hover .nav-dropdown-menu {
+.nav-dropdown:hover .nav-dropdown-menu,
+.nav-dropdown:focus-within .nav-dropdown-menu {
   display: block;
 }
 
@@ -375,6 +388,15 @@ body {
   border-radius: 16px;
   font-size: 0.8rem;
   color: var(--text-secondary);
+  flex-shrink: 0; /* was shrinking under space pressure with no min-width floor, letting
+                      .nav-links' own links overflow past it and visually overlap the pill */
+}
+
+/* Mobile-only landing spot for .market-status-indicator, between the header and the index
+   ticker strip on home.html/index.html — see initMobileMarketStatusSlot() in nav.js. Empty
+   and inert on desktop, where the indicator stays inside the header. */
+.mobile-market-status-slot {
+  display: none;
 }
 
 .status-text {
@@ -436,22 +458,22 @@ body {
   width: 38px;
   height: 38px;
   background: linear-gradient(135deg, #1e1e24, #0a0a0c);
-  border: 1px solid rgba(74, 144, 226, 0.3);
+  border: 1px solid rgba(37, 99, 235, 0.3);
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 10px rgba(74, 144, 226, 0.15), inset 0 0 5px rgba(255,255,255,0.05);
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.15), inset 0 0 5px rgba(255,255,255,0.05);
   transition: all 0.3s ease;
 }
 
 .user-profile-btn:hover,
 .user-dropdown.active .user-profile-btn {
-  border-color: #4A90E2;
-  box-shadow: 0 0 15px rgba(74, 144, 226, 0.4), inset 0 0 8px rgba(255,255,255,0.1);
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 15px rgba(37, 99, 235, 0.4), inset 0 0 8px rgba(255,255,255,0.1);
   transform: translateY(-1px);
 }
 
 .user-profile-btn svg {
-  color: #4A90E2;
+  color: var(--accent-blue);
 }
 
 .user-balance {
@@ -590,21 +612,25 @@ body {
   }
   .nav-links {
     gap: 16px;
-    overflow-x: auto;
     padding-bottom: 4px;
   }
   .nav-link {
     font-size: 0.8rem;
     white-space: nowrap;
   }
+  .mobile-market-status-slot {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 4px;
+    /* Sits between the header and the index strip inside .dashboard-main's flex gap (24px on
+       both sides by default) — too much air around a small pill. Pull it in on both sides. */
+    margin: -12px 0;
+  }
   .brand-image-wrapper {
     display: none;
   }
   .logo-icon {
     height: 36px;
-  }
-  .market-status-indicator {
-    display: none;
   }
   .page-content {
     padding: 1rem;
@@ -650,7 +676,7 @@ body {
 .scrolling-item {
   height: 1.4rem;
   line-height: 1.4rem;
-  color: #4A90E2;
+  color: var(--accent-blue);
   font-weight: 700;
 }
 

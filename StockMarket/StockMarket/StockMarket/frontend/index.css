@@ -28,8 +28,6 @@
   --radius-sm: 8px;
 }
 
-/* Animations for Live Data */
-/* Flash animations removed per user request */
 
 /* 💀 Skeleton Loader */
 @keyframes skeletonPulse {
@@ -284,27 +282,24 @@ body {
 .brand-image-wrapper {
   height: 72px;
   width: 240px;
-  /* Increased width to fit full text */
   overflow: hidden;
   margin-left: 0px;
-  /* Pull it closer to logo icon */
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  /* Align start to control crop better */
 }
 
 .brand-image {
   height: 100%;
-  width: auto;
+  width: 100%;
+  object-fit: cover;
+  object-position: 20% center;
   display: block;
-  transform: scale(3.5) translateX(20px);
-  transform-origin: center;
+  transition: transform 0.3s ease;
 }
 
-.logo-container:hover .logo-img {
-  transform: scale(3.7);
-  /* Slight zoom on hover */
+.logo-container:hover .brand-image {
+  transform: scale(1.05);
 }
 
 /* Search Panel */
@@ -410,7 +405,7 @@ body {
   left: 0;
   right: 0;
   background: #0a0a0a;
-  border: 0.1px solid #ffffff;
+  border: 1px solid #ffffff;
   border-radius: var(--radius-md);
   max-height: 400px;
   overflow-y: auto;
@@ -1937,7 +1932,7 @@ img.card-icon {
   transition: border-color 0.2s;
 }
 .trade-form .input-group input:focus {
-  border-color: var(--accent);
+  border-color: var(--accent-blue);
 }
 .trade-summary {
   font-size: 0.9rem;
@@ -2061,5 +2056,16 @@ img.card-icon {
 }
 .positions-table .action-btn.close-btn:hover {
   background: rgba(255, 23, 68, 0.1);
+}
+:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 

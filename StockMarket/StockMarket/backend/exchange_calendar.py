@@ -55,8 +55,21 @@ class NSECalendar(ExchangeCalendarProvider):
     def is_market_open(self, dt: datetime) -> bool:
         if not self.is_trading_day(dt.date()):
             return False
+        # RT-11: a registered special/shortened session (e.g. Muhurat
+        # trading, which runs at hours completely outside the standard
+        # window) must use its own open/close times, not the hardcoded
+        # standard ones -- otherwise this gate (used to allow trading and
+        # TP/SL execution) incorrectly reports the market closed during a
+        # real, live special session.
+        special = self._special_sessions.get(dt.date())
+        if special is not None:
+            open_sec = special.open_time.hour * 3600 + special.open_time.minute * 60
+            close_sec = special.close_time.hour * 3600 + special.close_time.minute * 60
+        else:
+            open_sec, close_sec = _NSE_OPEN_SEC, _NSE_CLOSE_SEC
         t = dt.time()
-        return _NSE_OPEN_SEC <= (t.hour * 3600 + t.minute * 60) < _NSE_CLOSE_SEC
+        sec = t.hour * 3600 + t.minute * 60
+        return open_sec <= sec < close_sec
 
     def is_trading_day(self, d: date) -> bool:
         if d.weekday() >= 5:
@@ -64,6 +77,15 @@ class NSECalendar(ExchangeCalendarProvider):
         if d in self._holidays:
             return False
         return True
+
+    def get_next_trading_day(self, from_date: Optional[date] = None) -> date:
+        """Returns the next trading date strictly after from_date per exchange calendar."""
+        if from_date is None:
+            from_date = datetime.now(IST).date()
+        cur = from_date + timedelta(days=1)
+        while not self.is_trading_day(cur):
+            cur += timedelta(days=1)
+        return cur
 
     def current_session(self) -> Optional[SessionInfo]:
         today = datetime.now(IST).date()
@@ -97,6 +119,21 @@ class NSECalendar(ExchangeCalendarProvider):
 
     def is_shortened_session(self, d: date) -> bool:
         return d in self._special_sessions
+
+    def special_sessions_as_bounds(self) -> Dict[date, tuple]:
+        """Export special sessions as (open_sec, close_sec, close_grace_sec) tuples.
+
+        Consumers that snap raw tick epochs (e.g. the live aggregator) work in
+        seconds-of-day rather than `time` objects — this is the single place
+        that conversion happens, so nse_calendar stays the one authoritative
+        source special-session data is entered into.
+        """
+        bounds = {}
+        for d, info in self._special_sessions.items():
+            open_sec = info.open_time.hour * 3600 + info.open_time.minute * 60
+            close_sec = info.close_time.hour * 3600 + info.close_time.minute * 60
+            bounds[d] = (open_sec, close_sec, close_sec + 15 * 60)
+        return bounds
 
     def _snap_intraday(self, dt: datetime, bucket_minutes: int) -> datetime:
         bucket_sec = bucket_minutes * 60

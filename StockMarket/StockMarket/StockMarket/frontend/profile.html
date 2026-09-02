@@ -1,15 +1,17 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Profile - LEVERAGE</title>
-    <link rel="stylesheet" href="index.css?v=65">
-    <link rel="stylesheet" href="nav.css">
-    <link rel="stylesheet" href="loader.css?v=2">
+    <link rel="stylesheet" href="tokens.css?v=2">
+    <link rel="stylesheet" href="index.css?v=82">
+    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="loader.css?v=4">
     <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap"
         rel="stylesheet">
     <style>
         /* Modern Premium Styles */
@@ -325,7 +327,7 @@
             transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
-        .toggle-switch.active { background: var(--success, #00E676); }
+        .toggle-switch.active { background: var(--success, #089981); }
         .toggle-switch.active::after { transform: translateX(22px); }
         
         /* Modals and common items */
@@ -394,6 +396,8 @@
             font-size: 15px;
         }
     </style>
+    <script src="page-cache.js"></script>
+    <script src="ws.js"></script>
 </head>
 
 <body>
@@ -404,7 +408,7 @@
         <div class="leverage-loader simple-glow-theme">
             <div class="loader-logo-wrapper">
                 <div class="logo-glow-effect"></div>
-                <img src="logo.jpeg" class="loader-main-logo" alt="LEVERAGE">
+                <img src="logo-white.svg" class="loader-main-logo" alt="LEVERAGE">
             </div>
             <div class="loader-text-clean">
                 <span class="loader-dot-pulse"></span>
@@ -416,7 +420,7 @@
     <!-- Delete Confirmation Modal -->
     <div id="deleteModal" class="modal">
         <div class="modal-content">
-            <div style="font-size: 64px; margin-bottom: 20px;">⚠️</div>
+            <div style="font-size: 64px; margin-bottom: 20px;">&#9888;</div>
             <h2 style="color: #ff4444; margin-bottom: 12px; font-size: 24px;">Delete Account?</h2>
             <p style="color: #999; margin-bottom: 8px;">Are you sure you want to delete your account?</p>
             <p style="color: #999; margin-bottom: 24px;">This action cannot be undone.</p>
@@ -435,7 +439,7 @@
     <!-- Logout Confirmation Modal -->
     <div id="logoutModal" class="modal">
         <div class="modal-content">
-            <div style="font-size: 64px; margin-bottom: 20px;">👋</div>
+            <div style="font-size: 64px; margin-bottom: 20px;">&#128075;</div>
             <h2 style="color: #2ed573; margin-bottom: 12px; font-size: 24px;">Logout?</h2>
             <p style="color: #999; margin-bottom: 24px;">Are you sure you want to logout from your account?</p>
 
@@ -462,19 +466,19 @@
             <!-- Sidebar Navigation -->
             <div class="dashboard-sidebar">
                 <div class="sidebar-item active" onclick="switchTab('profile', this)">
-                    <span class="icon">👤</span> Profile Details
+                    <span class="icon">&#128100;</span> Profile Details
                 </div>
                 <div class="sidebar-item" onclick="switchTab('settings', this)">
-                    <span class="icon">⚙️</span> Settings
+                    <span class="icon">&#9881;</span> Settings
                 </div>
                 <div class="sidebar-item" onclick="switchTab('privacy', this)">
-                    <span class="icon">🛡️</span> Privacy & Policy
+                    <span class="icon">&#128481;</span> Privacy & Policy
                 </div>
                 <div class="sidebar-item" onclick="switchTab('help', this)">
-                    <span class="icon">❓</span> Help & Support
+                    <span class="icon">&#8505;</span> Help & Support
                 </div>
                 <div class="sidebar-item danger" onclick="showLogoutModal()" style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 24px;">
-                    <span class="icon">➜</span> Logout
+                    <span class="icon">&#10142;</span> Logout
                 </div>
             </div>
 
@@ -505,8 +509,8 @@
                         </div>
                         <div class="info-item" style="grid-column: 1 / -1;">
                             <div class="info-label">Account Status</div>
-                            <div class="info-value" style="color: #00E676; display: flex; align-items: center; gap: 8px;">
-                                <span style="width: 8px; height: 8px; background: #00E676; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #00E676;"></span>
+                            <div class="info-value" style="color: #089981; display: flex; align-items: center; gap: 8px;">
+                                <span style="width: 8px; height: 8px; background: #089981; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px #089981;"></span>
                                 Active & Verified
                             </div>
                         </div>
@@ -581,9 +585,9 @@
         </main>
     </div>
 
-    <script src="nav.js?v=3"></script>
+    <script src="nav.js?v=8"></script>
     <script src="stocks.js?v=25"></script>
-    <script src="index.js?v=38"></script>
+    <script src="index.js?v=45"></script>
     <script>
         // --- AUTH CHECK ---
         (function checkAuth() {
@@ -612,7 +616,7 @@
 
                 const userBalance = document.getElementById('userBalance');
                 const userName = document.getElementById('userName');
-                if (userBalance) userBalance.textContent = '₹' + (user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                if (userBalance) userBalance.textContent = '&#8377;' + (user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
                 if (userName) userName.textContent = fullName || user.email.split('@')[0];
 
             } catch (e) {
@@ -725,3 +729,5 @@
 </body>
 
 </html>
+
+

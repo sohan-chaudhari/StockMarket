@@ -37,6 +37,41 @@ class TestNSECalendar(unittest.TestCase):
         dt = datetime(2026, 7, 17, 10, 0, 0, tzinfo=IST)
         self.assertFalse(self.cal.is_market_open(dt))
 
+    def test_is_market_open_during_special_session_hours(self):
+        # RT-11: a Muhurat-style special session runs at hours completely
+        # outside the standard 09:15-15:30 window -- is_market_open() must
+        # use the special session's own hours, not reject it as closed.
+        muhurat_date = date(2026, 8, 20)
+        self.cal.add_special_session(SessionInfo(
+            date=muhurat_date, open_time=time(18, 15), close_time=time(19, 15),
+            session_type="MUHURAT",
+        ))
+        dt = datetime(2026, 8, 20, 18, 45, 0, tzinfo=IST)
+        self.assertTrue(self.cal.is_market_open(dt))
+
+    def test_is_market_open_outside_special_session_hours_still_closed(self):
+        muhurat_date = date(2026, 8, 20)
+        self.cal.add_special_session(SessionInfo(
+            date=muhurat_date, open_time=time(18, 15), close_time=time(19, 15),
+            session_type="MUHURAT",
+        ))
+        # Standard market hours on a Muhurat day are NOT a real session.
+        dt = datetime(2026, 8, 20, 10, 0, 0, tzinfo=IST)
+        self.assertFalse(self.cal.is_market_open(dt))
+        # After the special session ends, also closed.
+        dt_after = datetime(2026, 8, 20, 19, 30, 0, tzinfo=IST)
+        self.assertFalse(self.cal.is_market_open(dt_after))
+
+    def test_is_market_open_normal_day_unaffected_by_special_sessions(self):
+        # A special session registered for a DIFFERENT date must not change
+        # standard-hours behavior on any other trading day.
+        self.cal.add_special_session(SessionInfo(
+            date=date(2026, 8, 20), open_time=time(18, 15), close_time=time(19, 15),
+            session_type="MUHURAT",
+        ))
+        dt = datetime(2026, 7, 1, 10, 0, 0, tzinfo=IST)
+        self.assertTrue(self.cal.is_market_open(dt))
+
     def test_current_session_trading_day(self):
         d = datetime.now(IST).date()
         if d.weekday() < 5:
@@ -111,6 +146,22 @@ class TestNSECalendar(unittest.TestCase):
         boundary = self.cal._snap_intraday(dt, 5)
         self.assertEqual(boundary.hour, 9)
         self.assertEqual(boundary.minute, 15)
+
+    # ── Decision 4: exporting special sessions for aggregator.py to consume ──
+
+    def test_special_sessions_as_bounds_empty_by_default(self):
+        self.assertEqual(self.cal.special_sessions_as_bounds(), {})
+
+    def test_special_sessions_as_bounds_converts_muhurat_style_session(self):
+        d = date(2026, 10, 21)
+        special = SessionInfo(date=d, open_time=time(18, 15), close_time=time(19, 15), session_type="SPECIAL")
+        self.cal.add_special_session(special)
+        bounds = self.cal.special_sessions_as_bounds()
+        self.assertIn(d, bounds)
+        open_sec, close_sec, close_grace_sec = bounds[d]
+        self.assertEqual(open_sec, 18 * 3600 + 15 * 60)
+        self.assertEqual(close_sec, 19 * 3600 + 15 * 60)
+        self.assertEqual(close_grace_sec, close_sec + 15 * 60)
 
 
 if __name__ == "__main__":

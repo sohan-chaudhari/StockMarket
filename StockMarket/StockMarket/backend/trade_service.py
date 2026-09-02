@@ -4,7 +4,7 @@ Handles: Opening positions, closing positions, setting TP/SL, P&L calculations
 """
 from sqlalchemy.orm import Session
 from datetime import datetime
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, List
 import models
 from database import get_ist_now
 
@@ -52,36 +52,40 @@ class TradingService:
         take_profit: Optional[float] = None,
         stop_loss: Optional[float] = None,
         stock_name: Optional[str] = None
-    ) -> Tuple[Optional[models.Position], str]:
+    ) -> Tuple[Optional[models.Position], str, Optional[models.Order]]:
         """
-        Open a new trading position
-        Returns: (Position object or None, error message)
+        Open a new trading position.
+        Strictly rejects orders when the exchange is closed.
         """
-        total_investment = entry_price * quantity
-        
-        # 1. Validate balance and lock User row for update to prevent race conditions
-        user = db.query(models.User).filter(models.User.user_id == user_id).with_for_update().first()
-        if not user:
-            db.rollback()
-            return None, "User not found"
-        if user.virtual_balance < total_investment:
-            db.rollback()
-            return None, f"Insufficient balance. Required: ₹{total_investment:.2f}, Available: ₹{user.virtual_balance:.2f}"
-        
-        # 2. Validate TP/SL if provided
-        # BUG-03 FIX: Use `is not None` — falsy check silently skips validation for TP/SL=0.0
+        from exchange_calendar import nse_calendar
+        now_ist = get_ist_now()
+        is_open = nse_calendar.is_market_open(now_ist)
+
+        if not is_open:
+            next_day = nse_calendar.get_next_trading_day(now_ist.date())
+            next_day_str = next_day.strftime("%A, %d %b %Y")
+            return None, f"Market is closed. Trading is strictly disabled outside NSE market hours (09:15 - 15:30 IST). Please place your trade at 09:15 AM on {next_day_str}.", None
+
+        # 1. Validate TP/SL if provided
         if take_profit is not None or stop_loss is not None:
             is_valid, msg = TradingService.validate_tp_sl(position_type, entry_price, take_profit, stop_loss)
             if not is_valid:
-                db.rollback()
-                return None, msg
-        
+                return None, msg, None
+
+        # ── LIVE MARKET ORDER EXECUTION ──
+        total_investment = round(entry_price * quantity, 2)
+        user = db.query(models.User).filter(models.User.user_id == user_id).with_for_update().first()
+        if not user:
+            db.rollback()
+            return None, "User not found", None
+        if user.virtual_balance < total_investment:
+            db.rollback()
+            return None, f"Insufficient balance. Required: ₹{total_investment:.2f}, Available: ₹{user.virtual_balance:.2f}", None
+
         try:
-            # 3. Deduct balance (using the locked user row)
             user.virtual_balance -= total_investment
             new_balance = user.virtual_balance
-            
-            # 4. Create position
+
             position = models.Position(
                 user_id=user_id,
                 ticker=ticker,
@@ -90,13 +94,13 @@ class TradingService:
                 quantity=quantity,
                 entry_price=entry_price,
                 total_investment=total_investment,
+                take_profit=take_profit,
+                stop_loss=stop_loss,
                 status="OPEN"
             )
             db.add(position)
-            db.flush()  # Get the position ID
-            
-            # 5. Create TP/SL orders if provided
-            # BUG-03 FIX: Use `is not None` — `if take_profit:` would skip creating order for TP=0.0
+            db.flush()
+
             if take_profit is not None:
                 tp_order = models.Order(
                     position_id=position.id,
@@ -107,7 +111,7 @@ class TradingService:
                     status="PENDING"
                 )
                 db.add(tp_order)
-            
+
             if stop_loss is not None:
                 sl_order = models.Order(
                     position_id=position.id,
@@ -118,8 +122,7 @@ class TradingService:
                     status="PENDING"
                 )
                 db.add(sl_order)
-            
-            # 6. Create transaction record
+
             transaction = models.Transaction(
                 user_id=user_id,
                 position_id=position.id,
@@ -129,21 +132,18 @@ class TradingService:
                 position_type=position_type,
                 quantity=quantity,
                 price=entry_price,
-                amount=-total_investment,  # Negative = debit
+                amount=-total_investment,
                 pnl=None,
                 balance_after=new_balance
             )
             db.add(transaction)
-            
             db.commit()
             db.refresh(position)
-            
-            return position, "Position opened successfully"
-            
+            return position, "Position opened successfully", None
         except Exception as e:
             db.rollback()
-            return None, f"Failed to open position: {str(e)}"
-    
+            return None, f"Failed to open position: {str(e)}", None
+
     @staticmethod
     def close_position(
         db: Session,
@@ -153,9 +153,17 @@ class TradingService:
         close_type: str = "MANUAL"
     ) -> Tuple[Optional[models.Position], str]:
         """
-        Close an existing position
-        Returns: (Position object or None, error message)
+        Close an existing position.
+        Strictly disabled when the exchange is closed.
         """
+        from exchange_calendar import nse_calendar
+        now_ist = get_ist_now()
+        is_open = nse_calendar.is_market_open(now_ist)
+        if not is_open:
+            next_day = nse_calendar.get_next_trading_day(now_ist.date())
+            next_day_str = next_day.strftime("%A, %d %b %Y")
+            return None, f"Market is closed. Positions cannot be closed outside NSE trading hours (09:15 - 15:30 IST). Trading resumes at 09:15 AM on {next_day_str}."
+
         # 1. Get position (with lock to prevent race conditions)
         position = db.query(models.Position).filter(
             models.Position.id == position_id,
@@ -191,6 +199,12 @@ class TradingService:
             position.realized_pnl = pnl
             position.status = "CLOSED"
             position.close_type = close_type
+            if close_type == "TP_EXECUTED":
+                position.exit_reason = "TP_HIT"
+            elif close_type == "SL_EXECUTED":
+                position.exit_reason = "SL_HIT"
+            else:
+                position.exit_reason = "MANUAL_CLOSE"
             position.closed_at = get_ist_now()
             
             # 5. Cancel pending orders for this position
@@ -233,9 +247,17 @@ class TradingService:
         stop_loss: Optional[float] = None
     ) -> Tuple[bool, str]:
         """
-        Set or update TP/SL for a position
-        Returns: (success, message)
+        Set or update TP/SL for a position.
+        Strictly disabled when the exchange is closed.
         """
+        from exchange_calendar import nse_calendar
+        now_ist = get_ist_now()
+        is_open = nse_calendar.is_market_open(now_ist)
+        if not is_open:
+            next_day = nse_calendar.get_next_trading_day(now_ist.date())
+            next_day_str = next_day.strftime("%A, %d %b %Y")
+            return False, f"Market is closed. Take Profit and Stop Loss cannot be modified outside NSE trading hours (09:15 - 15:30 IST). Modification resumes at 09:15 AM on {next_day_str}."
+
         # 1. Get position (with lock to prevent race conditions)
         position = db.query(models.Position).filter(
             models.Position.id == position_id,
@@ -326,10 +348,35 @@ class TradingService:
             models.Order.position_id == position_id,
             models.Order.status == "PENDING"
         ).all()
-        
+
         result = {"TP": None, "SL": None}
         for order in orders:
             result[order.order_type] = order
+        return result
+
+    @staticmethod
+    def get_orders_for_positions(db: Session, position_ids: List[int]) -> Dict[int, Dict[str, Optional[models.Order]]]:
+        """Batched get_position_orders() for a list of positions in ONE query.
+
+        DB-06: the open/closed-positions endpoints called get_position_orders
+        once per position in a loop -- N positions meant N+1 queries. This
+        fetches every position's pending TP/SL orders in a single IN(...)
+        query and groups them in memory instead.
+        """
+        if not position_ids:
+            return {}
+        orders = db.query(models.Order).filter(
+            models.Order.position_id.in_(position_ids),
+            models.Order.status == "PENDING"
+        ).all()
+
+        result: Dict[int, Dict[str, Optional[models.Order]]] = {
+            pid: {"TP": None, "SL": None} for pid in position_ids
+        }
+        for order in orders:
+            bucket = result.get(order.position_id)
+            if bucket is not None:
+                bucket[order.order_type] = order
         return result
     
     @staticmethod

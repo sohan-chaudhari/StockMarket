@@ -42,6 +42,20 @@ class RecoveryService:
         with self._lock:
             self._recovered.add(ticker)
 
+    def mark_needs_recovery(self, ticker: str):
+        """Re-arms a ticker for recovery.
+
+        needs_recovery() permanently returns False after a ticker's first
+        recovery this process lifetime, so recover_ticker() silently no-ops
+        on every later call for it -- including a second WS gap for the same
+        ticker later the same day. Callers that detect a fresh gap (e.g. the
+        WS reconnect watchdog) call this immediately before recover_ticker()
+        so the one-shot guard doesn't swallow a recovery that's genuinely
+        needed again.
+        """
+        with self._lock:
+            self._recovered.discard(ticker)
+
     def reset(self):
         with self._lock:
             self._recovered.clear()
@@ -114,7 +128,7 @@ class RecoveryService:
                     to_date = datetime.now().date()
                     angel_candles = self._historical_service.get_historical_candles(
                         ticker=ticker, interval="FIVE_MINUTE",
-                        from_date=from_date, to_date=to_date, exchange='NSE'
+                        from_date=from_date, to_date=to_date, exchange='BSE' if ticker == 'SENSEX' else 'NSE'
                     )
                     if angel_candles:
                         for c in angel_candles:
@@ -137,7 +151,12 @@ class RecoveryService:
 
         if self._yf_downloader is not None and not self._yf_downloader.is_failed(ticker):
             try:
-                yf_ticker = f"{ticker}.NS"
+                YFINANCE_INDEX_MAP = {
+                    'NIFTY': '^NSEI',
+                    'BANKNIFTY': '^NSEBANK',
+                    'SENSEX': '^BSESN',
+                }
+                yf_ticker = YFINANCE_INDEX_MAP.get(ticker, f"{ticker}.NS")
                 df = self._yf_downloader.download_single(yf_ticker, period="5d", interval="5m")
                 if df and not df[0].empty:
                     data = df[0]

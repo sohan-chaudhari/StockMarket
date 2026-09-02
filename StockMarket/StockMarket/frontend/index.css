@@ -3,33 +3,8 @@
    Deep Black & High Contrast Design
    ============================================ */
 
-:root {
-  /* Premium Fintech Colors */
-  --bg-color: #0A0A0B; /* Deep Onyx */
-  --card-bg: rgba(20, 20, 22, 0.6);
-  --card-hover: rgba(30, 30, 33, 0.8);
-  --text-primary: #ffffff;
-  --text-secondary: #a1a1aa;
-  --text-muted: #52525b;
+/* Design tokens (:root) now live in tokens.css, loaded before this file on every page. */
 
-  --accent-blue: #2563EB; /* Premium Brand Blue */
-  --accent-blue-hover: #3B82F6;
-
-  --success: #00E676; /* Cyber Green — use this var everywhere */
-  --danger: #FF0055; /* Neon Coral */
-
-  /* Fonts */
-  --font-brand: 'Playfair Display', serif;
-  --font-ui: 'Inter', sans-serif;
-  --font-mono: 'Space Grotesk', monospace;
-
-  /* Spacing & Radius */
-  --radius-md: 16px;
-  --radius-sm: 8px;
-}
-
-/* Animations for Live Data */
-/* Flash animations removed per user request */
 
 /* 💀 Skeleton Loader */
 @keyframes skeletonPulse {
@@ -117,122 +92,8 @@ body {
 }
 
 
-/* ============================================
-   USER DROPDOWN
-   ============================================ */
-.user-dropdown {
-  position: relative;
-  display: inline-block;
-}
-
-.user-profile-btn {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid #333;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.user-profile-btn:hover,
-.user-dropdown.active .user-profile-btn {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
-}
-
-.user-balance {
-  color: var(--success);
-  font-weight: 600;
-  padding: 4px 8px;
-  background: rgba(0, 200, 83, 0.1);
-  border-radius: 4px;
-}
-
-.user-name {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.dropdown-arrow {
-  font-size: 10px;
-  color: var(--text-secondary);
-  transition: transform 0.2s ease;
-}
-
-.user-dropdown.active .dropdown-arrow {
-  transform: rotate(180deg);
-}
-
-.dropdown-content {
-  display: none;
-  position: absolute;
-  right: 0;
-  top: 100%;
-  margin-top: 8px;
-  min-width: 200px;
-  background: rgba(17, 17, 17, 0.95);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-  z-index: 1000;
-  overflow: hidden;
-  padding: 6px;
-}
-
-.dropdown-content.show {
-  display: block;
-  animation: fadeIn 0.2s ease-out;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  color: var(--text-secondary);
-  text-decoration: none;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-  font-size: 14px;
-}
-
-.dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-primary);
-}
-
-.dropdown-item .icon {
-  font-size: 16px;
-  width: 20px;
-  text-align: center;
-}
-
-.logout-item:hover {
-  color: #ffd700;
-  /* Goldish for logout hover if desired, or keep standard */
-}
-
-.delete-item:hover {
-  background: rgba(255, 82, 82, 0.1);
-  color: var(--danger);
-}
+/* User dropdown, search-results dropdown styles now live only in nav.css (loaded on every
+   page with this UI) — remove any duplicate .user-dropdown/.search-results block here. */
 
 /* ============================================
    HEADER
@@ -378,7 +239,7 @@ body {
 .scrolling-item {
   height: 1.4rem;
   line-height: 1.4rem;
-  color: #4A90E2;
+  color: var(--accent-blue);
   font-weight: 700;
 }
 
@@ -400,42 +261,10 @@ body {
   font-size: 1.1rem;
 }
 
-/* Search Results Dropdown */
-.search-results {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  background: #0a0a0a;
-  border: 1px solid #ffffff;
-  border-radius: var(--radius-md);
-  max-height: 400px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  /* Prevent Body Scroll */
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.8);
-  display: none;
-  /* Hidden by default */
-  z-index: 200;
-}
-
-.search-results.visible {
-  display: block;
-}
-
-.result-item {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid #1a1a1a;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.result-item:hover {
-  background: #151515;
-}
-
+/* Search Results Dropdown — base .search-results/.result-item/.result-info/.result-name/
+   .result-ticker/.search-launch-btn now live only in nav.css. These two are unique to
+   index.js's richer search renderer (logo thumbnail + live price/change), which nav.css
+   doesn't need, so they stay here. */
 .result-logo {
   width: 36px;
   height: 36px;
@@ -448,51 +277,9 @@ body {
   margin-right: 12px;
 }
 
-.result-info {
-  flex: 1;
-}
-
-.result-name {
-  color: var(--text-primary);
-  font-weight: 500;
-  font-size: 0.9rem;
-}
-
-.result-ticker {
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-}
-
-/* Result Meta Container */
 .result-meta {
   display: flex;
   align-items: center;
-}
-
-.search-launch-btn {
-  background: var(--accent-blue);
-  color: white;
-  border: none;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-
-  /* Hidden by default */
-  opacity: 0;
-  transform: translateX(10px);
-  transition: all 0.2s ease;
-  pointer-events: none;
-  /* Prevent accidental clicks when hidden */
-}
-
-/* Show on hover of parent result row */
-.result-item:hover .search-launch-btn {
-  opacity: 1;
-  transform: translateX(0);
-  pointer-events: auto;
 }
 
 .search-launch-btn:hover {
@@ -1108,7 +895,7 @@ img.card-icon {
 .btn-secondary {
   background-color: #1a1a1a;
   color: white;
-  border: 1px solid #333;
+  border: 1px solid var(--border-color);
   padding: 12px 24px;
   border-radius: 8px;
   font-weight: 600;
@@ -1190,8 +977,8 @@ img.card-icon {
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.news-score-badge.positive { color: var(--success); border-color: rgba(0, 230, 118, 0.3); }
-.news-score-badge.negative { color: var(--danger); border-color: rgba(255, 0, 85, 0.3); }
+.news-score-badge.positive { color: var(--success); border-color: rgba(8, 153, 129, 0.3); }
+.news-score-badge.negative { color: var(--danger); border-color: rgba(242, 54, 69, 0.3); }
 
 .news-sentiment-badge {
   font-size: 0.7rem;
@@ -1202,8 +989,8 @@ img.card-icon {
   letter-spacing: 0.05em;
 }
 
-.news-sentiment-badge.positive { background: rgba(0, 230, 118, 0.1); color: var(--success); }
-.news-sentiment-badge.negative { background: rgba(255, 0, 85, 0.1); color: var(--danger); }
+.news-sentiment-badge.positive { background: rgba(8, 153, 129, 0.1); color: var(--success); }
+.news-sentiment-badge.negative { background: rgba(242, 54, 69, 0.1); color: var(--danger); }
 .news-sentiment-badge.neutral { background: rgba(161, 161, 170, 0.1); color: var(--text-secondary); }
 
 .news-item-meta {
@@ -1261,6 +1048,9 @@ img.card-icon {
   overflow-x: auto;
   scrollbar-width: none;
   flex: 1;
+  min-width: 0; /* flex items default to min-width:auto, which blocks shrinking below content's
+                   natural width and forces the page to overflow horizontally instead of this
+                   container scrolling internally */
 }
 .strip-scroll-container::-webkit-scrollbar {
   display: none;
@@ -1322,8 +1112,48 @@ img.card-icon {
   gap: 24px;
 }
 @media (max-width: 900px) {
+  /* Index ticker strip: drop the prev/next click buttons, matching the watchlist strip below
+     it — still fully scrollable by touch/swipe, .strip-scroll-container's overflow-x:auto and
+     scrollbar-width:none are untouched. Freeing their width also gives the cards more room. */
+  .strip-btn {
+    display: none;
+  }
+  /* Same edge-bleed treatment as .market-movers-section: the card's own background was
+     stopping short of the screen edge, same as .movers-list did before that fix. */
+  .index-ticker-strip {
+    margin-right: -24px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .strip-scroll-container {
+    margin-right: -12px;
+    padding-right: 12px;
+  }
   .dashboard-hero-section {
     grid-template-columns: 1fr;
+  }
+  /* Grid items default to min-width:auto, letting the chart's own contents (e.g. the ticker
+     <select>) hold the whole section — and the page — wider than the viewport. */
+  .main-chart-container {
+    min-width: 0;
+  }
+  /* This page doesn't load responsive.css (that's only linked on market.html/stock.html),
+     so the chart header/footer rows never had their own mobile wrap rule — title block +
+     timeframe buttons stayed on one line and forced the page wider. */
+  .chart-header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .chart-footer-ohlc {
+    flex-wrap: wrap;
+    gap: 8px 16px;
+  }
+  /* AI Insights panel took a full extra screen's worth of scroll below the chart on mobile —
+     hide it there and let the chart use the full width instead. Desktop is unaffected.
+     !important needed: the unconditional ".main-chart-container, .ai-insights-panel { display:flex }"
+     base rule below this in the file would otherwise win on source order. */
+  .ai-insights-panel {
+    display: none !important;
   }
 }
 .main-chart-container, .ai-insights-panel {
@@ -1411,7 +1241,7 @@ img.card-icon {
   gap: 8px;
 }
 .badge-green {
-  background: rgba(0, 230, 118, 0.15);
+  background: rgba(8, 153, 129, 0.15);
   color: var(--success);
   padding: 2px 8px;
   border-radius: 12px;
@@ -1474,12 +1304,90 @@ img.card-icon {
   border: 1px solid rgba(255,255,255,0.05);
 }
 @media (max-width: 900px) {
-  .market-movers-section { grid-template-columns: 1fr; }
+  .market-movers-section {
+    grid-template-columns: 1fr;
+    /* The card's own background/border was stopping short of the screen edge (same as the
+       scrollable list did) — bleed the whole card past .dashboard-main's 24px right padding,
+       square off the right corners since they now sit flush against the edge, and shrink the
+       right-side gutter so the header/"View All" link sits much closer to the edge too. */
+    margin-right: -24px;
+    padding-right: 16px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  /* Grid/flex items default to min-width:auto, which lets their content's natural width
+     (5 non-shrinking cards side by side) stretch the column past the grid track — and past
+     the viewport, forcing the WHOLE PAGE to scroll horizontally instead of just this list.
+     min-width:0 is the fix: it lets .movers-column shrink to the 1fr track so .movers-list's
+     own overflow-x:auto is what scrolls, not the page. */
+  .movers-column {
+    min-width: 0;
+  }
+  /* Each column (Gainers/Losers/Active) becomes a horizontally-scrollable row of compact
+     cards instead of a tall vertical list — keeps all 3 sections short and contained.
+     !important needed: the unconditional .movers-list/.mover-row/.mover-info-p base rules
+     (defined later in this file) would otherwise win on source order at this width. */
+  .movers-list {
+    /* .market-movers-section now bleeds to the true edge itself (above) and keeps only a 16px
+       right gutter — cancel just that remaining 16px so scrolling reaches the true edge too.
+       Left edge stays aligned with the section header above it. */
+    margin-right: -16px;
+    padding-right: 16px;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    scrollbar-width: none;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .movers-list::-webkit-scrollbar {
+    display: none;
+  }
+  .mover-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    min-width: 150px;
+    max-width: 150px;
+    flex-shrink: 0;
+    padding: 12px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    box-sizing: border-box;
+    overflow: hidden; /* guard: nothing inside (e.g. a sector badge) can push the card,
+                          and therefore the page, wider than this fixed size */
+  }
+  .mover-left,
+  .mover-info {
+    min-width: 0;
+    width: 100%;
+  }
+  .mover-info h4 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mover-right {
+    text-align: left !important;
+    margin-top: 10px;
+  }
+  /* Company name isn't needed in this compact card — ticker is the short name already shown. */
+  .mover-info p {
+    display: none !important;
+  }
+  .mv-abs-change {
+    font-weight: 500;
+    opacity: 0.85;
+  }
+}
+.column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
 .column-header h3 {
   font-size: 1.1rem;
   color: var(--text-secondary);
-  margin-bottom: 16px;
+  margin-bottom: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1581,6 +1489,14 @@ img.card-icon {
   padding-bottom: 12px;
 }
 .watchlist-cards-container::-webkit-scrollbar { display: none; }
+@media (max-width: 900px) {
+  /* Same edge-bleed fix as .movers-list: cancel .dashboard-main's 24px right padding so
+     scrolling to the end reaches near the true screen edge instead of stopping short of it. */
+  .watchlist-cards-container {
+    margin-right: -24px;
+    padding-right: 16px;
+  }
+}
 
 /* Watchlist card design */
 .watchlist-card {
@@ -1696,8 +1612,8 @@ img.card-icon {
   font-size: 0.75rem;
   font-weight: 600;
 }
-.sentiment-bullish { background: rgba(0, 230, 118, 0.15); color: var(--success); }
-.sentiment-bearish { background: rgba(255, 0, 85, 0.15); color: var(--danger); }
+.sentiment-bullish { background: rgba(8, 153, 129, 0.15); color: var(--success); }
+.sentiment-bearish { background: rgba(242, 54, 69, 0.15); color: var(--danger); }
 .sentiment-neutral { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
 
 /* Nav Links in Header */
@@ -1779,7 +1695,7 @@ img.card-icon {
   background: var(--accent-blue);
   color: white;
   border-color: var(--accent-blue);
-  box-shadow: 0 0 10px rgba(74, 144, 226, 0.5);
+  box-shadow: 0 0 10px rgba(37, 99, 235, 0.5);
 }
 
 /* --- AI Sentiment Gauge --- */
@@ -1856,11 +1772,11 @@ img.card-icon {
   transition: all 0.2s ease;
 }
 #header-change.text-green {
-  background: rgba(0, 230, 118, 0.1);
+  background: rgba(8, 153, 129, 0.1);
   color: var(--success);
 }
 #header-change.text-red {
-  background: rgba(255, 0, 85, 0.1);
+  background: rgba(242, 54, 69, 0.1);
   color: var(--danger);
 }
 /* Flash animations removed per user request */
@@ -1963,7 +1879,7 @@ img.card-icon {
   transform: scale(1.02);
 }
 .btn-buy {
-  background: linear-gradient(135deg, #00C853, #00E676);
+  background: linear-gradient(135deg, #00C853, #089981);
   color: #fff;
 }
 .btn-sell {
@@ -2024,14 +1940,14 @@ img.card-icon {
 }
 .type-badge.long {
   background: rgba(0, 200, 83, 0.12);
-  color: #00E676;
+  color: #089981;
 }
 .type-badge.short {
   background: rgba(255, 23, 68, 0.12);
   color: #FF5252;
 }
 .positions-table .pnl-positive {
-  color: #00E676;
+  color: #089981;
   font-weight: 600;
 }
 .positions-table .pnl-negative {

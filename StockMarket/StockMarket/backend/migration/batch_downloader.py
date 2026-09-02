@@ -11,6 +11,7 @@ from migration.fetch_manager import AngelOneFetchManager
 from migration.progress_tracker import ProgressTracker
 from migration.validator import MigrationValidator, compute_checksum
 from migration.models import MigrationJob
+from migration.identity import TickerIdentity
 from resampler import CandleResampler
 
 
@@ -45,7 +46,21 @@ class BatchDownloader:
         with self._stats_lock:
             return dict(self._stats)
 
-    def run_tier(self, tier_index: int, tier_cfg: TierConfig, tickers: List[str], progress_callback: Optional[Callable] = None):
+    def run_tier(self, tier_index: int, tier_cfg: TierConfig, tickers: List["TickerIdentity"], progress_callback: Optional[Callable] = None,
+                 required_start_override: Optional[date] = None):
+        """`tickers` carries resolved (ticker, exchange) identities, not bare
+        strings -- see migration/identity.py. MigrationJob tracking is still
+        keyed by the ticker string alone (unchanged schema), but the exchange
+        travels with each queue item so the actual Angel One fetch call uses
+        the correct instrument, not always the NSE default.
+
+        required_start_override: 1D tier only (--deep-backfill-days). When
+        given, the per-ticker gap-aware narrowing below (existing_start ->
+        compute_1d_required_range) uses THIS as required_start instead of
+        the real 730-day retention policy, so a deep-backfill run only
+        requests each ticker's missing OLDER gap -- never re-fetches the
+        already-present recent window. The real retention policy in
+        migration.yaml is never touched by this."""
         date_range = self._tier_ranges.get(tier_cfg.timeframe)
         tf = tier_cfg.timeframe
         print(f"\n{'='*60}")
@@ -56,8 +71,8 @@ class BatchDownloader:
 
         db = SessionLocal()
         try:
-            for ticker in tickers:
-                self._tracker.initialize_ticker(db, ticker, tier_index, tf)
+            for identity in tickers:
+                self._tracker.initialize_ticker(db, identity.ticker, tier_index, tf)
             db.commit()
         finally:
             db.close()
@@ -70,7 +85,7 @@ class BatchDownloader:
         for worker_id in range(self._cfg.workers):
             t = threading.Thread(
                 target=self._worker_loop,
-                args=(worker_id, tier_index, tier_cfg, date_range, ticker_queue, progress_callback),
+                args=(worker_id, tier_index, tier_cfg, date_range, ticker_queue, progress_callback, required_start_override),
                 daemon=True,
             )
             t.start()
@@ -87,12 +102,15 @@ class BatchDownloader:
         date_range: Tuple[date, date],
         queue: Queue,
         progress_callback: Optional[Callable],
+        required_start_override: Optional[date] = None,
     ):
         while not self._stop_event.is_set():
             try:
-                ticker = queue.get_nowait()
+                identity: TickerIdentity = queue.get_nowait()
             except Empty:
                 return
+            ticker = identity.ticker
+            exchange = identity.exchange
 
             db = SessionLocal()
             existing_job = None
@@ -103,7 +121,21 @@ class BatchDownloader:
                     MigrationJob.tier == tier_index,
                 ).first()
 
-                if existing_job and existing_job.status == "DONE":
+                # Terminal statuses are never re-fetched. KNOWN_ABSENCES
+                # belongs here alongside DONE: its remaining gaps were already
+                # proven unfillable by a SUCCESSFUL Angel One response, so
+                # re-requesting them would loop forever on the same empty answer.
+                #
+                # Exception: a 1D deep-backfill run (required_start_override
+                # set) targets a DEEPER required_start than whatever this job
+                # row was last marked terminal against -- that terminal status
+                # only proves the ticker satisfied the SHALLOWER 730-day
+                # policy, not this run's target. Skip the blanket short-circuit
+                # here and let the real per-ticker gap check below (which reads
+                # the ticker's actual earliest `candles` row, not this stale
+                # flag) decide whether there's a genuine older gap to fetch.
+                is_1d_deep_backfill = tier_cfg.timeframe == "1D" and required_start_override is not None
+                if existing_job and existing_job.status in self._tracker.TERMINAL_STATUSES and not is_1d_deep_backfill:
                     self._update_stats(skipped=1)
                     if progress_callback:
                         progress_callback(ticker, tier_index, "SKIPPED", 0)
@@ -128,18 +160,71 @@ class BatchDownloader:
                     self._tracker.mark_fetching(db, existing_job)
                     db.commit()
 
-                date_chunks = self._chunk_date_range(date_range, self._cfg.max_date_range_days)
+                ticker_date_range = date_range
+                if tier_cfg.timeframe == "1D":
+                    # Per-ticker gap-aware narrowing: the tier-global date_range
+                    # (same for every ticker) would blindly re-request whatever
+                    # a ticker already has in `candles` -- item B of the 1D
+                    # migration prep requires fetching only the missing history.
+                    # See migration/config.py::compute_1d_required_range.
+                    #
+                    # SECOND BUG FIX (found alongside the validation bug above,
+                    # by the same real controlled execution): required_start
+                    # was being unpacked from `date_range[0]` -- the coarse,
+                    # month-based tier-global estimate from migration.yaml
+                    # (via compute_tier_date_ranges), NOT the exact calendar-
+                    # day 730-day requirement. That silently diverged from
+                    # what run_1d_migration.py's dry-run plans and reports
+                    # (which correctly calls get_1d_retention_days()) --
+                    # the real fetch could request a different, wrong range
+                    # than what was previewed and approved. required_start
+                    # must be computed the exact same way here as in
+                    # migration/plan_1d.py, not derived from the tier-global
+                    # range at all.
+                    from migration.config import compute_1d_required_range, get_1d_retention_days
+                    from models import Candle
+                    existing_earliest = db.query(Candle.timestamp).filter(
+                        Candle.ticker == ticker, Candle.timeframe == "1D",
+                    ).order_by(Candle.timestamp.asc()).first()
+                    existing_start = existing_earliest[0].date() if existing_earliest else None
+                    required_start = required_start_override if required_start_override is not None else (
+                        date.today() - timedelta(days=get_1d_retention_days())
+                    )
+                    narrowed = compute_1d_required_range(
+                        required_start=required_start, today=date.today(), existing_start=existing_start,
+                    )
+                    if narrowed is None:
+                        # Already satisfies the 730-day requirement -- nothing to fetch.
+                        self._tracker.mark_done(db, existing_job, 0, 0, "", "")
+                        db.commit()
+                        if progress_callback:
+                            progress_callback(ticker, tier_index, "DONE", 0)
+                        continue
+                    ticker_date_range = narrowed
+
+                # Per-tier chunk width: 1D overrides the global 90-day default
+                # with its own empirically verified 730-day span, while every
+                # intraday tier keeps the global default untouched.
+                chunk_days = tier_cfg.effective_max_date_range_days(self._cfg.max_date_range_days)
+                date_chunks = self._chunk_date_range(ticker_date_range, chunk_days)
                 all_source_candles = []
 
                 for chunk_idx, (chunk_start, chunk_end) in enumerate(date_chunks):
-                    success, candles, err = self._fetch_mgr.fetch_with_retry(
-                        ticker, tier_cfg.angel_interval, chunk_start, chunk_end
+                    success, candles, err, attempts = self._fetch_mgr.fetch_with_retry(
+                        ticker, tier_cfg.angel_interval, chunk_start, chunk_end, exchange=exchange
                     )
+                    if attempts > 1:
+                        # Real retries happened inside fetch_with_retry (rate
+                        # limit / transient network error) -- surface them
+                        # here rather than relying on job.retry_count, which
+                        # only tracks whole-job re-attempts across separate
+                        # runs, not per-chunk retries within this one.
+                        self._update_stats(total_retries=attempts - 1)
                     if not success:
                         self._update_stats(failed_api_calls=1)
-                        self._tracker.mark_failed(db, existing_job, err or "Fetch failed on chunk {chunk_idx}")
+                        self._tracker.mark_failed(db, existing_job, err or f"Fetch failed on chunk {chunk_idx}")
                         db.commit()
-                        self._append_error(ticker, tier_cfg.timeframe, err or "Fetch failed on chunk {chunk_idx}")
+                        self._append_error(ticker, tier_cfg.timeframe, err or f"Fetch failed on chunk {chunk_idx}")
                         if progress_callback:
                             progress_callback(ticker, tier_index, "FAILED", 0)
                         skip = True
@@ -177,7 +262,20 @@ class BatchDownloader:
                         progress_callback(ticker, tier_index, "DONE", 0)
                     continue
 
-                val_result = self._validator.validate_source(source_candles, tier_cfg.timeframe, date_range)
+                # BUG FIX (found by a real controlled 1D execution test, not
+                # simulation): this validated against the tier-global
+                # `date_range` (e.g. migration.yaml's coarse month-based
+                # estimate) instead of `ticker_date_range` (the per-ticker
+                # narrowed range actually requested/fetched -- see above).
+                # For the 1D tier, the two differ whenever a ticker already
+                # has some recent 1D history: the real fetch correctly
+                # requests only the older gap, but the validator was
+                # checking those (correct, older) timestamps against a
+                # range that didn't cover them, so the "date_range" check
+                # failed for every 1D ticker with any existing coverage,
+                # rejecting otherwise-valid data before it ever reached
+                # staging.
+                val_result = self._validator.validate_source(source_candles, tier_cfg.timeframe, ticker_date_range)
                 if not val_result.passed:
                     err_detail = val_result.summary()
                     self._tracker.mark_failed(db, existing_job, f"Validation failed: {err_detail}")
@@ -213,8 +311,6 @@ class BatchDownloader:
                 checksum_db = compute_checksum(db_candles)
                 self._tracker.mark_done(db, existing_job, len(source_candles), rows_inserted, checksum_src, checksum_db)
                 db.commit()
-
-                self._update_stats(total_retries=existing_job.retry_count or 0)
 
                 if progress_callback:
                     progress_callback(ticker, tier_index, "DONE", rows_inserted)
@@ -308,17 +404,11 @@ class BatchDownloader:
 
     @staticmethod
     def _chunk_date_range(date_range: Tuple[date, date], max_days: int) -> List[Tuple[date, date]]:
+        """Delegates to migration.config.chunk_date_range -- the single shared
+        chunking implementation (see that function's docstring for why)."""
+        from migration.config import chunk_date_range
         start, end = date_range
-        if (end - start).days <= max_days:
-            return [(start, end)]
-
-        chunks = []
-        current = start
-        while current < end:
-            chunk_end = min(current + timedelta(days=max_days), end)
-            chunks.append((current, chunk_end))
-            current = chunk_end + timedelta(days=1)
-        return chunks
+        return chunk_date_range(start, end, max_days)
 
     def _append_error(self, ticker: str, timeframe: str, error: str):
         with self._stats_lock:

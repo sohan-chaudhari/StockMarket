@@ -19,9 +19,28 @@ staging_table: candles_migration
 backup_retention_days: 7
 
 # Tier configuration
-# Each tier covers N calendar months.
-# Angel One interval names used for direct fetches.
+# Each tier covers N calendar months (coarse estimate only for the 1D tier --
+# see below). Angel One interval names used for direct fetches.
 # Resampled tiers: 4h (from 1h), 1w (from 1d), 1m (from 1d)
+#
+# IMPORTANT -- timeframe string casing must match models.py's TIMEFRAMES
+# convention EXACTLY, because these strings are written straight into the
+# `timeframe` column (via BatchDownloader._bulk_insert -> candles_migration,
+# and presumably candles itself after a staging->production promotion step):
+#   TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "1D", "1W", "1M"]
+# i.e. "1m" (lowercase) already means ONE-MINUTE in the live schema. The `1d`
+# tier below has been corrected to `1D` (it was lowercase `1d`, which the 1D
+# migration-prep code checks for exactly -- `tier_cfg.timeframe == "1D"` in
+# batch_downloader.py -- so the mismatch would have silently made the new
+# per-ticker gap-narrowing logic never fire).
+#
+# NOT fixed here, deliberately out of THIS scope (1D only), but flagged
+# because it is dangerous: the `1w`/`1m` tiers below are still lowercase.
+# `1w` should be `1W`. The `1m` tier here means MONTHLY, but lowercase `1m`
+# is already ONE-MINUTE in the live schema -- running this tier as configured
+# would write monthly OHLCV rows under the same timeframe value real 1-minute
+# candles use, silently corrupting any 1-minute chart query. Fix before ever
+# running the 1w/1m tiers, not before running 1D.
 tiers:
   - timeframe: 5m
     months: 2
@@ -44,10 +63,32 @@ tiers:
     angel_interval: ONE_HOUR
     fetch_method: resample
     resample_from: 1h
-  - timeframe: 1d
-    months: 2
+  - timeframe: 1D
+    # months is a COARSE estimate only, used by MigrationOrchestrator.estimate()'s
+    # printed projection. The actual per-ticker fetch range at execution time is
+    # computed exactly by migration/config.py::compute_1d_required_range (730
+    # calendar days per the approved retention policy, narrowed by whatever a
+    # ticker already has in `candles`) -- NOT by this months value. 25 months
+    # (~750 days) safely covers the 730-day requirement for this estimate.
+    months: 25
     angel_interval: ONE_DAY
     fetch_method: direct
+    # 1D-SPECIFIC chunk width. The global angel_one.max_date_range_days (90)
+    # is correct for the intraday intervals and is deliberately left alone;
+    # this override applies to the 1D tier ONLY.
+    #
+    # 730 is EMPIRICALLY VERIFIED, not assumed: a read-only probe requested
+    # RELIANCE/ONE_DAY over a 730-day span (2024-07-22 .. 2026-07-20) in a
+    # single call and Angel One returned all 493 trading-day candles. That
+    # is exactly the retention window, so the whole 1D history for a ticker
+    # now fits in ONE request instead of 8 (8,063 requests -> ~1,018 for the
+    # canonical universe).
+    #
+    # Do NOT raise this beyond 730 without re-probing. Angel One's real
+    # ONE_DAY ceiling may well be higher, but 730 is the largest span this
+    # project has actually confirmed, and the retention policy never needs
+    # more than 730 days anyway.
+    max_date_range_days: 730
   - timeframe: 1w
     months: 2
     angel_interval: ONE_DAY

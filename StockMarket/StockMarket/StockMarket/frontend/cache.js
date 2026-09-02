@@ -150,3 +150,38 @@
   window._getStorageBudget().then(function (b) { window._recentRanges.updateMax(b); }).catch(function () {});
   setTimeout(window._pruneExpiredCache, 15000);
 })();
+
+  window._fetchCached = async function(url, ttlMs, callback) {
+      try {
+          var cached = sessionStorage.getItem(url);
+          var fetchBg = async function() {
+              try {
+                  var r = await fetch(url);
+                  if (!r.ok) return null;
+                  var data = await r.json();
+                  sessionStorage.setItem(url, JSON.stringify({ts: Date.now(), data: data}));
+                  if (callback) callback(data);
+                  return data;
+              } catch (e) { return null; }
+          };
+          if (cached) {
+              var parsed = JSON.parse(cached);
+              if (callback) callback(parsed.data);
+              if (Date.now() - parsed.ts > ttlMs) {
+                  fetchBg(); // stale-while-revalidate
+              }
+              return parsed.data;
+          } else {
+              var data = await fetchBg();
+              return data;
+          }
+      } catch (err) {
+          try {
+             var res = await fetch(url);
+             var d = await res.json();
+             if (callback) callback(d);
+             return d;
+          } catch(e) { return null; }
+      }
+  };
+

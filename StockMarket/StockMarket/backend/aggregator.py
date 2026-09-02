@@ -50,25 +50,40 @@ def is_trading_day(d: date, holidays: set = None) -> bool:
     return True
 
 
-def is_market_hour(dt: datetime) -> bool:
+def is_market_hour(dt: datetime, open_sec: int = None, close_grace_sec: int = None) -> bool:
+    """`open_sec`/`close_grace_sec` let a caller override the standard NSE window
+    for a specific date (e.g. a special/shortened session) without touching the
+    module-level constants used by every other day."""
+    o = _NSE_OPEN_SEC if open_sec is None else open_sec
+    cg = _NSE_CLOSE_GRACE_SEC if close_grace_sec is None else close_grace_sec
     sec = dt.hour * 3600 + dt.minute * 60 + dt.second
-    return _NSE_OPEN_SEC <= sec < _NSE_CLOSE_GRACE_SEC
+    return o <= sec < cg
 
 
-def snap_to_nse_session(ts_epoch, bucket_minutes: int = 5) -> int:
+def snap_to_nse_session(ts_epoch, bucket_minutes: int = 5,
+                         open_sec: int = None, close_sec: int = None,
+                         close_grace_sec: int = None) -> int:
+    """`open_sec`/`close_sec`/`close_grace_sec` override the standard NSE window
+    for a specific date (special/shortened session). Omitted args default to the
+    normal 09:15-15:30 session, so every existing caller is unaffected."""
     ts_epoch = int(ts_epoch)
     bucket_sec = bucket_minutes * 60
+    o = _NSE_OPEN_SEC if open_sec is None else open_sec
+    cl = _NSE_CLOSE_SEC if close_sec is None else close_sec
+    cg = _NSE_CLOSE_GRACE_SEC if close_grace_sec is None else close_grace_sec
     ist_seconds = (ts_epoch + _IST_OFFSET_SEC) % 86400
     ist_day_start = ((ts_epoch + _IST_OFFSET_SEC) // 86400) * 86400 - _IST_OFFSET_SEC
-    session_start = ist_day_start + _NSE_OPEN_SEC
-    if ist_seconds < _NSE_OPEN_SEC:
+    session_start = ist_day_start + o
+    if ist_seconds < o:
         return session_start
-    if ist_seconds >= _NSE_CLOSE_GRACE_SEC:
-        slots = (_NSE_CLOSE_SEC - _NSE_OPEN_SEC) // bucket_sec
+    if ist_seconds >= cg:
+        slots = (cl - o) // bucket_sec
         return session_start + int((slots - 1)) * bucket_sec
-    elif ist_seconds >= _NSE_CLOSE_SEC:
-        slots = (_NSE_CLOSE_SEC - _NSE_OPEN_SEC) // bucket_sec
-        return session_start + int(slots) * bucket_sec
+    elif ist_seconds >= cl:
+        # Grace window (15:30-15:44:59): late ticks belong to the last real bucket
+        # (15:25-15:30), not a phantom 15:30 bucket outside the session.
+        slots = (cl - o) // bucket_sec
+        return session_start + int(slots - 1) * bucket_sec
     offset = ts_epoch - session_start
     return session_start + (offset // bucket_sec) * bucket_sec
 
@@ -164,6 +179,11 @@ class Live5mBuilder:
         self._last_tick_ts: Dict[str, float] = {}
         self._stale_skip_count: Dict[str, int] = {}
         self._holidays: set = set()
+        # date -> (open_sec, close_sec, close_grace_sec) for special/shortened
+        # sessions (e.g. Muhurat trading). Populated from exchange_calendar's
+        # nse_calendar via set_special_sessions() — see main.py startup wiring.
+        # Empty by default, so every normal day behaves exactly as before.
+        self._special_sessions: Dict[date, Tuple[int, int, int]] = {}
         self._lock = threading.Lock()
         self._last_activity: Dict[str, float] = {}
         self._ticker_ttl = 3600
@@ -171,26 +191,60 @@ class Live5mBuilder:
         self._warned_suspicious_ts: set = set()
         self._warned_frozen_ts: set = set()
 
+        self._last_known_bucket: Dict[str, Dict[str, int]] = {}
+
         self._pending_mgr = PendingCandleManager(late_buffer_sec=60)
         self._flush_batch: List[Dict] = []
+        self._flush_batch_lock = threading.Lock()
+        self._last_batch_add_time = 0.0
+        # RT-12: SIGKILL/OOM can't be intercepted by any process-level code,
+        # so a hard crash can never be made fully safe -- this only shrinks
+        # the exposure window. Without a periodic flush, a completed candle
+        # sitting in _flush_batch only gets pushed to the DB-flush queue
+        # when the NEXT candle completes anywhere (see _batch_add call
+        # sites); during a quiet period (thin activity, near close) that
+        # could be a long wait. 15s bounds the worst case.
+        self._flush_batch_max_age = 15.0
         self._flush_queue: List[List[Dict]] = []
         self._flush_queue_lock = threading.Lock()
         self._flush_retries: Dict[int, int] = {}
         self._flush_id_counter = 0
+        # RT-09: hard ceiling on candles sitting in the flush queue. Without
+        # this, a sustained Postgres outage (e.g. a hung connection attempt --
+        # the engine sets no connect timeout) blocks the single flush worker
+        # indefinitely while _flush_batch_now() keeps appending, growing this
+        # list forever until the process OOMs and loses everything queued,
+        # not just the oldest part of it. ~1600 active tickers x one 5m
+        # candle each = ~19k candles/hour, so 50k buys roughly 2.5 hours of
+        # outage tolerance before the oldest queued batches get dropped to
+        # keep memory bounded.
+        self._flush_queue_max_candles = 50000
+        self._flush_queue_candle_count = 0
         self.batch_flush_callback: Optional[Callable[[List[Dict]], None]] = None
-        self._on_candle_completed: Optional[Callable[[str, Dict], None]] = None
-        self._backpressure_threshold = 5000
-        self._backpressure_events = 0
 
         self._flush_worker_running = True
         self._flush_thread = threading.Thread(target=self._flush_worker, daemon=True)
-        self._flush_thread.start()
 
         self._late_buffer_thread = threading.Thread(target=self._check_late_buffer, daemon=True)
-        self._late_buffer_thread.start()
 
     def set_holidays(self, holidays: set):
         self._holidays = holidays
+
+    def set_special_sessions(self, sessions: Dict[date, Tuple[int, int, int]]):
+        """sessions: date -> (open_sec, close_sec, close_grace_sec), typically
+        from exchange_calendar.nse_calendar.special_sessions_as_bounds()."""
+        self._special_sessions = sessions or {}
+
+    def _session_bounds(self, d: date) -> Tuple[int, int, int]:
+        """Return (open_sec, close_sec, close_grace_sec) for date `d` — the
+        special-session override if one is registered, else the standard NSE
+        window. This is the single point aggregator.py consults for session
+        timing, so a registered special session is honored everywhere a tick
+        for that date is gated, bucketed, or flushed."""
+        special = self._special_sessions.get(d)
+        if special is not None:
+            return special
+        return (_NSE_OPEN_SEC, _NSE_CLOSE_SEC, _NSE_CLOSE_GRACE_SEC)
 
     def set_previous_close(self, ticker: str, price: float):
         self._previous_closes[ticker] = price
@@ -234,8 +288,12 @@ class Live5mBuilder:
         today = tick_dt.date()
         if not is_trading_day(today, self._holidays):
             return {}
-        if not is_market_hour(tick_dt):
-            if tick_dt.hour >= NSE_CLOSE_HOUR:
+
+        open_sec, close_sec, close_grace_sec = self._session_bounds(today)
+        sec_of_day = tick_dt.hour * 3600 + tick_dt.minute * 60 + tick_dt.second
+
+        if not is_market_hour(tick_dt, open_sec, close_grace_sec):
+            if sec_of_day >= close_sec:
                 with self._lock:
                     if ticker in self.active_candles:
                         c = self.active_candles[ticker].get("5m")
@@ -253,15 +311,23 @@ class Live5mBuilder:
             self._gc_inactive()
 
             if ticker not in self.active_candles:
-                self._init_ticker(tick_ts, ticker, price, day_open, day_high, day_low)
+                self._init_ticker(tick_ts, ticker, price, day_open, day_high, day_low,
+                                   open_sec, close_sec, close_grace_sec)
 
-            snapped_5m = snap_to_nse_session(tick_ts, 5)
+            snapped_5m = snap_to_nse_session(tick_ts, 5, open_sec, close_sec, close_grace_sec)
             forming = self.active_candles[ticker].get("5m")
+            last_bucket = self._last_known_bucket.get(ticker, {}).get("5m")
+
+            if forming is not None and last_bucket is not None and snapped_5m != last_bucket:
+                self._finalize_5m_candle_unsafe(ticker)
+                forming = self.active_candles[ticker].get("5m")
 
             if forming is None:
                 snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
                 self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, price)
                 forming = self.active_candles[ticker]["5m"]
+
+            self._last_known_bucket.setdefault(ticker, {})["5m"] = snapped_5m
 
             forming["high"] = max(forming["high"], price)
             forming["low"] = min(forming["low"], price)
@@ -283,15 +349,18 @@ class Live5mBuilder:
         self._flush_batch_now()
         return res
 
-    def finalize_5m_candle(self, ticker: str):
-        with self._lock:
-            forming = self.active_candles.get(ticker, {}).get("5m")
-            if forming is None:
-                return
-            snapped_5m = snap_to_nse_session(time.time(), 5)
-            snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
-            new_price = forming["close"]
-            self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, new_price)
+    def _finalize_5m_candle_unsafe(self, ticker: str):
+        forming = self.active_candles.get(ticker, {}).get("5m")
+        if forming is None:
+            return
+        now_epoch = time.time()
+        open_sec, close_sec, close_grace_sec = self._session_bounds(
+            datetime.fromtimestamp(now_epoch, tz=IST).date()
+        )
+        snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
+        snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
+        new_price = forming["close"]
+        self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, new_price)
 
         o, h, l, c = fix_ohlc(forming["open"], forming["high"], forming["low"], forming["close"])
         completed = {
@@ -304,6 +373,10 @@ class Live5mBuilder:
             "is_backfilled": False,
         }
         self._pending_mgr.add_or_update(ticker, completed, time.time())
+
+    def finalize_5m_candle(self, ticker: str):
+        with self._lock:
+            self._finalize_5m_candle_unsafe(ticker)
 
     def _check_late_buffer(self):
         while self._flush_worker_running:
@@ -325,7 +398,10 @@ class Live5mBuilder:
                 event_bus.emit("candle.5m.completed", ticker=pending.ticker, candle=completed)
                 with self._lock:
                     if pending.ticker in self.active_candles:
-                        snapped_5m = snap_to_nse_session(now_epoch, 5)
+                        open_sec, close_sec, close_grace_sec = self._session_bounds(
+                            datetime.fromtimestamp(now_epoch, tz=IST).date()
+                        )
+                        snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
                         snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
                         self.active_candles[pending.ticker]["5m"] = self._create_candle(snapped_dt, completed["close"])
             if expired:
@@ -349,9 +425,10 @@ class Live5mBuilder:
             }
 
     def _init_ticker(self, now_epoch: int, ticker: str, price: float,
-                     day_open: float = None, day_high: float = None, day_low: float = None):
+                     day_open: float = None, day_high: float = None, day_low: float = None,
+                     open_sec: int = None, close_sec: int = None, close_grace_sec: int = None):
         self.active_candles[ticker] = {}
-        snapped_5m = snap_to_nse_session(now_epoch, 5)
+        snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
         snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
         self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, price)
 
@@ -381,8 +458,9 @@ class Live5mBuilder:
                     force_completed += 1
                     self.active_candles[ticker].pop("5m", None)
 
-            all_candles.extend(self._flush_batch)
-            self._flush_batch.clear()
+            with self._flush_batch_lock:
+                all_candles.extend(self._flush_batch)
+                self._flush_batch.clear()
 
         queue_drained = 0
         with self._flush_queue_lock:
@@ -392,6 +470,7 @@ class Live5mBuilder:
                 queue_drained += len(batch)
             self._flush_queue.clear()
             self._flush_retries.clear()
+            self._flush_queue_candle_count = 0
 
         print(f"[Aggregator] Flush: {force_completed} force + {queue_drained} queue = {len(all_candles)} total")
 
@@ -417,8 +496,9 @@ class Live5mBuilder:
                 "stale_skips": dict(self._stale_skip_count),
                 "pending_flush": len(self._flush_batch),
                 "queue_size": len(self._flush_queue),
+                "queue_candles": self._flush_queue_candle_count,
+                "queue_candles_max": self._flush_queue_max_candles,
                 "pending_late_buffer": self._pending_mgr.count(),
-                "backpressure_events": self._backpressure_events,
                 "worker_alive": self._flush_thread.is_alive() if hasattr(self, '_flush_thread') else False,
             }
 
@@ -428,7 +508,7 @@ class Live5mBuilder:
         total_skips = sum(s["stale_skips"].values()) if s["stale_skips"] else 0
         print(f"[Aggregator] {s['tickers']} tickers | worker={worker} | "
               f"pending={s['pending_late_buffer']} | queue={s['queue_size']} | "
-              f"flush={s['pending_flush']} | stale={total_skips} | bp={s['backpressure_events']}")
+              f"flush={s['pending_flush']} | stale={total_skips}")
 
     def _batch_add(self, candle_data: Dict):
         o, h, l, c = fix_ohlc(
@@ -439,17 +519,30 @@ class Live5mBuilder:
         candle_data["high"] = h
         candle_data["low"] = l
         candle_data["close"] = c
-        self._flush_batch.append(candle_data)
+        with self._flush_batch_lock:
+            self._flush_batch.append(candle_data)
+            self._last_batch_add_time = time.time()
 
     def _flush_batch_now(self):
-        if not self._flush_batch:
-            return
-        batch = self._flush_batch[:]
-        self._flush_batch.clear()
+        with self._flush_batch_lock:
+            if not self._flush_batch:
+                return
+            batch = self._flush_batch[:]
+            self._flush_batch.clear()
         with self._flush_queue_lock:
             self._flush_id_counter += 1
             self._flush_retries[self._flush_id_counter] = 0
             self._flush_queue.append((self._flush_id_counter, batch))
+            self._flush_queue_candle_count += len(batch)
+            # Drop oldest batches first -- keep at least the newest one even
+            # if it alone exceeds the cap, since there's nothing older left
+            # to trade away for it.
+            while self._flush_queue_candle_count > self._flush_queue_max_candles and len(self._flush_queue) > 1:
+                dropped_fid, dropped_batch = self._flush_queue.pop(0)
+                self._flush_retries.pop(dropped_fid, None)
+                self._flush_queue_candle_count -= len(dropped_batch)
+                print(f"[Aggregator] Flush queue over cap ({self._flush_queue_max_candles} candles): "
+                      f"dropped oldest batch #{dropped_fid} ({len(dropped_batch)} candles LOST)")
 
     def _flush_worker(self):
         MAX_RETRIES = 3
@@ -458,6 +551,7 @@ class Live5mBuilder:
             with self._flush_queue_lock:
                 if self._flush_queue:
                     item = self._flush_queue.pop(0)
+                    self._flush_queue_candle_count -= len(item[1])
             if item and self.batch_flush_callback:
                 fid, batch = item
                 try:
@@ -474,7 +568,18 @@ class Live5mBuilder:
                         print(f"[Aggregator] Flush error ({len(batch)} candles) retry={retries}/{MAX_RETRIES}: {e}")
                         with self._flush_queue_lock:
                             self._flush_queue.append(item)
+                            self._flush_queue_candle_count += len(batch)
             else:
+                # RT-12: nothing queued right now -- opportunistically flush
+                # _flush_batch if it's been sitting unpushed past the age
+                # cap, so a quiet period doesn't leave completed candles
+                # buffered indefinitely with no new completion to trigger
+                # the push. See _flush_batch_max_age for why this can't be
+                # a full fix for a hard crash, only a bound on the window.
+                with self._flush_batch_lock:
+                    stale = bool(self._flush_batch) and (time.time() - self._last_batch_add_time) > self._flush_batch_max_age
+                if stale:
+                    self._flush_batch_now()
                 time.sleep(0.01)
 
     def _flush_candle(self, ticker: str, timeframe: str, candle: Dict,
@@ -670,5 +775,81 @@ def compute_candle_health(ticker: Optional[str] = None, db_session=None) -> dict
     }
 
 
+# ==================== CANDLE GAP DETECTION ====================
+
+def detect_missing_intervals(ticker: str, timeframe: str, db_session, start_date=None, end_date=None):
+    """Return list of missing datetime slots for a ticker+timeframe.
+
+    Iterates the NSE trading window (09:15-15:30 IST) for every day in
+    [start_date, end_date] and reports each timeframe bucket that has no
+    completed candle stored. Slot boundaries are anchored to the 09:15 NSE
+    session open (same alignment the resampler uses), so 15m/30m/1h buckets
+    match stored candle timestamps.
+
+    Only intraday timeframes are supported (1m/5m/15m/30m/1h). Unsupported
+    timeframes fall back to a 5-minute step for safety.
+    """
+    from models import Candle
+    if db_session is None:
+        return []
+
+    step_minutes = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(timeframe, 5)
+    step = timedelta(minutes=step_minutes)
+
+    q = db_session.query(Candle.timestamp).filter(
+        Candle.ticker == ticker,
+        Candle.timeframe == timeframe,
+        Candle.is_completed == True,
+    )
+    if start_date:
+        q = q.filter(Candle.timestamp >= start_date)
+    if end_date:
+        q = q.filter(Candle.timestamp <= end_date)
+    q = q.order_by(Candle.timestamp.asc())
+
+    existing = set()
+    session_open_min = NSE_OPEN_HOUR * 60 + NSE_OPEN_MIN  # 555 = 09:15
+    for (ts,) in q.all():
+        if not isinstance(ts, datetime):
+            continue
+        minutes_of_day = ts.hour * 60 + ts.minute
+        floored = minutes_of_day - ((minutes_of_day - session_open_min) % step_minutes)
+        if floored < 0:
+            continue
+        existing.add(ts.replace(hour=floored // 60, minute=floored % 60, second=0, microsecond=0))
+
+    if not (start_date and end_date):
+        return []
+
+    def _as_naive_dt(d):
+        if isinstance(d, datetime):
+            return d.replace(tzinfo=None)
+        return datetime.combine(d, datetime.min.time())
+
+    start = _as_naive_dt(start_date)
+    end = _as_naive_dt(end_date)
+
+    session_close_min = NSE_CLOSE_HOUR * 60 + NSE_CLOSE_MIN  # 930 = 15:30
+    gaps = []
+    cur_day = start
+    while cur_day <= end:
+        day_open = cur_day.replace(
+            hour=session_open_min // 60, minute=session_open_min % 60, second=0, microsecond=0
+        )
+        day_close = cur_day.replace(
+            hour=session_close_min // 60, minute=session_close_min % 60, second=0, microsecond=0
+        )
+        slot = day_open
+        while slot <= day_close:
+            if slot not in existing:
+                gaps.append(slot.strftime("%Y-%m-%d %H:%M"))
+            slot += step
+        cur_day += timedelta(days=1)
+
+    return gaps
+
+
 candle_aggregator = Live5mBuilder()
 candle_aggregator.batch_flush_callback = batch_flush_candles
+candle_aggregator._flush_thread.start()
+candle_aggregator._late_buffer_thread.start()

@@ -1,16 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
 
 import models, schemas, auth
 from database import get_db
 from trade_service import TradingService
+from rate_limiter import limiter
 
 router = APIRouter()
 
 @router.post("/open", response_model=schemas.PositionResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("120/minute")
 def open_position(
-    req: schemas.PlaceOrderRequest, 
+    request: Request,
+    req: schemas.PlaceOrderRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
@@ -40,7 +43,9 @@ def open_position(
     return schemas.PositionResponse.from_orm(position)
 
 @router.post("/close", response_model=schemas.PositionResponse)
+@limiter.limit("120/minute")
 def close_position(
+    request: Request,
     req: schemas.ClosePositionRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)

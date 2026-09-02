@@ -106,12 +106,12 @@
       '        </div>' +
       '      </div>' +
       '      <div class="nav-actions">' +
-      '        <button class="nav-icon-btn" title="Notifications" id="notificationBtn">' +
-      '          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
+      '        <button class="nav-icon-btn" title="Notifications" aria-label="Notifications" id="notificationBtn">' +
+      '          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
       '          <span class="notification-badge" id="notificationBadge">3</span>' +
       '        </button>' +
-      '        <button class="nav-icon-btn" title="Toggle Theme" id="themeToggle">' +
-      '          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' +
+      '        <button class="nav-icon-btn" title="Toggle Theme" aria-label="Toggle theme" id="themeToggle">' +
+      '          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' +
       '        </button>' +
       '        <div class="auth-buttons" id="authButtons">' +
       '          <a href="login.html" class="auth-btn">Login / Register</a>' +
@@ -119,7 +119,7 @@
       '        <div class="user-info" id="userInfo" style="display:none; align-items: center; gap: 15px;">' +
       '          <div style="text-align: right;">' +
       '             <div style="font-size: 0.75rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.5px;">Balance</div>' +
-      '             <div class="user-balance" id="userBalance" style="color: #00E676; font-weight: bold; font-family: \'Roboto Mono\', monospace;">₹0</div>' +
+      '             <div class="user-balance" id="userBalance" style="color: #089981; font-weight: bold; font-family: \'Roboto Mono\', monospace;">₹0</div>' +
       '          </div>' +
       '          <a href="profile.html?v=1" class="user-profile-btn" style="text-decoration: none;" title="Account Dashboard">' +
       '            <div class="user-avatar">' +
@@ -150,26 +150,68 @@
       return (typeof ALL_STOCKS !== 'undefined' && ALL_STOCKS.length > 0) ? ALL_STOCKS : SEARCH_FALLBACK;
     }
 
-    function fuzzyMatch(text, query) {
-      var t = 0, q = 0;
-      text = text.toLowerCase();
-      query = query.toLowerCase().replace(/\s+/g, '');
-      while (t < text.length && q < query.length) {
-        if (text[t] === query[q]) q++;
-        t++;
+    function _levenshtein(a, b) {
+      if (a === b) return 0;
+      if (!a.length) return b.length;
+      if (!b.length) return a.length;
+      var row = [];
+      for (var i = 0; i <= b.length; i++) row[i] = i;
+      for (var i = 1; i <= a.length; i++) {
+        var prev = i;
+        for (var j = 1; j <= b.length; j++) {
+          var val = (a.charAt(i - 1) === b.charAt(j - 1)) ? row[j - 1] : Math.min(row[j - 1] + 1, Math.min(prev + 1, row[j] + 1));
+          row[j - 1] = prev;
+          prev = val;
+        }
+        row[b.length] = prev;
       }
-      return q === query.length;
+      return row[b.length];
     }
 
     function getScore(stock, query) {
-      var cleanQuery = query.toLowerCase().replace(/\s+/g, '');
-      var ticker = stock.ticker.toLowerCase().replace(/[^a-z0-9]/g, '');
-      var name = stock.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      var cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!cleanQuery) return 0;
+      var ticker = (stock.ticker || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      var name = (stock.name || '').toLowerCase();
+      var cleanName = name.replace(/[^a-z0-9]/g, '');
+
+      // 1. Exact Ticker Match
       if (ticker === cleanQuery) return 1000;
+      // 2. Ticker StartsWith
       if (ticker.startsWith(cleanQuery)) return 800;
-      if (name.startsWith(cleanQuery)) return 600;
-      if (stock.name.toLowerCase().includes(query.toLowerCase())) return 400;
-      if (fuzzyMatch(stock.name, query) || fuzzyMatch(stock.ticker, query)) return 100;
+      // 3. Name StartsWith
+      if (cleanName.startsWith(cleanQuery)) return 700;
+
+      // 4. Any Word in Name StartsWith
+      var words = name.split(/[\s\-_\.,]+/);
+      for (var i = 0; i < words.length; i++) {
+        var w = words[i].replace(/[^a-z0-9]/g, '');
+        if (w && w.startsWith(cleanQuery)) return 600;
+      }
+
+      // 5. Continuous Substring in Ticker or Name
+      if (ticker.indexOf(cleanQuery) !== -1) return 500;
+      if (cleanName.indexOf(cleanQuery) !== -1) return 400;
+
+      // 6. Typo / Phonetic tolerance (Levenshtein distance <= 1 for >= 3 chars, <= 2 for >= 6 chars)
+      if (cleanQuery.length >= 3) {
+        var maxDist = cleanQuery.length >= 6 ? 2 : 1;
+        var tDistPref = _levenshtein(ticker.slice(0, cleanQuery.length), cleanQuery);
+        var tDistFull = _levenshtein(ticker, cleanQuery);
+        var tDist = Math.min(tDistPref, tDistFull);
+        if (tDist <= maxDist) return 300 - tDist * 50;
+
+        for (var i = 0; i < words.length; i++) {
+          var w = words[i].replace(/[^a-z0-9]/g, '');
+          if (w.length >= 3) {
+            var wDistPref = _levenshtein(w.slice(0, cleanQuery.length), cleanQuery);
+            var wDistFull = _levenshtein(w, cleanQuery);
+            var wDist = Math.min(wDistPref, wDistFull);
+            if (wDist <= maxDist) return 250 - wDist * 50;
+          }
+        }
+      }
+
       return 0;
     }
 
@@ -193,14 +235,41 @@
           var displayTicker = stock.ticker;
           if (type === 'BSE' && displayTicker.indexOf('.BO') === -1) displayTicker += '.BO';
           else if (type === 'NSE' && displayTicker.indexOf('.NS') === -1 && type !== 'INDEX') displayTicker += '.NS';
-          var targetPage = type === 'INDEX' ? 'stock.html?ticker=' : 'stock.html?ticker=';
-          return '<div class="result-item" onclick="window.location.href=\'' + targetPage + encodeURIComponent(stock.ticker) + '\'">' +
+
+          var logoHtml = '';
+          if (stock.logo && (stock.logo.startsWith('http') || stock.logo.startsWith('/'))) {
+            logoHtml = '<div class="result-logo" style="margin-right:12px;display:flex;align-items:center;">' +
+              '<img src="' + escapeHTML(stock.logo) + '" class="search-logo-img" alt="' + escapeHTML(stock.ticker) + '" onerror="this.style.display=\'none\'">' +
+              '</div>';
+          }
+
+          var price = (typeof currentPrices !== 'undefined' && currentPrices[stock.ticker]) || stock.basePrice || 0;
+          var priceStr = Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          var changeData = (typeof currentChanges !== 'undefined' && currentChanges[stock.ticker]) || { value: 0, percent: 0 };
+          var isPositive = changeData.value >= 0;
+          var color = isPositive ? '#00C853' : '#FF5252';
+          var sign = isPositive ? '+' : '';
+          var arrow = isPositive ? '▲' : '▼';
+
+          return '<div class="result-item" onclick="launchStockChart(\'' + escapeHTML(stock.ticker) + '\', \'' + escapeHTML(type) + '\')">' +
+            logoHtml +
             '<div class="result-info">' +
-            '<div class="result-name">' + escapeHTML(stock.name) + '</div>' +
-            '<div class="result-ticker">' + displayTicker + ' <span style="font-size:0.6rem;color:var(--text-muted)">' + type + '</span></div>' +
+              '<div class="result-name">' + escapeHTML(stock.name) + '</div>' +
+              '<div class="result-ticker-row" style="display: flex; align-items: center; gap: 6px; margin-top: 2px;">' +
+                '<span class="result-ticker">' + displayTicker + '</span>' +
+                '<span class="stock-type-badge" style="font-size: 0.6rem; padding: 1px 4px; background: rgba(255,255,255,0.08); border-radius: 3px; color: #a1a1aa;">' + type + '</span>' +
+              '</div>' +
             '</div>' +
-            '<button class="search-launch-btn">View Chart</button>' +
-            '</div>';
+            '<div class="result-meta" style="display: flex; align-items: center; margin-left: auto;">' +
+              '<div class="result-price" style="text-align: right; margin-right: 12px;">' +
+                '<div style="color: white; font-weight: 600;">₹' + priceStr + '</div>' +
+                '<div style="font-size: 0.75rem; color: ' + color + '; margin-top: 2px; font-weight: 500;">' +
+                  arrow + ' ' + sign + Math.abs(changeData.percent).toFixed(2) + '%' +
+                '</div>' +
+              '</div>' +
+              '<button class="search-launch-btn" onclick="event.stopPropagation(); launchStockChart(\'' + escapeHTML(stock.ticker) + '\', \'' + escapeHTML(type) + '\')">Launch Chart</button>' +
+            '</div>' +
+          '</div>';
         }).join('');
         results.classList.add('visible');
       } else {
@@ -208,6 +277,11 @@
         results.classList.add('visible');
       }
     });
+
+    window.launchStockChart = function (ticker, exchange) {
+      var cleanTicker = (ticker || '').replace(/\.(NS|BO)$/i, '');
+      window.location.href = 'stock.html?ticker=' + encodeURIComponent(cleanTicker);
+    };
 
     document.addEventListener('click', function (e) {
       if (!e.target.closest('.search-panel')) {
@@ -251,6 +325,28 @@
       if (authButtons) authButtons.style.display = 'flex';
       if (userInfo) userInfo.style.display = 'none';
     }
+  }
+
+  /* ===================== MOBILE MARKET-STATUS SLOT ===================== */
+  // On pages with a #marketStatusSlot (currently home.html/index.html, between the header
+  // and the index ticker strip), move the market-status pill there on mobile so it doesn't
+  // crowd the header — and move it back into the header on desktop. Relocates the one real
+  // element rather than duplicating it, so there's still only a single #marketStatusIndicator.
+  function initMobileMarketStatusSlot() {
+    var indicator = document.getElementById('marketStatusIndicator');
+    var slot = document.getElementById('marketStatusSlot');
+    var headerRow = document.querySelector('.header-bottom-row');
+    if (!indicator || !slot || !headerRow) return;
+
+    function place() {
+      if (window.innerWidth <= 768) {
+        if (indicator.parentNode !== slot) slot.appendChild(indicator);
+      } else if (indicator.parentNode !== headerRow) {
+        headerRow.appendChild(indicator);
+      }
+    }
+    place();
+    window.addEventListener('resize', place);
   }
 
   /* ===================== MARKET STATUS ===================== */
@@ -355,6 +451,7 @@
     initMarketStatus();
     initThemeToggle();
     initNotifications();
+    initMobileMarketStatusSlot();
     setTimeout(initAuth, 0);
   }
 
@@ -363,6 +460,17 @@
   } else {
     init();
   }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== '/') return;
+    var active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+    var inp = document.getElementById('stockSearch');
+    if (!inp) return;
+    e.preventDefault();
+    inp.focus();
+    inp.select();
+  });
 
 })();
 

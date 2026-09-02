@@ -1,35 +1,47 @@
-version: 2
+# NOT LOADED BY THE APPLICATION.
+#
+# config/__init__.py's load_retention_policy() imports RETENTION_POLICY from
+# config/retention_policy.py (the .py file, not this .yaml) — that is the
+# only retention config the running app ever reads. This file previously
+# contained a stale, never-executed policy that included a "4h -> 1D" rule
+# and mismatched after_days values, which does not reflect how the intraday
+# and daily retention chains actually work (they are deliberately independent
+# — see config/retention_policy.py). Kept here only as a historical/manual
+# reference of the config shape RetentionRule expects, now corrected to match
+# the real, active policy so it can't mislead anyone reading it again.
+version: 6
 retention_policy:
   - source_tf: "5m"
     target_tf: "15m"
-    after_days: 60
-    after_trading_sessions: 44
-    batch_size: 50
+    after_trading_sessions: 60
+    batch_size: 100
   - source_tf: "15m"
     target_tf: "30m"
-    after_days: 90
-    after_trading_sessions: 44
+    after_trading_sessions: 120
     batch_size: 100
   - source_tf: "30m"
     target_tf: "1h"
-    after_days: 120
-    after_trading_sessions: 44
-    batch_size: 200
+    after_trading_sessions: 180
+    batch_size: 100
   - source_tf: "1h"
     target_tf: "4h"
-    after_days: 180
-    after_trading_sessions: 44
-    batch_size: 500
-  - source_tf: "4h"
-    target_tf: "1D"
-    after_days: 365
-    after_trading_sessions: 44
-    batch_size: 1000
+    after_trading_sessions: 365
+    batch_size: 100
+  # Chain B (independent of the intraday chain above): daily -> weekly -> monthly.
+  # Uses after_days (pure calendar-day cutoff), NOT after_trading_sessions —
+  # "2 years"/"5 years" are calendar-time concepts; after_days was verified
+  # reliable and is the correct native unit, so no sessions/year approximation
+  # is needed here. See config/retention_policy.py for the full reasoning.
+  # after_trading_sessions is deliberately OMITTED on these two rules: the
+  # engine checks it for truthiness first, so leaving it set would silently
+  # override after_days.
+  # 1M has no further rule: "terminal, no further compression" is expressed
+  # by simply never having a 1M-sourced rule, not a special engine case.
   - source_tf: "1D"
     target_tf: "1W"
     after_days: 730
-    batch_size: 2000
+    batch_size: 100
   - source_tf: "1W"
     target_tf: "1M"
     after_days: 1825
-    batch_size: 5000
+    batch_size: 100

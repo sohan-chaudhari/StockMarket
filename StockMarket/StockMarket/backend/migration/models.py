@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, SmallInteger, DateTime, BigInteger, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, SmallInteger, DateTime, BigInteger, Text, UniqueConstraint, Index
 from sqlalchemy.sql import func
 from database import Base
 
@@ -25,6 +25,9 @@ class MigrationJob(Base):
 
     __table_args__ = (
         UniqueConstraint("ticker", "tier", name="uix_migration_job"),
+        # DB-08: get_pending_jobs() filters on exactly (tier, status) every
+        # batch of every migration run -- no index covered that pair before.
+        Index("idx_migration_jobs_tier_status", "tier", "status"),
     )
 
     def __repr__(self):

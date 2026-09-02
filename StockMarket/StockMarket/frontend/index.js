@@ -3,24 +3,7 @@
    Live Search & Price Updates
    ========================================== */
 
-// --- Dropdown Logic ---
-function toggleUserDropdown() {
-  const dropdown = document.getElementById('userDropdownMenu');
-  const container = document.querySelector('.user-dropdown');
-  if (!dropdown || !container) return;
-  dropdown.classList.toggle('show');
-  container.classList.toggle('active');
-}
-
-// Close dropdown when clicking outside
-document.addEventListener('click', function (event) {
-  const container = document.querySelector('.user-dropdown');
-  const dropdown = document.getElementById('userDropdownMenu');
-  if (container && !container.contains(event.target) && dropdown && dropdown.classList.contains('show')) {
-    dropdown.classList.remove('show');
-    container.classList.remove('active');
-  }
-});
+// Dropdown open/close + outside-click-close is provided by nav.js (window.toggleUserDropdown).
 
 // ==========================================
 // STOCK DATA - Indian Stocks & Indices
@@ -142,29 +125,34 @@ FEATURED_STOCKS.forEach(stock => {
   currentPrices[stock.ticker] = stock.basePrice;
 });
 
-// Initialize prices for Search (ALL_STOCKS) if loaded
-if (typeof ALL_STOCKS !== 'undefined') {
-  ALL_STOCKS.forEach(stock => {
-    // Don't overwrite if already set (e.g. from featured)
-    if (!currentPrices[stock.ticker]) {
-      currentPrices[stock.ticker] = stock.basePrice || 0;
-    }
-  });
+// Helper to sync prices from ALL_STOCKS
+// ALL_STOCKS.basePrice now comes from the latest 1D candle close in the DB (real price),
+// so it always wins over the hardcoded FEATURED_STOCKS placeholder values.
+function _syncPricesFromAllStocks() {
+  if (Array.isArray(window.ALL_STOCKS)) {
+    window.ALL_STOCKS.forEach(stock => {
+      if (stock && stock.ticker && stock.basePrice > 0) {
+        currentPrices[stock.ticker] = stock.basePrice;
+      }
+    });
+  }
 }
+
+if (typeof ALL_STOCKS !== 'undefined' && ALL_STOCKS.length > 0) {
+  _syncPricesFromAllStocks();
+}
+window.addEventListener('stocksLoaded', _syncPricesFromAllStocks);
 
 // ==========================================
 // SEARCH FUNCTIONALITY
 // ==========================================
-const searchInput = document.getElementById('stockSearch');
-const searchResults = document.getElementById('searchResults');
+// Live search — elements injected by nav.js, query fresh each time
+(function() {
+  var searchInput = document.getElementById('stockSearch');
+  var searchResults = document.getElementById('searchResults');
+  if (!searchInput || !searchResults) return;
 
-// Guard: nav.js handles search now (injected header). index.js search
-// runs synchronously before nav.js DOMContentLoaded, so elements may
-// not exist yet. Skip if null to avoid TypeError.
-if (!searchInput || !searchResults) {
-  // search is handled by nav.js
-} else {
-// Live search on every keystroke
+  // Live search on every keystroke
 searchInput.addEventListener('input', (e) => {
   const query = e.target.value.trim().toLowerCase();
 
@@ -180,54 +168,82 @@ searchInput.addEventListener('input', (e) => {
   const sourceList = (typeof ALL_STOCKS !== 'undefined') ? ALL_STOCKS : FEATURED_STOCKS;
 
   // Filter stocks - PREFIX ONLY (StartsWith), Limit to Top 5
-  // Filter matches (Prefix based)
-  // Fuzzy Match Helper (Subsequence)
-  function fuzzyMatch(text, query) {
-    let t = 0, q = 0;
-    text = text.toLowerCase();
-    query = query.toLowerCase().replace(/\s+/g, ''); // Ignore spaces in query for loose typing
-    while (t < text.length && q < query.length) {
-      if (text[t] === query[q]) {
-        q++;
+  function _levenshtein(a, b) {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    var row = [];
+    for (var i = 0; i <= b.length; i++) row[i] = i;
+    for (var i = 1; i <= a.length; i++) {
+      var prev = i;
+      for (var j = 1; j <= b.length; j++) {
+        var val = (a.charAt(i - 1) === b.charAt(j - 1)) ? row[j - 1] : Math.min(row[j - 1] + 1, Math.min(prev + 1, row[j] + 1));
+        row[j - 1] = prev;
+        prev = val;
       }
-      t++;
+      row[b.length] = prev;
     }
-    return q === query.length;
+    return row[b.length];
   }
 
   // Calculate Match Score
   function getMatchScore(stock, query) {
-    let cleanQuery = query.toLowerCase().replace(/\s+/g, '');
+    let cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!cleanQuery) return 0;
 
     // Support stripping .NS or .BO if added by user (e.g. "SENSEX.NS" -> "SENSEX")
-    if (cleanQuery.endsWith('.ns')) cleanQuery = cleanQuery.slice(0, -3);
-    else if (cleanQuery.endsWith('.bo')) cleanQuery = cleanQuery.slice(0, -3);
+    if (cleanQuery.endsWith('ns')) cleanQuery = cleanQuery.slice(0, -2);
+    else if (cleanQuery.endsWith('bo')) cleanQuery = cleanQuery.slice(0, -2);
 
-    const cleanTicker = stock.ticker.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const cleanName = stock.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const rawName = stock.name.toLowerCase();
+    const ticker = (stock.ticker || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const rawName = (stock.name || '').toLowerCase();
+    const cleanName = rawName.replace(/[^a-z0-9]/g, '');
 
     // 1. Exact Ticker Match (Highest)
-    if (cleanTicker === cleanQuery) return 1000;
+    if (ticker === cleanQuery) return 1000;
 
     // 2. Ticker StartsWith
-    if (cleanTicker.startsWith(cleanQuery)) return 800;
+    if (ticker.startsWith(cleanQuery)) return 800;
 
     // 3. Name StartsWith
-    if (cleanName.startsWith(cleanQuery)) return 600;
+    if (cleanName.startsWith(cleanQuery)) return 700;
 
-    // 4. Name Contains (Word Boundary logic approximated)
-    if (rawName.includes(query.toLowerCase())) return 400;
+    // 4. Any Word in Name StartsWith
+    var words = rawName.split(/[\s\-_\.,]+/);
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i].replace(/[^a-z0-9]/g, '');
+      if (w && w.startsWith(cleanQuery)) return 600;
+    }
 
-    // 5. Fuzzy Match
-    if (fuzzyMatch(stock.name, query) || fuzzyMatch(stock.ticker, query)) return 100;
+    // 5. Continuous Substring in Ticker or Name
+    if (ticker.indexOf(cleanQuery) !== -1) return 500;
+    if (cleanName.indexOf(cleanQuery) !== -1) return 400;
 
     // 6. Handle "NSE "/"BSE " prefix for indices (e.g. "NSE SENSEX" -> "SENSEX")
     const isIndex = ['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(stock.ticker);
     if (isIndex && (query.toLowerCase().startsWith('nse ') || query.toLowerCase().startsWith('bse '))) {
-      const subQuery = query.toLowerCase().split(' ').slice(1).join(' ');
-      if (subQuery && (stock.ticker.toLowerCase().startsWith(subQuery) || stock.name.toLowerCase().startsWith(subQuery))) {
-        return 500; // Good match if they prefixed with exchange
+      const subQuery = query.toLowerCase().split(' ').slice(1).join(' ').replace(/[^a-z0-9]/g, '');
+      if (subQuery && (ticker.startsWith(subQuery) || cleanName.startsWith(subQuery))) {
+        return 550;
+      }
+    }
+
+    // 7. Typo / Phonetic tolerance (Levenshtein distance <= 1 for >= 3 chars, <= 2 for >= 6 chars)
+    if (cleanQuery.length >= 3) {
+      var maxDist = cleanQuery.length >= 6 ? 2 : 1;
+      var tDistPref = _levenshtein(ticker.slice(0, cleanQuery.length), cleanQuery);
+      var tDistFull = _levenshtein(ticker, cleanQuery);
+      var tDist = Math.min(tDistPref, tDistFull);
+      if (tDist <= maxDist) return 300 - tDist * 50;
+
+      for (var i = 0; i < words.length; i++) {
+        var w = words[i].replace(/[^a-z0-9]/g, '');
+        if (w.length >= 3) {
+          var wDistPref = _levenshtein(w.slice(0, cleanQuery.length), cleanQuery);
+          var wDistFull = _levenshtein(w, cleanQuery);
+          var wDist = Math.min(wDistPref, wDistFull);
+          if (wDist <= maxDist) return 250 - wDist * 50;
+        }
       }
     }
 
@@ -318,17 +334,19 @@ searchInput.addEventListener('input', (e) => {
 
 // Hide search results when clicking outside
 document.addEventListener('click', (e) => {
+  var sr = document.getElementById('searchResults');
+  if (!sr) return;
   if (!e.target.closest('.search-panel')) {
-    searchResults.classList.remove('visible');
-    document.body.style.overflow = ''; // Unlock Scroll
+    sr.classList.remove('visible');
+    document.body.style.overflow = '';
   }
 });
 
 // Prevent search results from closing when clicking inside
-searchResults.addEventListener('click', (e) => {
+document.getElementById('searchResults')?.addEventListener('click', (e) => {
   e.stopPropagation();
 });
-}
+}()); // end search IIFE
 
 // Navigate to chart page with ticker parameter
 // Navigate to chart page with ticker parameter
@@ -411,6 +429,7 @@ function renderMarketCards() {
 
 // Format price based on value (adds commas for readability)
 function formatPrice(price) {
+  if (price == null || isNaN(price)) return '0.00';
   if (price >= 10000) {
     return price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
@@ -428,6 +447,9 @@ let historyLoaded = false; // Flag to track when history data is loaded
 const STRIP_TICKERS = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY'];
 
 async function updatePrices() {
+  // Skip REST call if WS is actively pushing price data (within last 10s)
+  if (window._lastWsPriceTime && Date.now() - window._lastWsPriceTime < 10000) return;
+
   const tickers = [...new Set([...TRACKER_TICKERS, ...STRIP_TICKERS, ...visibleSearchTickers])];
 
   try {
@@ -448,12 +470,22 @@ async function updatePrices() {
       if (data.current === undefined || data.current === null) return;
 
       const newPrice = data.current;
-      const openPrice = data.open;
+      // Use server-computed change/pct (already relative to prev_close) when available
+      const change = data.change != null ? data.change : (newPrice - (data.prev_close || data.open || newPrice));
+      const pct = data.change_pct != null ? data.change_pct : (data.prev_close && data.prev_close > 0 ? ((newPrice - data.prev_close) / data.prev_close) * 100 : 0);
+
+      // Store under BOTH the suffixed and plain key so search renders always find it
       currentPrices[ticker] = newPrice;
+      currentChanges[ticker] = { value: change, percent: pct };
+      const plainTicker = ticker.replace(/\.(NS|BO)$/i, '');
+      if (plainTicker !== ticker) {
+        currentPrices[plainTicker] = newPrice;
+        currentChanges[plainTicker] = { value: change, percent: pct };
+      }
 
       // 1. Update Tracker Card (if ticker is in TRACKER_TICKERS)
       if (TRACKER_TICKERS.includes(ticker)) {
-        updateTrackerCard(ticker, newPrice, data.prev_close || openPrice);
+        updateTrackerCard(ticker, newPrice, data.prev_close || data.open);
       }
 
       // 2. Update Index Ticker Strip
@@ -461,9 +493,6 @@ async function updatePrices() {
         const stripPriceEl = document.getElementById(`strip-price-${ticker}`);
         const stripChangeEl = document.getElementById(`strip-change-${ticker}`);
         if (stripPriceEl && stripChangeEl) {
-          const base = data.prev_close || openPrice || newPrice;
-          const change = newPrice - base;
-          const pct = base > 0 ? (change / base) * 100 : 0;
           const sign = change >= 0 ? '+' : '';
           stripPriceEl.innerText = `₹${formatPrice(newPrice)}`;
           stripChangeEl.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`;
@@ -471,28 +500,6 @@ async function updatePrices() {
         }
       }
 
-      // 3. Update NIFTY Chart price
-      if (ticker === 'NIFTY') {
-        const niftyPriceEl = document.getElementById('niftyPrice');
-        const niftyChangeEl = document.getElementById('niftyChange');
-        const niftyO = document.getElementById('niftyO');
-        const niftyH = document.getElementById('niftyH');
-        const niftyL = document.getElementById('niftyL');
-        const niftyC = document.getElementById('niftyC');
-        const base = data.prev_close || openPrice || newPrice;
-        const change = newPrice - base;
-        const pct = base > 0 ? (change / base) * 100 : 0;
-        const sign = change >= 0 ? '+' : '';
-        if (niftyPriceEl) niftyPriceEl.innerText = `₹${formatPrice(newPrice)}`;
-        if (niftyChangeEl) {
-          niftyChangeEl.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`;
-          niftyChangeEl.style.color = change >= 0 ? '#00C853' : '#FF5252';
-        }
-        if (niftyO) niftyO.innerText = openPrice ? formatPrice(openPrice) : '--';
-        if (niftyH) niftyH.innerText = data.high ? formatPrice(data.high) : '--';
-        if (niftyL) niftyL.innerText = data.low ? formatPrice(data.low) : '--';
-        if (niftyC) niftyC.innerText = data.prev_close ? formatPrice(data.prev_close) : '--';
-      }
 
       // 4. Update Search Result UI (if displayed)
       const searchPriceEl = document.getElementById(`search-price-${ticker}`);
@@ -503,9 +510,6 @@ async function updatePrices() {
         searchPriceEl.style.transition = "color 0.2s";
         searchPriceEl.style.color = "#fff";
 
-        const base = data.prev_close || openPrice || newPrice;
-        const change = newPrice - base;
-        const pct = base > 0 ? (change / base) * 100 : 0;
         const sign = change >= 0 ? '+' : '';
         const arrow = change >= 0 ? '▲' : '▼';
         const colorHex = change >= 0 ? '#00C853' : '#FF5252';
@@ -529,6 +533,7 @@ async function updatePrices() {
     }
 
   } catch (e) {
+    if (e && e.name === 'AbortError') return;
     console.error("Live update failed", e);
   }
 }
@@ -565,7 +570,10 @@ async function initStockTracker() {
     }
 
     if (!historyMap) {
-      const response = await fetch('/api/top-9-history');
+      const ac = new AbortController();
+      const tid = setTimeout(() => ac.abort(), 15000);
+      const response = await fetch('/api/top-9-history', { signal: ac.signal });
+      clearTimeout(tid);
       historyMap = await response.json();
       // Cache for 5 minutes
       try {
@@ -652,9 +660,8 @@ async function initStockTracker() {
     if (typeof syncLogos === 'function') syncLogos();
 
   } catch (e) {
-    console.error("Failed to init tracker", e);
+    if (e && e.name !== 'AbortError') console.error("Failed to init tracker", e);
     marketGrid.innerHTML = '<div style="color: #ef4444; text-align: center; grid-column: 1/-1; padding: 3rem;">Failed to load historical data.</div>';
-    // Ensure we unblock the loader even if history fails
     historyLoaded = true;
   }
 }
@@ -902,7 +909,7 @@ function updateTrackerCard(ticker, currentPrice, todayOpen) {
   // Update Line Path
   const d = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getY(p.price)}`).join(' ');
   path.setAttribute('d', d);
-  const chartColor = isPositive ? '#00E676' : '#FF0055';
+  const chartColor = isPositive ? '#089981' : '#f23645';
   path.style.stroke = chartColor;
   path.style.fill = 'none'; // Ensure line itself has no fill
 
@@ -1032,7 +1039,16 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.keys(prices).forEach(ticker => {
       const d = prices[ticker];
       if (!d || d.current === undefined) return;
+      const wsChange = d.change != null ? d.change : (d.current - (d.prev_close || d.open || d.current));
+      const wsPct = d.change_pct != null ? d.change_pct : (d.prev_close && d.prev_close > 0 ? ((d.current - d.prev_close) / d.prev_close) * 100 : 0);
+
       currentPrices[ticker] = d.current;
+      currentChanges[ticker] = { value: wsChange, percent: wsPct };
+      const plainTkr = ticker.replace(/\.(NS|BO)$/i, '');
+      if (plainTkr !== ticker) {
+        currentPrices[plainTkr] = d.current;
+        currentChanges[plainTkr] = { value: wsChange, percent: wsPct };
+      }
 
       if (TRACKER_TICKERS.includes(ticker)) {
         updateTrackerCard(ticker, d.current, d.prev_close || d.open || d.current);
@@ -1043,35 +1059,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const sp = document.getElementById(`strip-price-${ticker}`);
         const sc = document.getElementById(`strip-change-${ticker}`);
         if (sp && sc) {
-          const base = d.prev_close || d.open || d.current;
-          const change = d.current - base;
-          const pct = base > 0 ? (change / base) * 100 : 0;
-          const sign = change >= 0 ? '+' : '';
+          const sign = wsChange >= 0 ? '+' : '';
           sp.innerText = `₹${formatPrice(d.current)}`;
-          sc.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`;
-          sc.className = 'change ' + (change >= 0 ? 'text-green' : 'text-red');
+          sc.innerText = `${sign}${wsChange.toFixed(2)} (${sign}${Math.abs(wsPct).toFixed(2)}%)`;
+          sc.className = 'change ' + (wsChange >= 0 ? 'text-green' : 'text-red');
         }
       }
 
-      // Update NIFTY chart price
-      if (ticker === 'NIFTY') {
-        const base = d.prev_close || d.open || d.current;
-        const change = d.current - base;
-        const pct = base > 0 ? (change / base) * 100 : 0;
-        const sign = change >= 0 ? '+' : '';
-        const np = document.getElementById('niftyPrice');
-        const nc = document.getElementById('niftyChange');
-        const no = document.getElementById('niftyO');
-        const nh = document.getElementById('niftyH');
-        const nl = document.getElementById('niftyL');
-        const nprc = document.getElementById('niftyC');
-        if (np) np.innerText = `₹${formatPrice(d.current)}`;
-        if (nc) { nc.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`; nc.style.color = change >= 0 ? '#00C853' : '#FF5252'; }
-        if (no) no.innerText = d.open ? formatPrice(d.open) : '--';
-        if (nh) nh.innerText = d.high ? formatPrice(d.high) : '--';
-        if (nl) nl.innerText = d.low ? formatPrice(d.low) : '--';
-        if (nprc) nprc.innerText = d.prev_close ? formatPrice(d.prev_close) : '--';
-      }
     });
     // Update any visible search results
     visibleSearchTickers.forEach(ticker => {
@@ -1081,9 +1075,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const searchChangeEl = document.getElementById(`search-change-${ticker}`);
       if (searchPriceEl && searchChangeEl) {
         const newPrice  = d.current;
-        const base      = d.prev_close || d.open || newPrice;
-        const change    = newPrice - base;
-        const pct       = base > 0 ? (change / base) * 100 : 0;
+        const change    = d.change != null ? d.change : (newPrice - (d.prev_close || d.open || newPrice));
+        const pct       = d.change_pct != null ? d.change_pct : (d.prev_close && d.prev_close > 0 ? ((newPrice - d.prev_close) / d.prev_close) * 100 : 0);
         const sign      = change >= 0 ? '+' : '';
         const arrow     = change >= 0 ? '▲' : '▼';
         const colorHex  = change >= 0 ? '#00C853' : '#FF5252';
@@ -1116,17 +1109,19 @@ document.addEventListener('DOMContentLoaded', () => {
 // KEYBOARD SHORTCUTS
 // ==========================================
 document.addEventListener('keydown', (e) => {
+  var searchInput = document.getElementById('stockSearch');
+  var searchResults = document.getElementById('searchResults');
   // Press '/' to focus search
-  if (e.key === '/' && document.activeElement !== searchInput) {
+  if (e.key === '/' && searchInput && document.activeElement !== searchInput) {
     e.preventDefault();
     searchInput.focus();
   }
 
   // Press 'Escape' to clear search
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape' && searchInput && searchResults) {
     searchInput.value = '';
     searchResults.classList.remove('visible');
-    document.body.style.overflow = ''; // Unlock Scroll
+    document.body.style.overflow = '';
     searchInput.blur();
   }
 });

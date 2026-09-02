@@ -18,7 +18,8 @@
         var redirect = encodeURIComponent(window.location.href);
         var btn = document.getElementById('signInRedirectBtn');
         if (btn) btn.href = 'login.html?redirect=' + redirect;
-        document.getElementById('signInPromptModal').classList.add('visible');
+        var modal = document.getElementById('signInPromptModal');
+        if (modal) modal.classList.add('visible');
       } else {
         showTradeModal();
       }
@@ -126,7 +127,7 @@
 
     function launchChart(ticker, exchange) {
       if (!ticker) return;
-      window.location.href = (exchange === 'INDEX' ? 'stock.html?ticker=' : 'stock.html?ticker=') + encodeURIComponent(ticker);
+      window.location.href = 'overview.html?ticker=' + encodeURIComponent(ticker);
     }
 
     // Show Trade Modal
@@ -159,6 +160,51 @@
       }
 
       document.getElementById('tradeAvailableBalance').textContent = `₹${(user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+
+      // Check Market Status (09:15 - 15:30 IST Mon-Fri)
+      const now = new Date();
+      // Calculate IST time
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const istTime = new Date(utc + (3600000 * 5.5));
+      const day = istTime.getDay();
+      const hours = istTime.getHours();
+      const minutes = istTime.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+      const isMarketOpen = (day >= 1 && day <= 5) && (totalMinutes >= (9 * 60 + 15) && totalMinutes <= (15 * 60 + 30));
+
+      const amoBanner = document.getElementById('amoBanner');
+      const submitBtn = document.getElementById('tradeSubmitBtn');
+      const nextOpenText = document.getElementById('marketClosedNextOpenText');
+
+      if (!isMarketOpen) {
+        // Calculate next trading day display
+        let nextTradingDay = new Date(istTime);
+        nextTradingDay.setDate(nextTradingDay.getDate() + 1);
+        while (nextTradingDay.getDay() === 0 || nextTradingDay.getDay() === 6) {
+          nextTradingDay.setDate(nextTradingDay.getDate() + 1);
+        }
+        const options = { weekday: 'long', day: 'numeric', month: 'short' };
+        const dayStr = nextTradingDay.toLocaleDateString('en-IN', options);
+
+        if (amoBanner) amoBanner.style.display = 'block';
+        if (nextOpenText) nextOpenText.textContent = `Trading is strictly disabled outside NSE hours (09:15 - 15:30 IST). Market opens at 09:15 AM on ${dayStr}.`;
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.style.opacity = '0.5';
+          submitBtn.style.cursor = 'not-allowed';
+          submitBtn.style.background = '#333';
+          submitBtn.textContent = 'Market Closed';
+        }
+      } else {
+        if (amoBanner) amoBanner.style.display = 'none';
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.opacity = '1';
+          submitBtn.style.cursor = 'pointer';
+          submitBtn.style.background = 'linear-gradient(135deg,#4A90E2,#7B61FF)';
+          submitBtn.textContent = 'Place Order';
+        }
+      }
 
       setPositionType('LONG');
       calculateTotal();
@@ -254,17 +300,18 @@
 
           // Hide trade modal and show success animation
           hideTradeModal();
+          const isAmo = data.is_amo === true;
+          const title = isAmo ? 'AMO Order Queued (09:15 AM Market Open)' : 'Order Executed Successfully!';
           const detail = `${payload.position_type} | ${payload.quantity} Share${payload.quantity > 1 ? 's' : ''}`;
-          showOrderSuccessModal(payload.ticker, detail);
+          showOrderSuccessModal(payload.ticker, detail, title);
 
-          // RESET Manual closing flag so the new position is visible in the panel
+          // RESET Manual closing flag so the panel opens
           window.positionsPanelClosedManually = false;
 
-          // Force open the panel and switch to 'open' tab
           const panel = document.getElementById('openPositionsPanel');
           if (panel) {
             panel.style.display = 'block';
-            switchPanelTab('open');
+            switchPositionsTab(isAmo ? 'queued' : 'open');
           }
 
           loadOpenPositions();
@@ -344,17 +391,17 @@
       return 0;
     }
 
+    let queuedOrders = [];
+    window.queuedOrders = queuedOrders;
+
     async function loadOpenPositions() {
       const token = sessionStorage.getItem('token');
       if (!token) return;
 
       try {
-        const res = await fetch(`${API_BASE}/api/portfolio/open-positions`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (res.ok) {
-          openPositions = await res.json();
+        const posRes = await fetch(`${API_BASE}/api/portfolio/open-positions`, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (posRes.ok) {
+          openPositions = await posRes.json();
           window.openPositions = openPositions;
           _fetchPositionLivePrices();
           renderOpenPositions();
@@ -374,18 +421,19 @@
     function renderOpenPositions() {
       const tbody = document.getElementById('openPositionsBody');
       const countEl = document.getElementById('openPositionsCount');
+      const headerCountEl = document.getElementById('headerPositionsCount');
       const panel = document.getElementById('openPositionsPanel');
 
+      const totalItems = openPositions.length;
       if (countEl) countEl.textContent = `(${openPositions.length})`;
-
-      if (openPositions.length === 0) {
-        if (tbody) tbody.innerHTML = '';
-        if (panel) panel.style.display = 'none';
-        return;
+      if (headerCountEl) {
+        headerCountEl.textContent = totalItems;
+        headerCountEl.style.display = totalItems > 0 ? 'inline-block' : 'none';
       }
 
-      if (!window.positionsPanelClosedManually) {
-        if (panel) panel.style.display = 'block';
+      if (openPositions.length === 0) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:#a1a1aa; font-size:0.9rem;">No active open positions.</td></tr>`;
+        return;
       }
 
       if (!tbody) return;
@@ -398,16 +446,16 @@
           ? (currentPrice - pos.entry_price) * pos.quantity
           : (pos.entry_price - currentPrice) * pos.quantity;
 
-        const pnlColor  = pnl >= 0 ? '#00E676' : '#FF5252';
-        const pnlBg     = pnl >= 0 ? 'rgba(0,230,118,0.08)' : 'rgba(255,82,82,0.08)';
+        const pnlColor  = pnl >= 0 ? '#089981' : '#FF5252';
+        const pnlBg     = pnl >= 0 ? 'rgba(8, 153, 129,0.08)' : 'rgba(255,82,82,0.08)';
         const pnlPrefix = pnl >= 0 ? '+' : '-';
         const isLong    = pos.position_type === 'LONG';
         const typeBg    = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
-        const typeColor = isLong ? '#00E676' : '#FF5252';
+        const typeColor = isLong ? '#089981' : '#FF5252';
         const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
 
-        const tpStr = pos.take_profit != null ? `<span style="color:#00E676;">TP ₹${pos.take_profit.toFixed(2)}</span>` : '<span style="color:#555;">—</span>';
-        const slStr = pos.stop_loss  != null ? `<span style="color:#FF5252;">SL ₹${pos.stop_loss.toFixed(2)}</span>`  : '<span style="color:#555;">—</span>';
+        const tpStr = pos.take_profit != null ? `<span style="color:#089981; font-weight:600;">TP ₹${pos.take_profit.toFixed(2)}</span>` : '<span style="color:#555;">—</span>';
+        const slStr = pos.stop_loss  != null ? `<span style="color:#FF5252; font-weight:600;">SL ₹${pos.stop_loss.toFixed(2)}</span>`  : '<span style="color:#555;">—</span>';
 
         const tickerDisplay = pos.ticker || '—';
         const nameDisplay   = pos.stock_name || '';
@@ -437,7 +485,9 @@
             </span>
           </td>
           <td style="padding:14px 12px; text-align:right;">
-            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px; font-size:0.78rem;">${tpStr}${slStr}</div>
+            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; font-size:0.78rem;">
+              ${tpStr}${slStr}
+            </div>
           </td>
           <td style="padding:14px 12px; text-align:right;" onclick="event.stopPropagation()">
             <div style="display:flex; gap:6px; justify-content:flex-end; align-items:center;">
@@ -456,18 +506,145 @@
         </tr>`;
       }).join('');
     }
-    // Expose globally so WebSocket can trigger P&L updates
-    window.renderOpenPositions = renderOpenPositions;
+
+    let closedPositions = [];
+    window.closedPositions = closedPositions;
+
+    async function loadClosedPositions() {
+      const token = sessionStorage.getItem('token');
+      if (!token) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/portfolio/closed-positions?limit=20`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+          closedPositions = await res.json();
+          window.closedPositions = closedPositions;
+          renderClosedPositions();
+        }
+      } catch (e) {
+        console.error('Failed to load closed positions:', e);
+      }
+    }
+
+    window.loadClosedPositions = loadClosedPositions;
+    window.switchPositionsTab = switchPositionsTab;
+    window.renderClosedPositions = renderClosedPositions;
+    window.togglePositionsPanel = togglePositionsPanel;
+
+    function switchPositionsTab(tab) {
+      const btnOpen = document.getElementById('tabPanelOpen');
+      const btnHistory = document.getElementById('tabPanelHistory');
+      const contOpen = document.getElementById('openPositionsContainer');
+      const contHistory = document.getElementById('closedPositionsContainer');
+
+      if (tab === 'open') {
+        if (btnOpen) { btnOpen.style.background = '#4A90E2'; btnOpen.style.color = '#fff'; btnOpen.style.border = 'none'; }
+        if (btnHistory) { btnHistory.style.background = 'rgba(255,255,255,0.06)'; btnHistory.style.color = '#a1a1aa'; btnHistory.style.border = '1px solid rgba(255,255,255,0.1)'; }
+        if (contOpen) contOpen.style.display = 'block';
+        if (contHistory) contHistory.style.display = 'none';
+        loadOpenPositions();
+      } else {
+        if (btnHistory) { btnHistory.style.background = '#4A90E2'; btnHistory.style.color = '#fff'; btnHistory.style.border = 'none'; }
+        if (btnOpen) { btnOpen.style.background = 'rgba(255,255,255,0.06)'; btnOpen.style.color = '#a1a1aa'; btnOpen.style.border = '1px solid rgba(255,255,255,0.1)'; }
+        if (contOpen) contOpen.style.display = 'none';
+        if (contHistory) contHistory.style.display = 'block';
+        loadClosedPositions();
+      }
+    }
+
+    function renderClosedPositions() {
+      const tbody = document.getElementById('closedPositionsBody');
+      const countEl = document.getElementById('closedPositionsCount');
+      if (countEl) countEl.textContent = `(${closedPositions.length})`;
+
+      if (!tbody) return;
+
+      if (closedPositions.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:#a1a1aa; font-size:0.9rem;">No closed trades yet.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = closedPositions.map(pos => {
+        const isLong = pos.position_type === 'LONG';
+        const typeBg = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
+        const typeColor = isLong ? '#089981' : '#FF5252';
+        const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
+
+        const pnl = pos.realized_pnl != null ? pos.realized_pnl : 0;
+        const pnlColor = pnl >= 0 ? '#089981' : '#FF5252';
+        const pnlBg = pnl >= 0 ? 'rgba(8, 153, 129,0.08)' : 'rgba(255,82,82,0.08)';
+        const pnlPrefix = pnl >= 0 ? '+' : '';
+
+        // Badge styling for exit reason
+        let reasonBadge = '';
+        if (pos.exit_reason === 'TP_HIT') {
+          reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🎯 TP Hit</span>`;
+        } else if (pos.exit_reason === 'SL_HIT') {
+          reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🛑 SL Hit</span>`;
+        } else {
+          reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">✋ Manual Close</span>`;
+        }
+
+        const dateStr = pos.closed_at ? new Date(pos.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+
+        return `
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;"
+            onmouseover="this.style.background='rgba(255,255,255,0.03)'"
+            onmouseout="this.style.background='transparent'">
+          <td style="padding:12px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <img src="logos/${pos.ticker.split('.')[0]}.svg" style="width:24px;height:24px;border-radius:50%;background:#1e1e1e;object-fit:contain;padding:2px;" onerror="this.style.display='none'">
+              <div>
+                <div style="font-weight:600; color:#fff; font-size:0.85rem;">${pos.ticker}</div>
+                <div style="font-size:0.72rem; color:#666;">${pos.stock_name || ''}</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding:12px;">
+            <span style="background:${typeBg}; color:${typeColor}; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; letter-spacing:0.5px; white-space:nowrap;">${typeLabel}</span>
+          </td>
+          <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; font-weight:600; color:#d1d4dc;">${pos.quantity}</td>
+          <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">₹${pos.entry_price.toFixed(2)}</td>
+          <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">${pos.closing_price != null ? '₹' + pos.closing_price.toFixed(2) : '—'}</td>
+          <td style="padding:12px; text-align:center;">${reasonBadge}</td>
+          <td style="padding:12px; text-align:right;">
+            <span style="font-family:'Roboto Mono',monospace; font-weight:700; font-size:0.85rem; color:${pnlColor}; background:${pnlBg}; padding:3px 8px; border-radius:4px;">
+              ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
+            </span>
+          </td>
+          <td style="padding:12px; text-align:right; color:#888; font-size:0.75rem; white-space:nowrap;">${dateStr}</td>
+        </tr>`;
+      }).join('');
+    }
 
     function togglePositionsPanel() {
       const panel = document.getElementById('openPositionsPanel');
+      if (!panel) return;
       const isHidden = (panel.style.display === 'none' || !panel.style.display);
-      const targetDisplay = isHidden ? 'block' : 'none';
-      panel.style.display = targetDisplay;
+      panel.style.display = isHidden ? 'block' : 'none';
 
-      // Update manual state: if we just hid it, it's manually closed. If we just showed it, it's NOT manually closed.
+      // Update manual state
       window.positionsPanelClosedManually = !isHidden;
-      // Panel is now in document flow, flexbox handles layout automatically
+
+      // If opening, ensure fresh positions are loaded & rendered
+      if (isHidden) {
+        loadOpenPositions();
+        loadClosedPositions();
+      }
+
+      // Smooth chart resize & reposition
+      requestAnimationFrame(function() {
+        const chartParent = document.getElementById('chart-container');
+        if (chartParent && window.bigChart) {
+          const h = chartParent.offsetHeight || 350;
+          const w = chartParent.clientWidth || 800;
+          window._chartLastSize = { height: h, width: w };
+          window.bigChart.applyOptions({ height: h, width: w });
+        }
+        window.dispatchEvent(new Event('resize'));
+      });
     }
 
     function switchPanelTab(tab) {
@@ -512,14 +689,15 @@
 
         if (res.ok) {
           const data = await res.json();
+          const positions = Array.isArray(data) ? data : (data.positions || []);
           const tbody = document.getElementById('panelClosedBody');
 
-          if (!data.positions || data.positions.length === 0) {
+          if (positions.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" style="padding: 20px; text-align: center; color: #666;">No closed positions</td></tr>';
             return;
           }
 
-          tbody.innerHTML = data.positions.map(pos => {
+          tbody.innerHTML = positions.map(pos => {
             const pnl = pos.realized_pnl || 0;
             const pnlColor = pnl >= 0 ? '#26a69a' : '#ef5350';
             const date = formatFullDate(pos.closed_at);
@@ -666,6 +844,44 @@
         document.getElementById('closeDetailExit').innerText = 'Price Unavailable';
         pnlEl.innerText = 'N/A';
       }
+
+      // Check Market Status (09:15 - 15:30 IST Mon-Fri)
+      const now = new Date();
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const istTime = new Date(utc + (3600000 * 5.5));
+      const day = istTime.getDay();
+      const hours = istTime.getHours();
+      const minutes = istTime.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+      const isMarketOpen = (day >= 1 && day <= 5) && (totalMinutes >= (9 * 60 + 15) && totalMinutes <= (15 * 60 + 30));
+      const confirmBtn = document.getElementById('btnConfirmClose');
+      const closeMsg = document.getElementById('closePositionMessage');
+
+      if (!isMarketOpen) {
+        let nextTradingDay = new Date(istTime);
+        nextTradingDay.setDate(nextTradingDay.getDate() + 1);
+        while (nextTradingDay.getDay() === 0 || nextTradingDay.getDay() === 6) {
+          nextTradingDay.setDate(nextTradingDay.getDate() + 1);
+        }
+        const options = { weekday: 'long', day: 'numeric', month: 'short' };
+        const dayStr = nextTradingDay.toLocaleDateString('en-IN', options);
+
+        closeMsg.innerHTML = `<div style="color: #ff8a80; background: rgba(255,82,82,0.12); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,82,82,0.3); font-size: 12px; line-height: 1.4; margin-top: 10px;">
+          ⛔ <strong>Market is Closed</strong><br/>Positions cannot be closed now. Square-off resumes at 09:15 AM on ${dayStr}.
+        </div>`;
+        if (confirmBtn) {
+          confirmBtn.disabled = true;
+          confirmBtn.style.opacity = '0.5';
+          confirmBtn.style.cursor = 'not-allowed';
+        }
+      } else {
+        closeMsg.innerHTML = '';
+        if (confirmBtn) {
+          confirmBtn.disabled = false;
+          confirmBtn.style.opacity = '1';
+          confirmBtn.style.cursor = 'pointer';
+        }
+      }
     }
 
     function hideClosePositionModal() {
@@ -674,7 +890,10 @@
     }
 
     async function confirmClosePosition() {
-      const btn = document.getElementById('closePositionModal').querySelector('button:last-of-type');
+      // Guard: prevent double-click while request is in flight
+      if (window._isClosingPosition) return;
+
+      const btn = document.getElementById('btnConfirmClose');
       const positionId = parseInt(document.getElementById('closePositionId').value, 10);
       const token = sessionStorage.getItem('token');
       const msgEl = document.getElementById('closePositionMessage');
@@ -712,26 +931,52 @@
         return;
       }
 
+      // Lock the UI — show loading spinner inside button
+      window._isClosingPosition = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        btn.style.cursor = 'not-allowed';
+        btn.innerHTML = '<span style="display:inline-flex;align-items:center;gap:8px;">'
+          + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" style="animation:spin 0.8s linear infinite;">'
+          + '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>'
+          + '</svg>Closing...</span>';
+      }
+      msgEl.innerHTML = '';
+
       try {
-        if (btn) {
-          btn.disabled = true;
-          btn.innerText = 'Closing...';
+        // Fetch CSRF token — if it fails, proceed without it (endpoint may not require it)
+        let csrfToken = '';
+        try {
+          const csrfRes = await fetch(`${API_BASE}/api/csrf-token`, { credentials: 'include' });
+          if (csrfRes.ok) {
+            const csrfData = await csrfRes.json();
+            csrfToken = csrfData.csrf_token || '';
+          }
+        } catch (csrfErr) {
+          console.warn('CSRF fetch failed, proceeding without:', csrfErr);
         }
-        const csrfRes = await fetch(`${API_BASE}/api/csrf-token`);
-        if (!csrfRes.ok) throw new Error('CSRF token fetch failed');
-        const csrfData = await csrfRes.json();
+
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        };
+        if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
         const res = await fetch(`${API_BASE}/api/trade/close-position`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'X-CSRF-Token': csrfData.csrf_token
-          },
+          headers: headers,
+          credentials: 'include',
           body: JSON.stringify({ position_id: positionId, closing_price: closingPrice })
         });
 
-        const data = await res.json();
+        let data;
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          throw new Error('Server returned an invalid response (status ' + res.status + ')');
+        }
+
         if (res.ok) {
           // Update balance
           const user = JSON.parse(sessionStorage.getItem('user') || '{}');
@@ -753,15 +998,21 @@
           // Reload positions
           loadOpenPositions();
         } else {
-          msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(data.detail || 'Failed to close position') + '</div>';
+          // Show the actual backend error message
+          const detail = data.detail || data.message || ('Server error: ' + res.status);
+          msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(detail) + '</div>';
         }
-        
       } catch (e) {
-        msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">Network error. Please try again.</div>';
+        console.error('Close position error:', e);
+        msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(e.message || 'Network error. Please try again.') + '</div>';
       } finally {
+        // Always unlock so user can retry if needed
+        window._isClosingPosition = false;
         if (btn) {
           btn.disabled = false;
-          btn.innerText = 'Yes, Close';
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+          btn.innerHTML = 'Yes, Close';
         }
       }
     }
@@ -774,15 +1025,60 @@
     function showEditLimitsModal(positionId, tp, sl, tpCount, slCount) {
       var pos = openPositions.find(function (p) { return p.id === positionId; });
       if (!pos) return;
+
+      // Check Market Status (09:15 - 15:30 IST Mon-Fri)
+      const now = new Date();
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const istTime = new Date(utc + (3600000 * 5.5));
+      const day = istTime.getDay();
+      const hours = istTime.getHours();
+      const minutes = istTime.getMinutes();
+      const totalMinutes = hours * 60 + minutes;
+      const isMarketOpen = (day >= 1 && day <= 5) && (totalMinutes >= (9 * 60 + 15) && totalMinutes <= (15 * 60 + 30));
+
       document.getElementById('editPositionId').value = positionId;
-      document.getElementById('editTakeProfit').value = tp || '';
-      document.getElementById('editStopLoss').value = sl || '';
+      const tpInput = document.getElementById('editTakeProfit');
+      const slInput = document.getElementById('editStopLoss');
+      tpInput.value = tp || '';
+      slInput.value = sl || '';
       // Store original values for validation
       window.originalTP = tp || null;
       window.originalSL = sl || null;
       document.getElementById('editTPCount').textContent = `${tpCount}/3`;
       document.getElementById('editSLCount').textContent = `${slCount}/3`;
-      document.getElementById('editLimitsMessage').innerHTML = '';
+      const msg = document.getElementById('editLimitsMessage');
+      const submitBtn = document.getElementById('editLimitsModal').querySelector('button:last-of-type');
+
+      if (!isMarketOpen) {
+        let nextTradingDay = new Date(istTime);
+        nextTradingDay.setDate(nextTradingDay.getDate() + 1);
+        while (nextTradingDay.getDay() === 0 || nextTradingDay.getDay() === 6) {
+          nextTradingDay.setDate(nextTradingDay.getDate() + 1);
+        }
+        const options = { weekday: 'long', day: 'numeric', month: 'short' };
+        const dayStr = nextTradingDay.toLocaleDateString('en-IN', options);
+
+        msg.innerHTML = `<div style="color: #ff8a80; background: rgba(255,82,82,0.12); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,82,82,0.3); font-size: 12px; line-height: 1.4;">
+          ⛔ <strong>Market is Closed</strong><br/>Take Profit & Stop Loss cannot be modified now. Modifications resume at 09:15 AM on ${dayStr}.
+        </div>`;
+        tpInput.disabled = true;
+        slInput.disabled = true;
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.style.opacity = '0.5';
+          submitBtn.style.cursor = 'not-allowed';
+        }
+      } else {
+        msg.innerHTML = '';
+        tpInput.disabled = false;
+        slInput.disabled = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.style.opacity = '1';
+          submitBtn.style.cursor = 'pointer';
+        }
+      }
+
       document.getElementById('editLimitsModal').classList.add('visible');
     }
 
@@ -929,37 +1225,6 @@
       } catch (e) { console.error(e); }
     }
 
-    async function loadClosedPositions() {
-      const token = sessionStorage.getItem('token');
-      try {
-        const res = await fetch(`${API_BASE}/api/portfolio/closed-positions`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const tbody = document.getElementById('closedPositionsBody');
-          if (data.positions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="padding: 20px; text-align: center; color: #666;">No closed positions</td></tr>';
-            return;
-          }
-          tbody.innerHTML = data.positions.map(pos => {
-            const pnlColor = pos.realized_pnl >= 0 ? '#26a69a' : '#ef5350';
-            const typeColor = pos.position_type === 'LONG' ? '#26a69a' : '#ef5350';
-            return `<tr style="border-bottom: 1px solid #222;">
-              <td style="padding: 10px; color: #fff; font-weight: 600;">${pos.ticker}</td>
-              <td style="padding: 10px; color: #888;">${pos.stock_name || '-'}</td>
-              <td style="padding: 10px; text-align: center;"><span style="background: rgba(239, 83, 80, 0.2); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Closed</span></td>
-              <td style="padding: 10px; text-align: right; color: #fff; font-weight: 600;">₹${pos.entry_price.toFixed(2)}</td>
-              <td style="padding: 10px; text-align: right; color: #fff; font-weight: 600;">₹${pos.closing_price.toFixed(2)}</td>
-              <td style="padding: 10px; text-align: right; color: ${pnlColor}; font-weight: 600;">${pos.realized_pnl >= 0 ? '+' : ''}₹${pos.realized_pnl.toFixed(2)}</td>
-              <td style="padding: 10px; text-align: center; font-weight: 600;"><span style="background: #333; padding: 2px 8px; border-radius: 4px; font-size: 11px;">${pos.close_type}</span></td>
-              <td style="padding: 10px; text-align: right; color: #888; font-weight: 600;">${pos.duration}</td>
-            </tr>`;
-          }).join('');
-        }
-      } catch (e) { console.error(e); }
-    }
-
     async function loadTransactions() {
       const token = sessionStorage.getItem('token');
       try {
@@ -1031,7 +1296,7 @@
         if (pos.take_profit) {
           const tpLine = window.bigCandleSeries.createPriceLine({
             price: pos.take_profit,
-            color: '#00E676', // Green
+            color: '#089981', // Green
             lineWidth: 1,
             lineStyle: 0, // Solid
             axisLabelVisible: true,

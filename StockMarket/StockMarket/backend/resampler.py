@@ -59,7 +59,19 @@ class CandleResampler:
     @staticmethod
     def _resample_by_rule(candles: List[Dict], rule: str) -> List[Dict]:
         df = CandleResampler._to_dataframe(candles)
-        resampled = df.resample(rule, closed='left', label='left').agg({
+        # NSE session starts at 09:15 IST.
+        # 09:15 = 555 minutes from midnight.
+        #   555 % 15  = 0  → 15m needs NO offset (09:15 is already a valid 15-min boundary)
+        #   555 % 30  = 15 → 30m needs offset='15min'  (else pandas uses 09:00 as first bucket)
+        #   555 % 60  = 15 → 1h  needs offset='15min'  (else pandas uses 09:00 as first bucket)
+        #   555 % 240 = 75 → 4h  needs offset='75min'  (NOT 15min — that gives 08:15 buckets)
+        # offset='15min' fixes 30m/1h; offset='75min' fixes 4h so first bucket is 09:15.
+        nse_needs_offset = rule not in ('15min', '1D', 'D', 'W', 'MS')
+        offset = '75min' if rule == '4h' else '15min' if nse_needs_offset else None
+        resample_kwargs = dict(closed='left', label='left')
+        if offset:
+            resample_kwargs['offset'] = offset
+        resampled = df.resample(rule, **resample_kwargs).agg({
             'open': 'first',
             'high': 'max',
             'low': 'min',

@@ -94,7 +94,7 @@ async function fetchNewsInBackground(ticker, timeWindow) {
     try {
         const endpoint = ticker === 'ALL'
             ? `${API_BASE_URL}/scanx/news/full/all`
-            : `${API_BASE_URL}/scanx/news/full/${ticker}`;
+            : `${API_BASE_URL}/scanx/news/fast/${ticker}`;
 
         const response = await fetch(`${endpoint}?limit=20`);
 
@@ -275,10 +275,10 @@ async function fetchNews(ticker, timeWindow) {
     showLoading();
 
     try {
-        // Always use Playwright full scraping
+        // Use fast RSS fetching for individual tickers
         const endpoint = ticker === 'ALL'
             ? `${API_BASE_URL}/scanx/news/full/all`
-            : `${API_BASE_URL}/scanx/news/full/${ticker}`;
+            : `${API_BASE_URL}/scanx/news/fast/${ticker}`;
 
         const response = await fetch(`${endpoint}?limit=20`);
 

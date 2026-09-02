@@ -19,7 +19,10 @@ window.addEventListener('error', function (e) {
   // ── 1. Fetch the lightweight version string from server ──────────────────
   var serverVersion = null;
   try {
-    var vRes = await fetch('/api/stocks-version');
+    var vAc = new AbortController();
+    var vTo = setTimeout(function () { vAc.abort(); }, 15000);
+    var vRes = await fetch('/api/stocks-version', { signal: vAc.signal });
+    clearTimeout(vTo);
     if (vRes.ok) {
       var vData = await vRes.json();
       serverVersion = vData.version || null;
@@ -46,38 +49,40 @@ window.addEventListener('error', function (e) {
   }
 
   // ── 3. Version mismatch / no cache – fetch fresh from API ───────────────
-  try {
-    var ac = new AbortController();
-    var to = setTimeout(function () { ac.abort(); }, 15000);
-    var response = await fetch('/api/all-stocks', { signal: ac.signal });
-    clearTimeout(to);
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    var stocks = await response.json();
-    window.ALL_STOCKS = stocks;
-
-    // Persist to localStorage
-    if (serverVersion) localStorage.setItem(_STOCKS_VERSION_KEY, serverVersion);
+  // Serve stale cache immediately as fallback, then refresh silently in background
+  if (storedRaw) {
     try {
-      localStorage.setItem(_STOCKS_CACHE_KEY, JSON.stringify(stocks));
-    } catch (quotaErr) {
-      // localStorage full (very rare) – not critical, just skip save
-    }
+      window.ALL_STOCKS = JSON.parse(storedRaw);
+      window.dispatchEvent(new Event('stocksLoaded'));
+      console.log('[Stocks] Showing cached stocks while fetching fresh data...');
+    } catch (e) {}
+  }
 
-    window.dispatchEvent(new Event('stocksLoaded'));
-    console.log('[Stocks] Fetched ' + stocks.length + ' stocks from API');
+  // Background retry up to 2 times
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try {
+      var ac = new AbortController();
+      var to = setTimeout(function () { ac.abort(); }, 25000);
+      var response = await fetch('/api/all-stocks', { signal: ac.signal });
+      clearTimeout(to);
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      var stocks = await response.json();
+      window.ALL_STOCKS = stocks;
 
-  } catch (fetchErr) {
-    console.error('[Stocks] API fetch failed:', fetchErr);
-
-    // ── 4. Last resort: serve stale cache even if version is old ──────────
-    if (storedRaw) {
+      if (serverVersion) localStorage.setItem(_STOCKS_VERSION_KEY, serverVersion);
       try {
-        window.ALL_STOCKS = JSON.parse(storedRaw);
-        window.dispatchEvent(new Event('stocksLoaded'));
-        console.warn('[Stocks] Serving stale cache as offline fallback – ' + window.ALL_STOCKS.length + ' stocks');
-      } catch (e) {
-        window.ALL_STOCKS = [];
+        localStorage.setItem(_STOCKS_CACHE_KEY, JSON.stringify(stocks));
+      } catch (quotaErr) {}
+
+      window.dispatchEvent(new Event('stocksLoaded'));
+      console.log('[Stocks] Fetched ' + stocks.length + ' stocks from API');
+      return;
+
+    } catch (fetchErr) {
+      if (attempt < 1) {
+        await new Promise(function (r) { setTimeout(r, 3000); });
       }
     }
   }
+  console.warn('[Stocks] API unavailable, using cached data');
 })();

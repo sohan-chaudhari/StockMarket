@@ -2,221 +2,588 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Screener - LEVERAGE</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="index.css">
-    <link rel="stylesheet" href="nav.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="tokens.css?v=2">
+    <link rel="stylesheet" href="index.css?v=82">
+    <link rel="stylesheet" href="nav.css?v=12">
     <style>
-        :root{--text-secondary:#a1a1aa;--accent-blue:#4A90E2;}
-        .screen-layout{display:flex;gap:1.5rem;}
-        .screen-sidebar{width:260px;flex-shrink:0;}
-        .screen-main{flex:1;min-width:0;}
-        .preset-section{margin-bottom:1.5rem;}
-        .preset-section h3{font-size:0.8rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:0.5rem;}
-        .preset-btn{display:block;width:100%;padding:0.65rem 1rem;background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:8px;color:#fff;text-align:left;font-size:0.85rem;font-weight:500;cursor:pointer;transition:all 0.15s;margin-bottom:0.35rem;font-family:'Inter',sans-serif;}
-        .preset-btn:hover{border-color:rgba(74,144,226,0.3);}
-        .preset-btn.active{background:rgba(74,144,226,0.12);border-color:rgba(74,144,226,0.4);color:#4A90E2;}
-        .filter-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:1.25rem;margin-bottom:1rem;}
-        .filter-card h4{font-size:0.9rem;font-weight:600;color:#fff;margin-bottom:0.75rem;}
-        .filter-row{margin-bottom:0.75rem;}
-        .filter-row label{display:block;font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px;font-weight:500;}
-        .filter-row input,.filter-row select{width:100%;padding:0.5rem;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#fff;font-size:0.8rem;font-family:'Inter',sans-serif;outline:none;box-sizing:border-box;}
-        .filter-row input:focus,.filter-row select:focus{border-color:var(--accent-blue);}
-        .filter-row .range-inputs{display:flex;gap:0.5rem;}
-        .filter-row .range-inputs input{width:50%;}
-        .btn-primary{width:100%;padding:0.65rem;background:var(--accent-blue);border:none;border-radius:8px;color:#fff;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;font-size:0.85rem;margin-bottom:0.5rem;}
-        .btn-primary:hover{background:#357abd;}
-        .btn-clear{width:100%;padding:0.55rem;background:transparent;border:1px solid rgba(255,0,85,0.3);border-radius:8px;color:#FF0055;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;font-size:0.8rem;transition:all 0.15s;}
-        .btn-clear:hover{background:rgba(255,0,85,0.08);border-color:#FF0055;}
-        .results-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;}
-        .results-header h2{font-size:1.2rem;font-weight:700;}
-        .results-count{font-size:0.85rem;color:var(--text-secondary);}
-        .screen-table{width:100%;border-collapse:collapse;font-size:0.85rem;}
-        .screen-table th{text-align:left;padding:0.65rem 0.75rem;color:var(--text-secondary);font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid rgba(255,255,255,0.08);}
-        .screen-table td{padding:0.65rem 0.75rem;border-bottom:1px solid rgba(255,255,255,0.04);color:#fff;}
-        .screen-table tr{cursor:pointer;transition:background 0.1s;}
-        .screen-table tr:hover{background:rgba(255,255,255,0.03);}
-        .page-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
-        .page-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:2rem;}
-        .text-green{color:#00E676;}.text-red{color:#FF0055;}
-        .badge{font-size:0.7rem;padding:2px 8px;border-radius:12px;font-weight:600;}
-        .badge-green{background:rgba(0,230,118,0.15);color:#00E676;}
-        @media(max-width:768px){.screen-layout{flex-direction:column;}.screen-sidebar{width:100%;}}
+        :root { --sidebar-w: 270px; }
+        .screen-layout { display: flex; gap: 1.25rem; align-items: flex-start; }
+        .screen-sidebar { width: var(--sidebar-w); flex-shrink: 0; position: sticky; top: 5rem; max-height: calc(100vh - 6rem); overflow-y: auto; padding-right: 4px; }
+        .screen-sidebar::-webkit-scrollbar { width: 4px; }
+        .screen-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+        .screen-main { flex: 1; min-width: 0; }
+
+        /* Presets */
+        .preset-section { margin-bottom: 1.25rem; }
+        .preset-section h3 { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 0.5rem; padding: 0 0.25rem; }
+        .preset-btn { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.6rem 0.85rem; background: transparent; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; color: #c4c4c8; text-align: left; font-size: 0.83rem; font-weight: 500; cursor: pointer; transition: all 0.15s; margin-bottom: 0.3rem; font-family: 'Inter', sans-serif; }
+        .preset-btn:hover { border-color: rgba(74,144,226,0.25); color: #fff; background: rgba(255,255,255,0.03); }
+        .preset-btn.active { background: rgba(74,144,226,0.1); border-color: rgba(74,144,226,0.4); color: #4A90E2; }
+        .preset-icon { font-size: 0.95rem; flex-shrink: 0; }
+
+        /* Filter card */
+        .filter-card { background: #111; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 1.1rem; margin-bottom: 0.75rem; }
+        .filter-card-title { font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.85rem; }
+        .filter-row { margin-bottom: 0.65rem; }
+        .filter-row label { display: block; font-size: 0.73rem; color: #888; margin-bottom: 4px; font-weight: 500; }
+        .filter-row input, .filter-row select {
+            width: 100%; padding: 0.45rem 0.6rem; background: #1a1a1a; border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px; color: #fff; font-size: 0.8rem; font-family: 'Inter', sans-serif;
+            outline: none; box-sizing: border-box; transition: border-color 0.15s;
+        }
+        .filter-row input:focus, .filter-row select:focus { border-color: rgba(74,144,226,0.5); }
+        .filter-row select option { background: #1a1a1a; }
+        .range-row { display: flex; gap: 0.4rem; }
+        .range-row input { width: 50%; }
+
+        /* Buttons */
+        .btn-apply { width: 100%; padding: 0.6rem; background: var(--accent-blue); border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; font-size: 0.83rem; margin-bottom: 0.4rem; transition: background 0.15s; }
+        .btn-apply:hover { background: #357abd; }
+        .btn-clear { width: 100%; padding: 0.5rem; background: transparent; border: 1px solid rgba(242,54,69,0.3); border-radius: 8px; color: #f23645; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; font-size: 0.78rem; transition: all 0.15s; display: none; }
+        .btn-clear:hover { background: rgba(242,54,69,0.08); border-color: #f23645; }
+
+        /* Filter chips */
+        .chips-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; min-height: 0; }
+        .chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px 3px 10px; background: rgba(74,144,226,0.1); border: 1px solid rgba(74,144,226,0.3); border-radius: 20px; font-size: 0.72rem; color: #4A90E2; font-weight: 600; }
+        .chip-remove { cursor: pointer; opacity: 0.7; margin-left: 2px; font-size: 0.8rem; line-height: 1; }
+        .chip-remove:hover { opacity: 1; }
+
+        /* Results header */
+        .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem; }
+        .results-header h2 { font-size: 1.1rem; font-weight: 700; }
+        .results-meta { display: flex; align-items: center; gap: 1rem; }
+        .results-count { font-size: 0.82rem; color: var(--text-secondary); }
+        .refresh-btn { background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: var(--text-secondary); font-size: 0.75rem; padding: 4px 10px; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; }
+        .refresh-btn:hover { border-color: rgba(74,144,226,0.3); color: #4A90E2; }
+
+        /* Table */
+        .screen-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+        .screen-table th { text-align: left; padding: 0.6rem 0.75rem; color: #888; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.07); white-space: nowrap; }
+        .screen-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); color: #ddd; white-space: nowrap; }
+        .screen-table tr.data-row { cursor: pointer; transition: background 0.1s; }
+        .screen-table tr.data-row:hover { background: rgba(255,255,255,0.03); }
+        .screen-table tr.data-row:hover td:first-child { color: #4A90E2; }
+        .th-sort { cursor: pointer; user-select: none; transition: color 0.15s; }
+        .th-sort:hover { color: #fff; }
+        .th-sort.asc::after { content: ' ▲'; font-size: 0.6rem; color: #4A90E2; }
+        .th-sort.desc::after { content: ' ▼'; font-size: 0.6rem; color: #4A90E2; }
+        .text-green { color: #089981; }
+        .text-red { color: #f23645; }
+
+        /* RSI badge */
+        .rsi-ob { color: #f23645; font-weight: 700; }
+        .rsi-os { color: #089981; font-weight: 700; }
+
+        /* Sector badge */
+        .sector-tag { display: inline-block; padding: 1px 7px; background: rgba(255,255,255,0.05); border-radius: 10px; font-size: 0.7rem; color: #a1a1aa; }
+
+        /* Pagination */
+        .pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.06); }
+        .pg-btn { padding: 5px 14px; background: #111; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #ddd; font-size: 0.8rem; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; }
+        .pg-btn:hover:not(:disabled) { border-color: rgba(74,144,226,0.4); color: #4A90E2; }
+        .pg-btn:disabled { opacity: 0.35; cursor: default; }
+        .pg-info { font-size: 0.8rem; color: var(--text-secondary); }
+
+        /* Spinner */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(74,144,226,0.3); border-top-color: #4A90E2; border-radius: 50%; animation: spin 0.75s linear infinite; }
+
+        /* Page layout */
+        .page-title { font-size: 1.45rem; font-weight: 700; margin-bottom: 0.2rem; }
+        .page-subtitle { color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 1.5rem; }
+
+        @media (max-width: 768px) {
+            .screen-layout { flex-direction: column; }
+            .screen-sidebar { width: 100%; position: static; max-height: none; }
+            .screen-table th:nth-child(6), .screen-table td:nth-child(6),
+            .screen-table th:nth-child(7), .screen-table td:nth-child(7) { display: none; }
+        }
     </style>
     <script src="page-cache.js"></script>
+    <script src="ws.js"></script>
 </head>
 <body style="background-color: #0A0A0B;">
     <div id="nav-root"></div>
     <main class="page-content">
         <h1 class="page-title">Stock Screener</h1>
-        <p class="page-subtitle">Find opportunities with powerful presets and custom filters</p>
+        <p class="page-subtitle">Filter stocks by price, momentum, RSI, volume &amp; sector</p>
+
         <div class="screen-layout">
+            <!-- Sidebar -->
             <aside class="screen-sidebar">
                 <div class="preset-section">
-                    <h3>📋 Preset Scans</h3>
-                    <button class="preset-btn active" onclick="runPreset('all',this)">All Stocks</button>
-                    <button class="preset-btn" onclick="runPreset('breakout',this)">💥 Bullish Breakout</button>
-                    <button class="preset-btn" onclick="runPreset('undervalued',this)">💎 Undervalued</button>
-                    <button class="preset-btn" onclick="runPreset('volume',this)">⚡ Unusual Volume</button>
-                    <button class="preset-btn" onclick="runPreset('momentum',this)">🚀 High Momentum</button>
+                    <h3>Quick Scans</h3>
+                    <button class="preset-btn active" data-preset="all" onclick="runPreset('all',this)">
+                        <span class="preset-icon">📋</span> All Stocks
+                    </button>
+                    <button class="preset-btn" data-preset="breakout" onclick="runPreset('breakout',this)">
+                        <span class="preset-icon">🚀</span> Bullish Breakout
+                    </button>
+                    <button class="preset-btn" data-preset="volume" onclick="runPreset('volume',this)">
+                        <span class="preset-icon">⚡</span> Unusual Volume
+                    </button>
+                    <button class="preset-btn" data-preset="momentum" onclick="runPreset('momentum',this)">
+                        <span class="preset-icon">📈</span> High Momentum
+                    </button>
+                    <button class="preset-btn" data-preset="rsi_os" onclick="runPreset('rsi_os',this)">
+                        <span class="preset-icon">🟢</span> RSI Oversold (&lt;30)
+                    </button>
+                    <button class="preset-btn" data-preset="rsi_ob" onclick="runPreset('rsi_ob',this)">
+                        <span class="preset-icon">🔴</span> RSI Overbought (&gt;70)
+                    </button>
+                    <button class="preset-btn" data-preset="losers" onclick="runPreset('losers',this)">
+                        <span class="preset-icon">📉</span> Top Losers
+                    </button>
                 </div>
-                <div class="filter-card">
-                    <h4>🎯 Custom Filters</h4>
-                    <div class="filter-row"><label>Price Range (₹)</label><div class="range-inputs"><input type="number" id="fPriceMin" placeholder="Min" onchange="applyCustom()"><input type="number" id="fPriceMax" placeholder="Max" onchange="applyCustom()"></div></div>
-                    <div class="filter-row"><label>Change %</label><div class="range-inputs"><input type="number" id="fChgMin" placeholder="Min" onchange="applyCustom()"><input type="number" id="fChgMax" placeholder="Max" onchange="applyCustom()"></div></div>
-                    <div class="filter-row"><label>Volume (× avg)</label><select id="fVolume" onchange="applyCustom()"><option value="">Any</option><option value="1">Above 1x</option><option value="2">Above 2x</option><option value="3">Above 3x</option><option value="5">Above 5x</option></select></div>
 
-                    <button class="btn-primary" onclick="applyCustom()">🔍 Apply Filters</button>
-                    <button class="btn-clear" id="clearBtn" onclick="clearFilters()" style="display:none;">✕ Clear All Filters</button>
+                <div class="filter-card">
+                    <div class="filter-card-title">🔍 Search</div>
+                    <div class="filter-row">
+                        <input type="text" id="fSearch" placeholder="Ticker or company name…" oninput="onSearchInput()">
+                    </div>
+                </div>
+
+                <div class="filter-card">
+                    <div class="filter-card-title">⚙️ Filters</div>
+
+                    <div class="filter-row">
+                        <label>Sector</label>
+                        <select id="fSector" onchange="markCustom()">
+                            <option value="">All Sectors</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-row">
+                        <label>Price (₹)</label>
+                        <div class="range-row">
+                            <input type="number" id="fPriceMin" placeholder="Min" onchange="markCustom()">
+                            <input type="number" id="fPriceMax" placeholder="Max" onchange="markCustom()">
+                        </div>
+                    </div>
+
+                    <div class="filter-row">
+                        <label>Change %</label>
+                        <div class="range-row">
+                            <input type="number" id="fChgMin" placeholder="Min %" onchange="markCustom()">
+                            <input type="number" id="fChgMax" placeholder="Max %" onchange="markCustom()">
+                        </div>
+                    </div>
+
+                    <div class="filter-row">
+                        <label>RSI</label>
+                        <div class="range-row">
+                            <input type="number" id="fRsiMin" placeholder="Min" min="0" max="100" onchange="markCustom()">
+                            <input type="number" id="fRsiMax" placeholder="Max" min="0" max="100" onchange="markCustom()">
+                        </div>
+                    </div>
+
+                    <div class="filter-row">
+                        <label>Volume Ratio (× avg)</label>
+                        <select id="fVolRatio" onchange="markCustom()">
+                            <option value="">Any</option>
+                            <option value="1">Above 1×</option>
+                            <option value="1.5">Above 1.5×</option>
+                            <option value="2">Above 2×</option>
+                            <option value="3">Above 3×</option>
+                            <option value="5">Above 5×</option>
+                        </select>
+                    </div>
+
+                    <button class="btn-apply" onclick="applyFilters()">Apply Filters</button>
+                    <button class="btn-clear" id="btnClear" onclick="clearAll()">✕ Clear All</button>
                 </div>
             </aside>
+
+            <!-- Main content -->
             <div class="screen-main">
+                <div class="chips-row" id="chipsRow"></div>
+
                 <div class="results-header">
                     <h2 id="resultsTitle">All Stocks</h2>
-                    <span class="results-count" id="resultsCount">-- results</span>
+                    <div class="results-meta">
+                        <span class="results-count" id="resultsCount">—</span>
+                        <button class="refresh-btn" onclick="reload()">↻ Refresh</button>
+                    </div>
                 </div>
+
                 <div style="overflow-x:auto;">
-                    <table class="screen-table" id="resultsTable">
-                        <thead><tr><th>#</th><th>Ticker</th><th>Price</th><th>Change</th><th>% Change</th><th>RSI</th><th>Vol Ratio</th><th>Volume</th><th>Sector</th></tr></thead>
-                        <tbody id="resultsBody"><tr><td colspan="9" style="text-align:center;color:var(--text-secondary);">Loading...</td></tr></tbody>
+                    <table class="screen-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th class="th-sort" data-col="ticker" onclick="setSort('ticker')">Ticker</th>
+                                <th class="th-sort" data-col="price" onclick="setSort('price')">Price</th>
+                                <th class="th-sort" data-col="change" onclick="setSort('change')">Change</th>
+                                <th class="th-sort desc" data-col="change_pct" onclick="setSort('change_pct')">Chg %</th>
+                                <th class="th-sort" data-col="rsi" onclick="setSort('rsi')">RSI</th>
+                                <th class="th-sort" data-col="vol_ratio" onclick="setSort('vol_ratio')">Vol×</th>
+                                <th class="th-sort" data-col="volume" onclick="setSort('volume')">Volume</th>
+                                <th class="th-sort" data-col="sector" onclick="setSort('sector')">Sector</th>
+                            </tr>
+                        </thead>
+                        <tbody id="resultsBody">
+                            <tr><td colspan="9" style="text-align:center;padding:3rem;color:var(--text-secondary);">
+                                <div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading…</div>
+                            </td></tr>
+                        </tbody>
                     </table>
+                </div>
+
+                <div class="pagination" id="paginationRow" style="display:none;">
+                    <button class="pg-btn" id="pgPrev" onclick="changePage(-1)">← Prev</button>
+                    <span class="pg-info" id="pgInfo"></span>
+                    <button class="pg-btn" id="pgNext" onclick="changePage(1)">Next →</button>
                 </div>
             </div>
         </div>
     </main>
+
     <script>
-        (function(){
-            var allData = []; var currentPreset = 'all';
+    (function () {
+        var PAGE_SIZE = 100;
+        var currentPage = 1;
+        var totalResults = 0;
+        var sortCol = 'change_pct';
+        var sortAsc = false;
+        var currentPreset = 'all';
+        var sectorsLoaded = false;
+        var searchTimer = null;
+        var refreshTimer = null;
 
-            function getRSIBadge(rsi){ if(rsi>=70)return '<span style="color:#FF0055;font-weight:600;">'+rsi.toFixed(1)+'</span>'; if(rsi<=30)return '<span style="color:#00E676;font-weight:600;">'+rsi.toFixed(1)+'</span>'; return rsi.toFixed(1); }
+        // Preset definitions: { title, params }
+        var PRESETS = {
+            all:       { title: 'All Stocks',           params: {} },
+            breakout:  { title: '🚀 Bullish Breakout',  params: { change_min: 1.5, vol_ratio_min: 1.5 } },
+            volume:    { title: '⚡ Unusual Volume',     params: { vol_ratio_min: 2 } },
+            momentum:  { title: '📈 High Momentum',     params: { change_min: 0.5, vol_ratio_min: 1 } },
+            rsi_os:    { title: '🟢 RSI Oversold',      params: { rsi_max: 30 } },
+            rsi_ob:    { title: '🔴 RSI Overbought',    params: { rsi_min: 70 } },
+            losers:    { title: '📉 Top Losers',        params: { change_max: -1 } },
+        };
 
-            function fmtVol(v){
-              if(!v||v===0)return '--';
-              if(v>=1e8)return (v/1e8).toFixed(2)+' Cr';
-              if(v>=1e6)return (v/1e6).toFixed(2)+' M';
-              if(v>=1e3)return (v/1e3).toFixed(1)+' K';
-              return String(v);
-            }
+        // ── Filter state ──────────────────────────────────────────────────────
+        function getFilterParams() {
+            var p = {};
+            var sector   = document.getElementById('fSector').value;
+            var prMin    = document.getElementById('fPriceMin').value;
+            var prMax    = document.getElementById('fPriceMax').value;
+            var chgMin   = document.getElementById('fChgMin').value;
+            var chgMax   = document.getElementById('fChgMax').value;
+            var rsiMin   = document.getElementById('fRsiMin').value;
+            var rsiMax   = document.getElementById('fRsiMax').value;
+            var volRatio = document.getElementById('fVolRatio').value;
+            if (sector)   p.sector = sector;
+            if (prMin)    p.price_min = parseFloat(prMin);
+            if (prMax)    p.price_max = parseFloat(prMax);
+            if (chgMin)   p.change_min = parseFloat(chgMin);
+            if (chgMax)   p.change_max = parseFloat(chgMax);
+            if (rsiMin)   p.rsi_min = parseFloat(rsiMin);
+            if (rsiMax)   p.rsi_max = parseFloat(rsiMax);
+            if (volRatio) p.vol_ratio_min = parseFloat(volRatio);
+            return p;
+        }
 
-            function renderResults(data,title){
-                document.getElementById('resultsTitle').textContent = title||'Results';
-                document.getElementById('resultsCount').textContent = data.length+' results';
-                var body = document.getElementById('resultsBody');
-                if(!data.length){ body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">No stocks match your criteria</td></tr>'; return; }
-                body.innerHTML = data.slice(0,100).map(function(s,i){
-                    var cls=s.change>=0?'text-green':'text-red'; var sign=s.change>=0?'+':'';
-                    var volRatio = s.vol_ratio != null ? s.vol_ratio.toFixed(1)+'x' : (s.avg_volume > 0 ? (s.volume/s.avg_volume).toFixed(1)+'x' : '--');
-                    var rsiDisplay = s.rsi != null ? getRSIBadge(s.rsi) : '--';
-                    var srcBadge = s.source==='historical'?'<span title="Last close (market closed)" style="font-size:0.65rem;color:#888;margin-left:4px;">📅</span>':'';
-                    return '<tr onclick="window.location.href=\'stock.html?ticker='+s.ticker+'\'"><td>'+(i+1)+'</td><td style="font-weight:600;">'+s.ticker+srcBadge+'</td><td style="font-family:Roboto Mono,monospace;">₹'+s.price.toFixed(2)+'</td><td class="'+cls+'" style="font-family:Roboto Mono,monospace;">'+sign+s.change.toFixed(2)+'</td><td class="'+cls+'" style="font-family:Roboto Mono,monospace;">'+sign+s.change_pct.toFixed(2)+'%</td><td style="font-family:Roboto Mono,monospace;font-size:0.8rem;">'+rsiDisplay+'</td><td style="font-family:Roboto Mono,monospace;font-size:0.8rem;color:var(--text-secondary);">'+volRatio+'</td><td style="font-family:Roboto Mono,monospace;font-size:0.8rem;">'+fmtVol(s.volume)+'</td><td style="font-size:0.8rem;color:var(--text-secondary);">'+s.sector+'</td></tr>';
-                }).join('');
-            }
+        function hasFilters(params) {
+            return Object.keys(params).length > 0;
+        }
 
-            function getFiltered(){
-                var data = allData.slice();
-                var prMin = parseFloat(document.getElementById('fPriceMin').value); var prMax = parseFloat(document.getElementById('fPriceMax').value);
-                var chgMin = parseFloat(document.getElementById('fChgMin').value); var chgMax = parseFloat(document.getElementById('fChgMax').value);
-                var volOpt = document.getElementById('fVolume').value;
-                if(!isNaN(prMin)&&prMin) data=data.filter(function(s){return s.price>=prMin;}); if(!isNaN(prMax)&&prMax) data=data.filter(function(s){return s.price<=prMax;});
-                if(!isNaN(chgMin)&&chgMin!=='') data=data.filter(function(s){return s.change_pct>=chgMin;}); if(!isNaN(chgMax)&&chgMax!=='') data=data.filter(function(s){return s.change_pct<=chgMax;});
-                if(volOpt) data=data.filter(function(s){var r=s.avg_volume>0?s.volume/s.avg_volume:0;return r>=parseFloat(volOpt);});
-                return data;
-            }
-
-            function setLoading(loading) {
-                var body = document.getElementById('resultsBody');
-                if(loading) {
-                    document.getElementById('resultsCount').textContent = 'Loading…';
-                    body.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">' +
-                        '<div style="display:inline-flex;align-items:center;gap:0.75rem;">' +
-                        '<div style="width:18px;height:18px;border:2px solid rgba(74,144,226,0.3);border-top-color:#4A90E2;border-radius:50%;animation:screenerSpin 0.8s linear infinite;"></div>' +
-                        'Loading stock data…</div></td></tr>';
-                    if(!document.getElementById('screenerSpinStyle')){
-                        var s=document.createElement('style');s.id='screenerSpinStyle';
-                        s.textContent='@keyframes screenerSpin{to{transform:rotate(360deg)}}';
-                        document.head.appendChild(s);
-                    }
-                }
-            }
-
-            async function fetchScreenerData(){
-                setLoading(true);
-                try{
-                    var res=await fetch('/api/screener');
-                    if(!res.ok) throw new Error('HTTP '+res.status);
-                    var json=await res.json();
-                    if(!Array.isArray(json)||json.length===0){
-                        document.getElementById('resultsBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">No data received from backend. Make sure the backend server is running and at least one stock has price data.</td></tr>';
-                        document.getElementById('resultsCount').textContent='0 results';
-                        return;
-                    }
-                    allData=json;
-                    // Re-apply current preset/filters after refresh
-                    if(currentPreset==='all') renderResults(allData,'All Stocks');
-                    else if(currentPreset==='custom') renderResults(getFiltered(),'Custom Filters');
-                    else runPreset(currentPreset, document.querySelector('.preset-btn.active'));
-                }catch(e){
-                    document.getElementById('resultsBody').innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Failed to load screener: '+e.message+'. Ensure the backend server is running.</td></tr>';
-                    document.getElementById('resultsCount').textContent='Error';
-                }
-            }
-
-            window.runPreset = function(name,btn){
-                currentPreset=name;
-                document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.remove('active');}); if(btn)btn.classList.add('active');
-                var data = allData.slice(); var title='';
-                if(name==='all'){ title='All Stocks'; data=allData.slice(); }
-                else if(name==='breakout'){ data=data.filter(function(s){return s.change_pct>1&&s.volume>100000;}); data.sort(function(a,b){return b.change_pct-a.change_pct;}); title='💥 Bullish Breakout'; }
-                else if(name==='undervalued'){ data=data.filter(function(s){return s.change_pct<-1&&s.price>0;}); data.sort(function(a,b){return a.change_pct-b.change_pct;}); title='💎 Undervalued'; }
-                else if(name==='volume'){ data=data.filter(function(s){return s.avg_volume>0&&(s.volume/s.avg_volume)>2;}); data.sort(function(a,b){return (b.volume/(b.avg_volume||1))-(a.volume/(a.avg_volume||1));}); title='⚡ Unusual Volume'; }
-                else if(name==='momentum'){ data=data.filter(function(s){return s.change_pct>0.5&&s.volume>100000;}); data.sort(function(a,b){return b.change_pct-a.change_pct;}); title='🚀 High Momentum'; }
-                renderResults(data,title);
-            };
-
-            window.applyCustom = function(){
-                if(currentPreset!=='custom'){
-                    document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.remove('active');});
-                    currentPreset='custom';
-                }
-                var clearBtn = document.getElementById('clearBtn');
-                if(clearBtn) clearBtn.style.display = 'block';
-                renderResults(getFiltered(),'Custom Filters');
-            };
-
-            window.clearFilters = function(){
-                ['fPriceMin','fPriceMax','fChgMin','fChgMax'].forEach(function(id){
-                    var el = document.getElementById(id); if(el) el.value = '';
-                });
-                ['fVolume'].forEach(function(id){
-                    var el = document.getElementById(id); if(el) el.selectedIndex = 0;
-                });
-                var clearBtn = document.getElementById('clearBtn');
-                if(clearBtn) clearBtn.style.display = 'none';
-                currentPreset='all';
-                document.querySelectorAll('.preset-btn').forEach(function(b){b.classList.remove('active');});
-                var first=document.querySelector('.preset-btn'); if(first)first.classList.add('active');
-                renderResults(allData,'All Stocks');
-            };
-
-            fetchScreenerData();
-
-            // Refresh every 60s (was 15s — too aggressive for the backend)
-            var refreshTimer=setInterval(function(){
-                if(!document.hidden) fetchScreenerData();
-            },60000);
-
-            document.addEventListener('visibilitychange',function(){
-                if(!document.hidden&&!refreshTimer){refreshTimer=setInterval(function(){fetchScreenerData();},60000);}
-                if(document.hidden&&refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}
+        // ── Query builder ────────────────────────────────────────────────────
+        function buildUrl(params, page) {
+            var search = document.getElementById('fSearch').value.trim();
+            var qs = [];
+            if (search) qs.push('search=' + encodeURIComponent(search));
+            Object.keys(params).forEach(function (k) {
+                qs.push(k + '=' + encodeURIComponent(params[k]));
             });
-        })();
+            qs.push('page=' + (page || 1));
+            qs.push('page_size=' + PAGE_SIZE);
+            return '/api/screener' + (qs.length ? '?' + qs.join('&') : '');
+        }
+
+        // ── Fetch + render ────────────────────────────────────────────────────
+        async function fetch_and_render(params, title, page) {
+            setLoading();
+            try {
+                var url = buildUrl(params, page || 1);
+                var res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                var json = await res.json();
+
+                // Support both old list format and new paginated format
+                var data, total, pg, ps;
+                if (Array.isArray(json)) {
+                    data = json; total = json.length; pg = 1; ps = json.length;
+                } else {
+                    data = json.data || []; total = json.total || 0;
+                    pg = json.page || 1; ps = json.page_size || PAGE_SIZE;
+                }
+
+                currentPage = pg;
+                totalResults = total;
+
+                // Populate sector dropdown once
+                if (!sectorsLoaded && data.length) {
+                    populateSectors(data);
+                    sectorsLoaded = true;
+                }
+
+                // Client-side sort (server returns by abs change desc; user may re-sort)
+                var sorted = clientSort(data);
+                renderTable(sorted, title, (pg - 1) * ps);
+                renderPagination(total, pg, ps);
+                renderChips(params);
+                document.getElementById('btnClear').style.display = hasFilters(params) ? 'block' : 'none';
+            } catch (e) {
+                document.getElementById('resultsBody').innerHTML =
+                    '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Failed: ' + e.message + '</td></tr>';
+                document.getElementById('resultsCount').textContent = 'Error';
+            }
+        }
+
+        function populateSectors(data) {
+            var sectors = {};
+            data.forEach(function (s) { if (s.sector && s.sector !== 'Unknown') sectors[s.sector] = true; });
+            var sel = document.getElementById('fSector');
+            Object.keys(sectors).sort().forEach(function (sec) {
+                var opt = document.createElement('option');
+                opt.value = sec; opt.textContent = sec;
+                sel.appendChild(opt);
+            });
+        }
+
+        function setLoading() {
+            document.getElementById('resultsCount').textContent = 'Loading…';
+            document.getElementById('resultsBody').innerHTML =
+                '<tr><td colspan="9" style="text-align:center;padding:2.5rem;color:var(--text-secondary);">' +
+                '<div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading…</div>' +
+                '</td></tr>';
+            document.getElementById('paginationRow').style.display = 'none';
+        }
+
+        // ── Sorting ───────────────────────────────────────────────────────────
+        function clientSort(data) {
+            return data.slice().sort(function (a, b) {
+                var va = a[sortCol], vb = b[sortCol];
+                if (va == null && vb == null) return 0;
+                if (va == null) return sortAsc ? 1 : -1;
+                if (vb == null) return sortAsc ? -1 : 1;
+                if (typeof va === 'string') return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+                return sortAsc ? va - vb : vb - va;
+            });
+        }
+
+        window.setSort = function (col) {
+            if (sortCol === col) { sortAsc = !sortAsc; }
+            else { sortCol = col; sortAsc = (col === 'ticker' || col === 'sector'); }
+            document.querySelectorAll('.th-sort').forEach(function (th) {
+                th.classList.remove('asc', 'desc');
+            });
+            var th = document.querySelector('.th-sort[data-col="' + col + '"]');
+            if (th) th.classList.add(sortAsc ? 'asc' : 'desc');
+            // Re-render current page with new sort
+            applyFilters();
+        };
+
+        // ── Table render ──────────────────────────────────────────────────────
+        function fmtVol(v) {
+            if (!v) return '--';
+            if (v >= 1e7) return (v / 1e7).toFixed(2) + ' Cr';
+            if (v >= 1e5) return (v / 1e5).toFixed(2) + ' L';
+            if (v >= 1e3) return (v / 1e3).toFixed(1) + ' K';
+            return String(v);
+        }
+
+        function rsiHtml(rsi) {
+            if (rsi == null) return '<span style="color:#555;">—</span>';
+            var v = rsi.toFixed(1);
+            if (rsi >= 70) return '<span class="rsi-ob">' + v + '</span>';
+            if (rsi <= 30) return '<span class="rsi-os">' + v + '</span>';
+            return '<span style="color:#c4c4c8;">' + v + '</span>';
+        }
+
+        function renderTable(data, title, offset) {
+            document.getElementById('resultsTitle').innerHTML = title || 'Results';
+            document.getElementById('resultsCount').textContent = totalResults + ' result' + (totalResults !== 1 ? 's' : '');
+            var body = document.getElementById('resultsBody');
+            if (!data.length) {
+                body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2.5rem;">No stocks match your criteria</td></tr>';
+                return;
+            }
+            body.innerHTML = data.map(function (s, i) {
+                var cls  = s.change >= 0 ? 'text-green' : 'text-red';
+                var sign = s.change >= 0 ? '+' : '';
+                var vr   = s.vol_ratio != null ? s.vol_ratio.toFixed(1) + '×' : '—';
+                var sec  = s.sector && s.sector !== 'Unknown' ? '<span class="sector-tag">' + s.sector + '</span>' : '<span style="color:#444;">—</span>';
+                return '<tr class="data-row" onclick="window.location.href=\'overview.html?ticker=' + s.ticker + '\'">' +
+                    '<td style="color:#555;font-size:0.75rem;">' + (offset + i + 1) + '</td>' +
+                    '<td><span style="font-weight:600;color:#e0e0e0;">' + s.ticker + '</span>' +
+                        (s.name && s.name !== s.ticker ? '<div style="font-size:0.7rem;color:#666;margin-top:1px;max-width:160px;overflow:hidden;text-overflow:ellipsis;">' + s.name + '</div>' : '') +
+                    '</td>' +
+                    '<td style="font-family:Roboto Mono,monospace;">₹' + s.price.toFixed(2) + '</td>' +
+                    '<td class="' + cls + '" style="font-family:Roboto Mono,monospace;">' + sign + s.change.toFixed(2) + '</td>' +
+                    '<td class="' + cls + '" style="font-family:Roboto Mono,monospace;font-weight:600;">' + sign + s.change_pct.toFixed(2) + '%</td>' +
+                    '<td style="font-family:Roboto Mono,monospace;">' + rsiHtml(s.rsi) + '</td>' +
+                    '<td style="font-family:Roboto Mono,monospace;color:#a1a1aa;">' + vr + '</td>' +
+                    '<td style="font-family:Roboto Mono,monospace;font-size:0.8rem;color:#a1a1aa;">' + fmtVol(s.volume) + '</td>' +
+                    '<td>' + sec + '</td>' +
+                    '</tr>';
+            }).join('');
+        }
+
+        // ── Pagination ────────────────────────────────────────────────────────
+        function renderPagination(total, page, ps) {
+            var row = document.getElementById('paginationRow');
+            var totalPages = Math.ceil(total / ps);
+            if (totalPages <= 1) { row.style.display = 'none'; return; }
+            row.style.display = 'flex';
+            document.getElementById('pgPrev').disabled = (page <= 1);
+            document.getElementById('pgNext').disabled = (page >= totalPages);
+            document.getElementById('pgInfo').textContent = 'Page ' + page + ' of ' + totalPages;
+        }
+
+        window.changePage = function (dir) {
+            var newPage = currentPage + dir;
+            var params = currentPreset !== 'custom' ? (PRESETS[currentPreset] || {}).params || {} : getFilterParams();
+            fetch_and_render(params, document.getElementById('resultsTitle').innerHTML, newPage);
+        };
+
+        // ── Filter chips ──────────────────────────────────────────────────────
+        var CHIP_LABELS = {
+            sector: function(v) { return 'Sector: ' + v; },
+            price_min: function(v) { return 'Price ≥ ₹' + v; },
+            price_max: function(v) { return 'Price ≤ ₹' + v; },
+            change_min: function(v) { return 'Chg% ≥ ' + v + '%'; },
+            change_max: function(v) { return 'Chg% ≤ ' + v + '%'; },
+            rsi_min: function(v) { return 'RSI ≥ ' + v; },
+            rsi_max: function(v) { return 'RSI ≤ ' + v; },
+            vol_ratio_min: function(v) { return 'Vol ≥ ' + v + '×'; },
+        };
+        var CHIP_CLEAR = {
+            sector: 'fSector', price_min: 'fPriceMin', price_max: 'fPriceMax',
+            change_min: 'fChgMin', change_max: 'fChgMax',
+            rsi_min: 'fRsiMin', rsi_max: 'fRsiMax', vol_ratio_min: 'fVolRatio',
+        };
+
+        function renderChips(params) {
+            var row = document.getElementById('chipsRow');
+            var html = '';
+            Object.keys(params).forEach(function (k) {
+                var label = CHIP_LABELS[k] ? CHIP_LABELS[k](params[k]) : k + ': ' + params[k];
+                html += '<span class="chip">' + label +
+                    '<span class="chip-remove" onclick="clearChip(\'' + k + '\')">✕</span></span>';
+            });
+            row.innerHTML = html;
+        }
+
+        window.clearChip = function (key) {
+            var elId = CHIP_CLEAR[key];
+            if (elId) {
+                var el = document.getElementById(elId);
+                if (el) { el.tagName === 'SELECT' ? (el.selectedIndex = 0) : (el.value = ''); }
+            }
+            markCustom();
+            applyFilters();
+        };
+
+        // ── Preset & filter actions ───────────────────────────────────────────
+        window.runPreset = function (name, btn) {
+            currentPreset = name;
+            document.querySelectorAll('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
+            if (btn) btn.classList.add('active');
+            // Clear all filter inputs
+            ['fSector','fVolRatio'].forEach(function(id){
+                var el = document.getElementById(id); if(el) el.selectedIndex = 0;
+            });
+            ['fPriceMin','fPriceMax','fChgMin','fChgMax','fRsiMin','fRsiMax'].forEach(function(id){
+                var el = document.getElementById(id); if(el) el.value = '';
+            });
+            // Apply preset params to inputs
+            var def = PRESETS[name] || {};
+            var pp = def.params || {};
+            if (pp.change_min !== undefined) document.getElementById('fChgMin').value = pp.change_min;
+            if (pp.change_max !== undefined) document.getElementById('fChgMax').value = pp.change_max;
+            if (pp.rsi_min !== undefined)    document.getElementById('fRsiMin').value = pp.rsi_min;
+            if (pp.rsi_max !== undefined)    document.getElementById('fRsiMax').value = pp.rsi_max;
+            if (pp.vol_ratio_min !== undefined) {
+                var sel = document.getElementById('fVolRatio');
+                for (var i = 0; i < sel.options.length; i++) {
+                    if (parseFloat(sel.options[i].value) === pp.vol_ratio_min) { sel.selectedIndex = i; break; }
+                }
+            }
+            document.getElementById('btnClear').style.display = Object.keys(pp).length ? 'block' : 'none';
+            currentPage = 1;
+            fetch_and_render(pp, def.title, 1);
+        };
+
+        window.applyFilters = function () {
+            currentPage = 1;
+            var params = getFilterParams();
+            var title = hasFilters(params) ? 'Filtered Results' : 'All Stocks';
+            fetch_and_render(params, title, 1);
+        };
+
+        window.markCustom = function () {
+            currentPreset = 'custom';
+            document.querySelectorAll('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
+        };
+
+        window.clearAll = function () {
+            ['fSector','fVolRatio'].forEach(function(id){ var el=document.getElementById(id); if(el) el.selectedIndex=0; });
+            ['fPriceMin','fPriceMax','fChgMin','fChgMax','fRsiMin','fRsiMax','fSearch'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+            document.getElementById('btnClear').style.display = 'none';
+            document.getElementById('chipsRow').innerHTML = '';
+            currentPage = 1;
+            currentPreset = 'all';
+            document.querySelector('.preset-btn[data-preset="all"]').classList.add('active');
+            fetch_and_render({}, 'All Stocks', 1);
+        };
+
+        window.onSearchInput = function () {
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(function () {
+                markCustom();
+                applyFilters();
+            }, 350);
+        };
+
+        window.reload = function () {
+            // Force refresh by clearing cache timestamp via re-fetch
+            var params = currentPreset !== 'custom' ? (PRESETS[currentPreset] || {}).params || {} : getFilterParams();
+            fetch_and_render(params, document.getElementById('resultsTitle').innerHTML, currentPage);
+        };
+
+        // ── Init ──────────────────────────────────────────────────────────────
+        // Mark initial sort column
+        document.querySelector('.th-sort[data-col="change_pct"]').classList.add('desc');
+
+        fetch_and_render({}, 'All Stocks', 1);
+
+        refreshTimer = setInterval(function () {
+            if (!document.hidden) {
+                var params = currentPreset !== 'custom' ? (PRESETS[currentPreset] || {}).params || {} : getFilterParams();
+                fetch_and_render(params, document.getElementById('resultsTitle').innerHTML, currentPage);
+            }
+        }, 60000);
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden && refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+            if (!document.hidden && !refreshTimer) {
+                refreshTimer = setInterval(function () {
+                    var params = currentPreset !== 'custom' ? (PRESETS[currentPreset] || {}).params || {} : getFilterParams();
+                    fetch_and_render(params, document.getElementById('resultsTitle').innerHTML, currentPage);
+                }, 60000);
+            }
+        });
+    })();
     </script>
 
     <script src="stocks.js"></script>
-    <script src="nav.js?v=3"></script>
+    <script src="nav.js?v=8"></script>
 </body>
 </html>
-

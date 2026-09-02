@@ -16,9 +16,12 @@ Key rules:
 
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from config.timeframe_registry import TIMEFRAME_REGISTRY
+
+# IST offset — matches database.get_ist_now_aware(); defined here to avoid circular import
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class CacheEntry:
@@ -113,7 +116,7 @@ class CandleCache:
         return None
 
     def _default_ttl(self, timeframe: str) -> int:
-        now = datetime.now()
+        now = datetime.now(_IST)  # always IST, server-timezone-independent
         if now.weekday() >= 5:
             return 21600
         t = now.time()

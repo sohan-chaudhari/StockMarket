@@ -1,41 +1,68 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Market - LEVERAGE</title>
   <script src="lightweight-charts.js"></script>
-  <link rel="stylesheet" href="index.css?v=66">
-  <link rel="stylesheet" href="drawings.css?v=3">
-  <link rel="stylesheet" href="nav.css?v=4">
+  <link rel="stylesheet" href="tokens.css?v=2">
+  <link rel="stylesheet" href="index.css?v=82">
+  <link rel="stylesheet" href="nav.css?v=12">
   <link rel="stylesheet" href="loader.css?v=4">
-  <link rel="stylesheet" href="nav.css">
-  <link rel="stylesheet" href="responsive.css?v=1">
+  <link rel="stylesheet" href="responsive.css?v=4">
   <style>
-    .market-stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin:1.5rem 0;}
-    .market-stat-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1.25rem;}
-    .market-stat-card .lbl{font-size:0.75rem;color:#a1a1aa;margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;}
+    /* Header layout &ndash; market.html previously had no flex/positioning rules for this at all
+       (that logic only lived inside stock.html's own page-scoped styles), so header-controls
+       and the ticker-identity row never actually laid out or wrapped correctly at any width. */
+    .sticky-header-container{display:flex;flex-direction:column;gap:10px;padding:12px 15px;background:var(--bg-color);border-bottom:1px solid rgba(255,255,255,0.08);}
+    .header-controls{display:flex;align-items:center;gap:12px;width:100%;flex-wrap:wrap;}
+    .back-btn{color:var(--text-secondary);text-decoration:none;display:flex;align-items:center;gap:6px;font-weight:500;font-size:14px;padding:6px 12px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);transition:all 0.2s;}
+    .back-btn:hover{background:rgba(255,255,255,0.1);color:var(--text-primary);}
+    .header-identity{display:flex;align-items:center;justify-content:space-between;width:100%;flex-wrap:wrap;gap:10px;}
+    .ticker-branding{display:flex;align-items:center;flex-wrap:wrap;gap:12px;}
+
+    .market-stats-grid{display:grid;grid-template-columns:1fr 2fr;gap:1rem;margin:1.5rem 0;}
+    .market-stat-card{background:var(--card-bg);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-md);padding:1.25rem;}
+    .market-stat-card .lbl{font-size:0.75rem;color:var(--text-secondary);margin-bottom:0.4rem;text-transform:uppercase;letter-spacing:0.5px;}
     .market-stat-card .val{font-size:1.2rem;font-weight:600;font-family:'Roboto Mono',monospace;}
-    .market-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;}
-    .market-detail-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:1.5rem;}
-    .market-detail-card h3{font-size:1rem;font-weight:600;margin-bottom:1rem;color:#fff;}
-    .mover-row,.sector-row-d{display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.85rem;}
-    .mover-row:last-child,.sector-row-d:last-child{border-bottom:none;}
-    .sector-bar-w{flex:1;margin:0 0.75rem;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;}
-    .sector-bar-f{height:100%;border-radius:3px;}
-    .loading-place{padding:1rem;text-align:center;color:#a1a1aa;}
-    .text-green{color:#00E676;}.text-red{color:#FF0055;}
-    .range-selector{display:flex;gap:0.35rem;margin-left:15px;}
-    .range-selector button{padding:4px 12px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;background:transparent;color:#a1a1aa;font-size:12px;font-family:'Inter',sans-serif;cursor:pointer;transition:all 0.15s;}
-    .range-selector button:hover{border-color:#4A90E2;color:#fff;}
-    .range-selector button.active{background:#4A90E2;border-color:#4A90E2;color:#fff;}
+    /* Day Range replaces the old Open/High/Low/Volume tiles, which just repeated the
+       O/H/L/Vol numbers already shown in the header row above. This shows the same
+       high/low as a range visual instead &ndash; genuinely new information, not a repeat. */
+    .day-range-bar{display:flex;align-items:center;gap:10px;margin-top:6px;}
+    .day-range-bar .dr-label{font-family:'Roboto Mono',monospace;font-size:0.85rem;color:var(--text-secondary);white-space:nowrap;}
+    .day-range-track{position:relative;flex:1;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--danger),#52525b,var(--success));}
+    .day-range-marker{position:absolute;top:50%;left:50%;width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--card-bg);transform:translate(-50%,-50%);box-shadow:0 0 0 1px rgba(255,255,255,0.25);transition:left 0.3s ease;}
+    .market-detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1.5rem;margin-bottom:2rem;}
+    .market-detail-card{background:var(--card-bg);border:1px solid rgba(255,255,255,0.08);border-radius:var(--radius-md);padding:1.5rem;}
+    .market-detail-card h3{font-size:1rem;font-weight:600;margin-bottom:1rem;color:var(--text-primary);}
+    /* Renamed from .mover-row: that name collided with index.css's own richer .mover-row
+       (used by the dashboard's movers), producing an unintended, un-designed hybrid style. */
+    .mover-row-d{display:flex;align-items:center;justify-content:space-between;padding:0.5rem 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.85rem;}
+    .mover-row-d:last-child{border-bottom:none;}
+    .loading-place{padding:1rem;text-align:center;color:var(--text-secondary);}
+    .text-green{color:var(--success);}.text-red{color:var(--danger);}
+    /* Range dropdown replaces the old 11-button row: that wrapped to 2-3 lines on mobile
+       and each button was ~20-24px tall, under the ~40-44px touch-target convention used
+       elsewhere in the app (chart toolbar, stock.html header buttons). */
+    .range-dropdown{position:relative;display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:8px 14px;border:1px solid rgba(255,255,255,0.15);border-radius:var(--radius-sm);background:transparent;color:var(--text-primary);font-size:13px;font-weight:600;font-family:var(--font-ui);cursor:pointer;transition:all 0.15s;}
+    .range-dropdown:hover{border-color:var(--accent-blue);}
+    .range-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:140px;background:var(--card-bg);border:1px solid rgba(255,255,255,0.12);border-radius:var(--radius-md);box-shadow:0 8px 24px rgba(0,0,0,0.5);z-index:1000;display:none;overflow:hidden;}
+    .range-menu.visible{display:block;}
+    .range-item{min-height:40px;display:flex;align-items:center;padding:0 16px;font-size:13px;color:var(--text-secondary);cursor:pointer;transition:background 0.15s,color 0.15s;}
+    .range-item:hover{background:rgba(255,255,255,0.06);color:var(--text-primary);}
+    .range-item.active{background:var(--accent-blue);color:#fff;}
+    /* #chart-container had no height anywhere in the cascade &ndash; it relied entirely on the
+       ResizeObserver in the inline script firing before layout, which is unreliable: measured
+       it collapsing to 0px in one load and 30px in another. An explicit height makes the chart
+       always render at a real, usable size regardless of that timing. */
+    #chart-container{height:500px;}
     @media(max-width:768px){
       .market-stats-grid{grid-template-columns:repeat(2,1fr);}
       .market-detail-grid{grid-template-columns:1fr;}
-      .range-selector{margin-left:0;margin-top:8px;}
+      .header-identity{flex-direction:column;align-items:flex-start;}
+      #chart-container{height:350px;}
     }
-  /* Hide duplicate logo when nav-root is present (nav.js injects its own logo) */
-  #nav-root ~ .container .sticky-header-container .header-controls > .logo-container { display: none; }
   </style>
     <script src="page-cache.js"></script>
 </head>
@@ -44,75 +71,97 @@
   <div class="container">
     <div class="sticky-header-container">
       <div class="header-controls">
-        <a href="home.html" class="logo-container">
-          <img src="logo.jpeg" alt="Logo" class="logo-icon">
-          <div class="brand-image-wrapper">
-            <img src="leverage_logo.jpg" alt="LEVERAGE" class="brand-image">
-          </div>
+        <a href="home.html" class="back-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          Back
         </a>
-        <div class="range-selector" id="rangeButtons">
-          <button onclick="loadData('5m')">5m</button>
-          <button onclick="loadData('15m')">15m</button>
-          <button onclick="loadData('30m')">30m</button>
-          <button onclick="loadData('1h')">1H</button>
-          <button onclick="loadData('1D')">1D</button>
-          <button onclick="loadData('1W')">1W</button>
-          <button onclick="loadData('1M')">1M</button>
-          <button onclick="loadData('3M')">3M</button>
-          <button onclick="loadData('6M')">6M</button>
-          <button onclick="loadData('1Y')">1Y</button>
-          <button class="active" onclick="loadData('ALL')">ALL</button>
+        <div class="range-dropdown" id="rangeDropdown" onclick="toggleRangeMenu()">
+          <span id="currentRangeText">ALL</span>
+          <span style="font-size:0.75rem;">&#9660;</span>
+          <div class="range-menu" id="rangeMenu">
+            <div class="range-item" data-range="5m" onclick="event.stopPropagation();selectRange('5m')">5m</div>
+            <div class="range-item" data-range="15m" onclick="event.stopPropagation();selectRange('15m')">15m</div>
+            <div class="range-item" data-range="30m" onclick="event.stopPropagation();selectRange('30m')">30m</div>
+            <div class="range-item" data-range="1h" onclick="event.stopPropagation();selectRange('1h')">1H</div>
+            <div class="range-item" data-range="1D" onclick="event.stopPropagation();selectRange('1D')">1D</div>
+            <div class="range-item" data-range="1W" onclick="event.stopPropagation();selectRange('1W')">1W</div>
+            <div class="range-item" data-range="1M" onclick="event.stopPropagation();selectRange('1M')">1M</div>
+            <div class="range-item" data-range="3M" onclick="event.stopPropagation();selectRange('3M')">3M</div>
+            <div class="range-item" data-range="6M" onclick="event.stopPropagation();selectRange('6M')">6M</div>
+            <div class="range-item" data-range="1Y" onclick="event.stopPropagation();selectRange('1Y')">1Y</div>
+            <div class="range-item active" data-range="ALL" onclick="event.stopPropagation();selectRange('ALL')">ALL</div>
+          </div>
         </div>
       </div>
       <div class="header-identity">
         <div class="ticker-branding">
-          <img id="ticker-logo" class="ticker-logo" src="" alt="" style="display:none;">
           <div class="ticker-text-group">
-            <div style="display:flex;align-items:center;gap:8px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <h1 id="ticker-name">--</h1>
               <span id="ticker-badge" class="stock-badge">--</span>
               <span id="sector-tag" class="sector-tag" style="display:none;font-size:12px;padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.08);color:#b2b5be;border:1px solid rgba(255,255,255,0.1);white-space:nowrap;"></span>
+              <span class="status" id="ws-status" style="font-size:13px;font-weight:600;">&#9679; Live</span>
             </div>
             <div id="ticker-symbol-small">--</div>
           </div>
-          <div style="display:flex;flex-direction:column;margin-left:24px;">
-            <div style="display:flex;align-items:baseline;gap:10px;">
+          <div style="display:flex;flex-direction:column;">
+            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
               <span id="header-price" style="font-size:28px;font-weight:700;font-family:'Roboto Mono',monospace;color:#fff;">--</span>
               <span id="header-change" style="font-size:16px;font-weight:600;">--</span>
             </div>
-            <div style="display:flex;gap:15px;font-family:'Roboto Mono',monospace;font-size:14px;color:#b2b5be;margin-top:4px;">
+            <div style="display:flex;gap:15px;font-family:'Roboto Mono',monospace;font-size:14px;color:#b2b5be;margin-top:4px;flex-wrap:wrap;">
               <span><span style="font-weight:700;">O:</span> <span id="ohlc-open" style="color:#d1d4dc;font-weight:700;">--</span></span>
               <span><span style="font-weight:700;">H:</span> <span id="ohlc-high" style="color:#d1d4dc;font-weight:700;">--</span></span>
               <span><span style="font-weight:700;">L:</span> <span id="ohlc-low" style="color:#d1d4dc;font-weight:700;">--</span></span>
-              <span><span style="font-weight:700;">C:</span> <span id="ohlc-close" style="color:#d1d4dc;font-weight:700;">--</span></span>
+              <span><span style="font-weight:700;">LTP:</span> <span id="ohlc-close" style="color:#d1d4dc;font-weight:700;">--</span></span>
+              <span style="color:#555;margin:0 8px;">|</span>
+              <span><span style="font-weight:700;">Vol:</span> <span id="ohlc-volume" style="color:#d1d4dc;font-weight:700;">--</span></span>
             </div>
           </div>
         </div>
-        <span class="status" id="ws-status">● Live</span>
       </div>
     </div>
     <div id="chart-container" style="position:relative;">
-      <div class="loading" id="loading" style="display:none;">Loading...</div>
-      <div class="error" id="error-msg"></div>
       <div id="chart"></div>
-      <div id="drawing-canvas-container">
-        <canvas id="drawing-canvas"></canvas>
-      </div>
     </div>
     <div class="market-stats-grid">
-      <div class="market-stat-card"><div class="lbl">Open</div><div class="val" id="statOpen">--</div></div>
-      <div class="market-stat-card"><div class="lbl">Day High</div><div class="val" id="statHigh">--</div></div>
-      <div class="market-stat-card"><div class="lbl">Day Low</div><div class="val" id="statLow">--</div></div>
-      <div class="market-stat-card"><div class="lbl">Volume</div><div class="val" id="statVolume">--</div></div>
+      <div class="market-stat-card"><div class="lbl">Prev Close</div><div class="val" id="statPrevClose">--</div></div>
+      <div class="market-stat-card">
+        <div class="lbl">Day Range</div>
+        <div class="day-range-bar">
+          <span class="dr-label" id="dayRangeLow">--</span>
+          <div class="day-range-track"><div class="day-range-marker" id="dayRangeMarker"></div></div>
+          <span class="dr-label" id="dayRangeHigh">--</span>
+        </div>
+      </div>
     </div>
     <div class="market-detail-grid">
       <div class="market-detail-card">
-        <h3>Top Movers</h3>
-        <div id="topMovers"><div class="loading-place">Loading...</div></div>
+        <h3>&#128200; Top Gainers</h3>
+        <div id="topGainers">
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:60px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:70px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:50px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:65px;"></div><div class="skeleton skeleton-price"></div></div>
+        </div>
       </div>
       <div class="market-detail-card">
-        <h3>Sector Weightage</h3>
-        <div id="sectorWeightage"><div class="loading-place">Loading...</div></div>
+        <h3>&#128201; Top Losers</h3>
+        <div id="topLosers">
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:65px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:50px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:70px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:60px;"></div><div class="skeleton skeleton-price"></div></div>
+        </div>
+      </div>
+      <div class="market-detail-card">
+        <h3>&#128293; Most Active</h3>
+        <div id="mostActive">
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:50px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:65px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:60px;"></div><div class="skeleton skeleton-price"></div></div>
+          <div class="skeleton-mover-row" style="justify-content:space-between;"><div class="skeleton skeleton-line" style="width:70px;"></div><div class="skeleton skeleton-price"></div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -120,7 +169,7 @@
     <div class="leverage-loader simple-glow-theme">
       <div class="loader-logo-wrapper">
         <div class="logo-glow-effect"></div>
-        <img src="logo.jpeg" class="loader-main-logo" alt="LEVERAGE">
+        <img src="logo-white.svg" class="loader-main-logo" alt="LEVERAGE">
       </div>
       <div class="loader-text-clean">
         <span class="loader-dot-pulse"></span>
@@ -130,21 +179,56 @@
   </div>
   <script src="stocks.js"></script>
   <script src="loader.js"></script>
-  <script src="news.js"></script>
-  <script src="nav.js"></script>
-  <script src="drawings.js"></script>
+  <script src="news.js?v=6"></script>
+  <script src="ws.js"></script>
+  <script src="nav.js?v=8"></script>
   <script src="cache.js?v=1"></script>
   <script>
   (function(){
     var ticker = new URLSearchParams(window.location.search).get('ticker') || 'NIFTY';
+    // Badge previously repeated the ticker name a 2nd time, and the line below repeated
+    // it a 3rd time as "<ticker> - INDEX" &ndash; three identical labels stacked on top of
+    // each other. Badge now shows the instrument type, the line below shows the exchange.
+    var EXCHANGE_BY_TICKER = {SENSEX:'BSE'};
     document.getElementById('ticker-name').textContent = ticker;
-    document.getElementById('ticker-badge').textContent = ticker;
-    document.getElementById('ticker-symbol-small').textContent = ticker + ' - INDEX';
+    document.getElementById('ticker-badge').textContent = 'INDEX';
+    document.getElementById('ticker-symbol-small').textContent = EXCHANGE_BY_TICKER[ticker] || 'NSE';
     document.title = ticker + ' - Market - LEVERAGE';
     var chart = null, candleSeries = null;
 
     function fmt(p){ if(p==null)return '--'; return Number(p).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
     function fmtL(n){ if(n==null)return '--'; if(n>=10000000)return (n/10000000).toFixed(2)+' Cr'; if(n>=100000)return (n/100000).toFixed(2)+' L'; return Number(n).toLocaleString('en-IN'); }
+
+    function updateDayRange(low, high, current){
+      var lowEl = document.getElementById('dayRangeLow');
+      var highEl = document.getElementById('dayRangeHigh');
+      var marker = document.getElementById('dayRangeMarker');
+      var validLow = (low != null && low > 0);
+      var validHigh = (high != null && high > 0);
+      if (validLow && lowEl) lowEl.textContent = fmt(low);
+      if (validHigh && highEl) highEl.textContent = fmt(high);
+      if (validLow && validHigh && marker && current != null) {
+        var pct = high > low ? ((current - low) / (high - low)) * 100 : 50;
+        pct = Math.max(0, Math.min(100, pct));
+        marker.style.left = pct + '%';
+      }
+    }
+
+    window.toggleRangeMenu = function(){
+      var menu = document.getElementById('rangeMenu');
+      if (menu) menu.classList.toggle('visible');
+    };
+    window.selectRange = function(range){
+      var menu = document.getElementById('rangeMenu');
+      if (menu) menu.classList.remove('visible');
+      loadData(range);
+    };
+    document.addEventListener('click', function(e){
+      if (!e.target.closest('.range-dropdown')) {
+        var rm = document.getElementById('rangeMenu');
+        if (rm) rm.classList.remove('visible');
+      }
+    });
 
     var loader = document.getElementById('leverage-loader');
 
@@ -152,58 +236,32 @@
       var c = document.getElementById('chart');
       if(!c) return;
       chart = LightweightCharts.createChart(c, {
-        layout:{background:{type:'solid',color:'#131722'},textColor:'#d1d4dc'},
+        layout:{background:{type:'solid',color:'#0A0A0B'},textColor:'#d1d4dc'},
         grid:{vertLines:{color:'rgba(42,46,57,0.5)'},horzLines:{color:'rgba(42,46,57,0.5)'}},
         crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
         rightPriceScale:{borderColor:'rgba(197,203,206,0.8)'},
-        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true},
+        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true,rightOffset:40,fixLeftEdge:false},
       });
       candleSeries = chart.addCandlestickSeries({
         upColor:'#26a69a',downColor:'#ef5350',
         borderDownColor:'#ef5350',borderUpColor:'#26a69a',
         wickDownColor:'#ef5350',wickUpColor:'#26a69a',
       });
-      window.getChartCoordinateAPI = function () {
-        if (!chart || !candleSeries) return null;
-        return {
-          coordToPixel: function (coord) {
-            if (!coord) return null;
-            var x = chart.timeScale().timeToCoordinate(coord.time);
-            var y = candleSeries.priceToCoordinate(coord.price);
-            if (x == null || y == null) return null;
-            return { x: x, y: y };
-          },
-          pixelToCoord: function (x, y) {
-            var time = chart.timeScale().coordinateToTime(x);
-            var price = candleSeries.coordinateToPrice(y);
-            return { time: time, price: price };
-          },
-          getMagnetPoint: function (x, y) {
-            return this.pixelToCoord(x, y);
-          },
-          getBarSpacing: function () {
-            var lr = chart.timeScale().getVisibleLogicalRange();
-            if (!lr) return 20;
-            return chart.timeScale().width() / (lr[1] - lr[0] || 1);
-          }
-        };
-      };
-      if (chart && window.toolManager) {
-        chart.timeScale().subscribeVisibleTimeRangeChange(function () {
-          window.toolManager.redraw();
-        });
-        chart.subscribeCrosshairMove(function () {
-          window.toolManager.redraw();
-        });
-      }
       var chartContainer = document.getElementById('chart-container');
       if(!chartContainer) chartContainer = c;
       new ResizeObserver(function(e){
         if(e.length===0)return;
         var r=e[0].contentRect;
         chart.applyOptions({height:r.height,width:r.width});
-        if (window.toolManager) window.toolManager.resizeCanvas();
       }).observe(chartContainer);
+    }
+
+    function syncRangeUI(range){
+      document.querySelectorAll('.range-item').forEach(function(b){b.classList.remove('active');});
+      var itm = document.querySelector('.range-item[data-range="'+range+'"]');
+      if(itm) itm.classList.add('active');
+      var crt = document.getElementById('currentRangeText');
+      if(crt) crt.textContent = range;
     }
 
     window.loadData = async function(range){
@@ -220,13 +278,14 @@
       else if(range==='1W') cacheInterval='15m';
       var memKey = ticker+'|'+cacheInterval+'|'+range;
       var memData = window._recentRanges ? window._recentRanges.get(memKey) : null;
-      if(memData){ renderChartCached(memData,range); if(loader)loader.style.display='none'; return; }
+      if(memData){ renderChartCached(memData,range); syncRangeUI(range); if(loader)loader.style.display='none'; return; }
 
       if(window._idbGetCandles){
         var idbData = await window._idbGetCandles(ticker, cacheInterval, range);
         if(idbData){
           if(window._recentRanges) window._recentRanges.set(memKey, idbData);
           renderChartCached(idbData,range);
+          syncRangeUI(range);
           if(loader)loader.style.display='none';
           return;
         }
@@ -245,9 +304,7 @@
 
         if(myLoadId!==_loadId){if(loader)loader.style.display='none';return;}
 
-        document.querySelectorAll('.range-selector button').forEach(function(b){b.classList.remove('active');});
-        var btn = document.querySelector('.range-selector button[onclick*="'+range+'"]');
-        if(btn) btn.classList.add('active');
+        syncRangeUI(range);
 
         if(Array.isArray(data)&&data.length>0){
           renderChartCached(data,range);
@@ -327,7 +384,9 @@
     }
 
     function renderChartCached(data,range){
-      var f = data.map(function(p){
+      var f = data.filter(function(p) { 
+        return p.open > 0 && p.high > 0 && p.low > 0 && p.close > 0; 
+      }).map(function(p){
         var t = toTimeNum(p.time);
         if(t==null)return null;
         return {time:Math.floor(t),open:p.open,high:p.high,low:p.low,close:p.close};
@@ -339,10 +398,12 @@
       _earliestLoadedTime = u.length>0 ? u[0].time : null;
       candleSeries.setData(u);
       _setupLazyLoad();
-      chart.timeScale().fitContent();
-      var last = u[u.length-1];
-      if(last){
-        document.getElementById('statOpen').textContent = fmt(last.open);
+      if (u.length > 200 && range !== 'ALL' && range !== '1Y' && range !== '6M') {
+        var endIdx = u.length - 1;
+        var startIdx = Math.max(0, endIdx - 150);
+        chart.timeScale().setVisibleLogicalRange({ from: startIdx, to: endIdx });
+      } else {
+        chart.timeScale().fitContent();
       }
     }
 
@@ -358,27 +419,27 @@
           var diff=p-prev, pct=prev>0?(diff/prev)*100:0;
           var cls=diff>=0?'text-green':'text-red', sn=diff>=0?'+':'';
           document.getElementById('header-price').textContent = fmt(p);
-          document.getElementById('header-price').style.color = diff>=0?'#00E676':'#FF0055';
+          document.getElementById('header-price').style.color = diff>=0?'#089981':'#f23645';
           var chg = document.getElementById('header-change');
           chg.textContent = sn+diff.toFixed(2)+' ('+sn+pct.toFixed(2)+'%)';
-          chg.style.color = diff>=0?'#00E676':'#FF0055';
-          document.getElementById('statVolume').textContent = fmtL(d.volume||d.volumne||0);
-          // Sync OHLC header from live data — only overwrite when valid (>0)
+          chg.style.color = diff>=0?'#089981':'#f23645';
+          document.getElementById('statPrevClose').textContent = fmt(prev);
+          // Sync OHLC header from live data &ndash; only overwrite when valid (>0)
           // to preserve chart-candle values when source (e.g. AngelOne WS
           // for indices) doesn't provide daily open/high/low.
           if (d.open != null && d.open > 0) {
-            document.getElementById('statOpen').textContent = fmt(d.open);
             document.getElementById('ohlc-open').textContent = fmt(d.open);
           }
           if (d.high != null && d.high > 0) {
-            document.getElementById('statHigh').textContent = fmt(d.high);
             document.getElementById('ohlc-high').textContent = fmt(d.high);
           }
           if (d.low != null && d.low > 0) {
-            document.getElementById('statLow').textContent = fmt(d.low);
             document.getElementById('ohlc-low').textContent = fmt(d.low);
           }
           document.getElementById('ohlc-close').textContent = fmt(p);
+          var mktVol = document.getElementById('ohlc-volume');
+          if (mktVol && d.volume != null) mktVol.textContent = fmtL(d.volume);
+          updateDayRange(d.low, d.high, p);
           // Update sector tag from live-prices response
           var secEl = document.getElementById('sector-tag');
           if (secEl && d.sector) {
@@ -402,39 +463,51 @@
         var fetchPromise = window._fetchCached ? window._fetchCached('/api/market-movers', 30000) : fetch('/api/market-movers').then(r=>r.json());
         var data = await fetchPromise;
         if (!data) return;
-        var dataCopy = JSON.parse(JSON.stringify(data));
-        if (dataCopy.gainers) dataCopy.gainers = dataCopy.gainers.slice(0, 8);
-        if (dataCopy.losers) dataCopy.losers = dataCopy.losers.slice(0, 8);
+        var gainers = (data.gainers||[]).slice(0, 8);
+        var losers = (data.losers||[]).slice(0, 8);
+        var active = (data.most_active||[]).slice(0, 8);
         var allTickers = [];
-        (dataCopy.gainers||[]).concat(dataCopy.losers||[]).forEach(function(s){if(s&&s.ticker)allTickers.push(s.ticker);});
+        gainers.concat(losers).concat(active).forEach(function(s){
+          if(s && s.ticker && allTickers.indexOf(s.ticker)===-1) allTickers.push(s.ticker);
+        });
         var liveData = {};
         try {
           var lr = await fetch('/api/live-prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers:allTickers})});
           if(lr.ok) liveData = await lr.json();
         } catch(e){}
-        var all = [];
-        (dataCopy.gainers||[]).concat(dataCopy.losers||[]).forEach(function(s){
-          if(!s) return;
-          var live = liveData[s.ticker];
-          var curr = (live&&live.current!=null) ? live.current : s.current_price;
-          var prev = (live&&live.prev_close!=null) ? live.prev_close : (s.prev_close || curr);
-          var chg = prev>0 ? (curr-prev)/prev*100 : 0;
-          all.push({name:s.ticker,chg:chg,current:curr});
-        });
-        all.sort(function(a,b){return Math.abs(b.chg)-Math.abs(a.chg);});
-        document.getElementById('topMovers').innerHTML = all.map(function(x){
-          var c=x.chg>=0?'text-green':'text-red',sn=x.chg>=0?'+':'';
-          return '<div class="mover-row"><span style="font-weight:500;color:#fff;">'+x.name+'</span><span class="'+c+'">'+sn+x.chg.toFixed(2)+'%</span></div>';
-        }).join('');
+
+        function refine(list){
+          return list.filter(Boolean).map(function(s){
+            var live = liveData[s.ticker];
+            var curr = (live&&live.current!=null) ? live.current : s.current_price;
+            var prev = (live&&live.prev_close!=null) ? live.prev_close : (s.prev_close || curr);
+            var chg = prev>0 ? (curr-prev)/prev*100 : (s.change_pct||0);
+            var vol = (live&&live.volume!=null) ? live.volume : s.volume;
+            return {ticker:s.ticker, chg:chg, volume:vol, volume_display:s.volume_display};
+          });
+        }
+
+        renderMoverColumn('topGainers', refine(gainers), 'pct');
+        renderMoverColumn('topLosers', refine(losers), 'pct');
+        renderMoverColumn('mostActive', refine(active), 'vol');
       }catch(e){
-        document.getElementById('topMovers').innerHTML = '<div class="loading-place">Start backend server</div>';
+        ['topGainers','topLosers','mostActive'].forEach(function(id){
+          var el = document.getElementById(id);
+          if (el) el.innerHTML = '<div class="loading-place">Unable to load market data right now</div>';
+        });
       }
     }
 
-    function renderSectors(){
-      var sec=[{name:'Banking',pct:32},{name:'IT',pct:16},{name:'Finance',pct:13},{name:'Auto',pct:8},{name:'Energy',pct:11},{name:'FMCG',pct:7},{name:'Pharma',pct:5},{name:'Other',pct:8}];
-      document.getElementById('sectorWeightage').innerHTML = sec.map(function(s){
-        return '<div class="sector-row-d"><span>'+s.name+'</span><div class="sector-bar-w"><div class="sector-bar-f" style="width:'+s.pct+'%;background:#4A90E2;"></div></div><span style="font-family:Roboto Mono,monospace;font-size:0.8rem;">'+s.pct+'%</span></div>';
+    function renderMoverColumn(containerId, list, metric){
+      var el = document.getElementById(containerId);
+      if (!el) return;
+      if (!list.length) { el.innerHTML = '<div class="loading-place">No data available</div>'; return; }
+      el.innerHTML = list.map(function(x){
+        var cls = x.chg>=0 ? 'text-green' : 'text-red';
+        var sn = x.chg>=0 ? '+' : '';
+        var right = metric === 'vol' ? (x.volume_display || fmtL(x.volume||0)) : (sn+x.chg.toFixed(2)+'%');
+        var rightAttr = metric === 'vol' ? '' : ' class="'+cls+'"';
+        return '<div class="mover-row-d"><span style="font-weight:500;color:#fff;">'+x.ticker+'</span><span'+rightAttr+'>'+right+'</span></div>';
       }).join('');
     }
 
@@ -449,16 +522,14 @@
         if (!d || !d.current) return;
         var p = d.current; var prev = d.prev_close || d.open || p;
         var diff = p - prev; var pct = prev > 0 ? (diff / prev) * 100 : 0;
-        var cls = diff >= 0 ? '#00E676' : '#FF0055'; var sn = diff >= 0 ? '+' : '';
+        var cls = diff >= 0 ? '#089981' : '#f23645'; var sn = diff >= 0 ? '+' : '';
         document.getElementById('header-price').textContent = fmt(p);
         document.getElementById('header-price').style.color = cls;
         var chg = document.getElementById('header-change');
         chg.textContent = sn + diff.toFixed(2) + ' (' + sn + pct.toFixed(2) + '%)';
         chg.style.color = cls;
-        document.getElementById('statOpen').textContent = fmt(d.open||0);
-        if(d.high) document.getElementById('statHigh').textContent = fmt(d.high);
-        if(d.low) document.getElementById('statLow').textContent = fmt(d.low);
-        if(d.volume) document.getElementById('statVolume').textContent = fmtL(d.volume);
+        document.getElementById('statPrevClose').textContent = fmt(prev);
+        updateDayRange(d.low, d.high, p);
       } catch(e) {}
     }
 
@@ -466,10 +537,10 @@
       var el = document.getElementById('ws-status');
       if (!el) return;
       if (window._marketOpen) {
-        el.textContent = '● Live';
+        el.textContent = '&#9679; Live';
         el.style.color = '#26a69a';
       } else {
-        el.textContent = '● Closed';
+        el.textContent = '&#9679; Closed';
         el.style.color = '#ef5350';
       }
     }
@@ -488,7 +559,6 @@
     loadData('ALL');
     fetchLive();
     renderMovers();
-    renderSectors();
     refreshMarketStatus();
     var _intFetch = setInterval(fetchLive, 15000);
     var _intMovers = setInterval(renderMovers, 30000);
@@ -504,7 +574,119 @@
             if (!_intStatus) { _intStatus = setInterval(refreshMarketStatus, 60000); refreshMarketStatus(); }
         }
     });
+    
+    // Listen for WebSocket price updates to update UI instantly
+    window.addEventListener('dashboard_price_update', function(evt) {
+      var raw = evt.detail;
+      if (!raw) return;
+      var prices = raw.prices || raw;
+
+      // Update main chart ticker
+      var d = prices[ticker];
+      if (d && d.current != null) {
+        var p = d.current;
+        var prev = (d.prev_close != null && d.prev_close > 0) ? d.prev_close : ((d.open != null && d.open > 0) ? d.open : p);
+        var diff = p - prev;
+        var pct = (prev > 0) ? (diff / prev) * 100 : 0;
+        var sn = diff >= 0 ? '+' : '';
+        document.getElementById('header-price').textContent = fmt(p);
+        document.getElementById('header-price').style.color = diff>=0?'#089981':'#f23645';
+        var chg = document.getElementById('header-change');
+        if (chg) {
+          chg.textContent = sn+diff.toFixed(2)+' ('+sn+pct.toFixed(2)+'%)';
+          chg.style.color = diff>=0?'#089981':'#f23645';
+        }
+        if (d.open != null && d.open > 0) {
+          document.getElementById('ohlc-open').textContent = fmt(d.open);
+        }
+        if (d.high != null && d.high > 0) {
+          document.getElementById('ohlc-high').textContent = fmt(d.high);
+        }
+        if (d.low != null && d.low > 0) {
+          document.getElementById('ohlc-low').textContent = fmt(d.low);
+        }
+        var ohlcC = document.getElementById('ohlc-close');
+        if (ohlcC) ohlcC.textContent = fmt(p);
+        var mktVol2 = document.getElementById('ohlc-volume');
+        if (mktVol2 && d.volume != null) mktVol2.textContent = fmtL(d.volume);
+        updateDayRange(d.low, d.high, p);
+        document.getElementById('statPrevClose').textContent = fmt(prev);
+        
+        // Update live chart candle
+        if (typeof candleSeries !== 'undefined' && candleSeries) {
+          var activeRange = window._loadedRange || '1D';
+          var isIntraday = ['1m','5m','15m','30m','1h'].indexOf(activeRange) !== -1;
+          if (isIntraday) {
+            var intervalMin = {'1m':1, '5m':5, '15m':15, '30m':30, '1h':60}[activeRange];
+            var ms = intervalMin * 60 * 1000;
+            var now = new Date();
+            var utcMs = now.getTime();
+            var IST_OFFSET_MS = 5.5 * 3600 * 1000;
+            var SESSION_START_MIN = 9 * 60 + 15;
+            
+            var istDayStartMs = (Math.floor((utcMs + IST_OFFSET_MS) / 86400000) * 86400000) - IST_OFFSET_MS;
+            var sessionStartMs = istDayStartMs + SESSION_START_MIN * 60000;
+            var offsetFromSession = utcMs - sessionStartMs;
+            var snappedMs = offsetFromSession < 0 ? sessionStartMs : sessionStartMs + Math.floor(offsetFromSession / ms) * ms;
+            var snappedSec = Math.floor(snappedMs / 1000);
+            
+            if (!window._formingCandle || window._formingCandle.time !== snappedSec) {
+              var fallbackC = (_chartDataCache && _chartDataCache.length > 0) ? _chartDataCache[_chartDataCache.length - 1].close : p;
+              var openPrice = (d.current > 0) ? d.current : (window._formingCandle ? window._formingCandle.close : fallbackC);
+              window._formingCandle = { time: snappedSec, open: openPrice, high: Math.max(openPrice, p), low: Math.min(openPrice, p), close: p };
+            } else {
+              window._formingCandle.high = Math.max(window._formingCandle.high, p);
+              window._formingCandle.low = Math.min(window._formingCandle.low, p);
+              window._formingCandle.close = p;
+            }
+            try { candleSeries.update(window._formingCandle); } catch(e) {}
+          } else {
+            // Daily / non-intraday ticking
+            var nowIST = new Date(Date.now() + 5.5 * 3600 * 1000);
+            var dayStr = nowIST.getUTCFullYear() + '-' + String(nowIST.getUTCMonth()+1).padStart(2,'0') + '-' + String(nowIST.getUTCDate()).padStart(2,'0');
+            var snappedSec = Math.floor(new Date(dayStr + 'T00:00:00Z').getTime() / 1000);
+            
+            // For 1W/1M, we can just update the last historical candle if we are inside it
+            if (activeRange !== '1D' && _chartDataCache && _chartDataCache.length > 0) {
+                var lastTime = _chartDataCache[_chartDataCache.length - 1].time;
+                if (snappedSec >= lastTime) snappedSec = lastTime;
+            }
+            
+            if (!window._formingCandle || window._formingCandle.time !== snappedSec) {
+              var fallbackC = (_chartDataCache && _chartDataCache.length > 0) ? _chartDataCache[_chartDataCache.length - 1].close : p;
+              var openPrice = (d.current > 0) ? d.current : (window._formingCandle ? window._formingCandle.close : fallbackC);
+              window._formingCandle = { time: snappedSec, open: openPrice, high: Math.max(openPrice, p), low: Math.min(openPrice, p), close: p };
+            } else {
+              window._formingCandle.high = Math.max(window._formingCandle.high, p);
+              window._formingCandle.low = Math.min(window._formingCandle.low, p);
+              window._formingCandle.close = p;
+            }
+            try { candleSeries.update(window._formingCandle); } catch(e) {}
+          }
+        }
+        
+        var secEl = document.getElementById('sector-tag');
+        if (secEl && d.sector) {
+          var secText = d.sector;
+          if (d.sectorPct != null) {
+            var secSn = d.sectorPct >= 0 ? '+' : '';
+            secText += ' (' + secSn + d.sectorPct.toFixed(2) + '%)';
+          }
+          secEl.textContent = secText;
+          secEl.style.display = 'inline-block';
+          secEl.style.color = d.sectorPct >= 0 ? '#26a69a' : '#ef5350';
+        }
+      }
+    });
+    
+    // Start WebSocket
+    if (window.DashboardWS) {
+      window.DashboardWS.start([ticker, 'NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCAP']);
+    }
   })();
   </script>
 </body>
 </html>
+
+
+

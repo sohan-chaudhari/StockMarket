@@ -64,12 +64,17 @@
   .range-selector button { font-size: 11px; padding: 3px 8px; }
   .sector-tag { font-size: 10px; padding: 2px 8px; }
   .trade-buttons { flex-wrap: wrap; gap: 6px; }
+  /* Chart header: collapse Indicators/Trade/Positions/News into one "more" menu, so the
+     header only ever shows 2 controls here (range dropdown + this) on a narrow screen. */
+  .indicator-dropdown { display: none !important; }
+  .header-icon-btn { display: none !important; }
+  .mobile-more-dropdown { display: block !important; }
   /* Tables — horizontal scroll instead of break */
   table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
   /* Drawing toolbar narrower */
-  .drawing-toolbar { width: 40px !important; }
-  body.drawing-active, body { padding-left: 40px !important; }
-  .drawing-submenu { min-width: 180px; left: 40px; }
+  .drawing-toolbar { width: 40px !important; left: 8px !important; top: 78px !important; }
+  body.drawing-active { padding-left: 56px !important; }
+  .drawing-submenu { min-width: 180px; }
   /* Market detail grid */
   .market-detail-grid { grid-template-columns: 1fr !important; }
   .market-stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -84,6 +89,13 @@
   .section-title { font-size: 1.1rem; }
   .pill-indicator { width: 3px; height: 16px; }
   .news-skeleton-container { padding: 0 8px !important; }
+  
+  /* Fix Home Page Hero Chart Layout */
+  .chart-header { flex-wrap: wrap !important; gap: 12px !important; margin-bottom: 12px !important; }
+  .chart-actions { width: 100% !important; justify-content: space-between !important; }
+  .large-price { font-size: 2rem !important; }
+  .chart-footer-ohlc { flex-wrap: wrap !important; justify-content: space-between !important; gap: 8px; }
+  .dashboard-hero-section { margin: 10px !important; padding: 15px !important; }
 }
 
 @media (max-width: 480px) {
@@ -101,9 +113,16 @@
   .header-ohlc-display { font-size: 10px; gap: 4px; }
   #ticker-badge, .ticker-badge, .stock-badge { font-size: 10px; padding: 2px 6px; }
   .trade-btn, .news-btn { font-size: 12px; padding: 6px 14px; }
-  .drawing-toolbar { width: 32px !important; }
-  body.drawing-active, body { padding-left: 32px !important; }
-  .drawing-submenu { min-width: 150px; left: 32px; }
+  .drawing-toolbar { width: 32px !important; left: 6px !important; top: 76px !important; }
+  body.drawing-active { padding-left: 44px !important; }
+  .drawing-submenu { min-width: 150px; }
+  /* Keep toolbar icons inside the narrowed 32px toolbar (was fixed at 34px, overflowing it) */
+  .toolbar-item { width: 26px !important; height: 26px !important; }
+  .toolbar-item svg { width: 16px !important; height: 16px !important; }
+  /* Submenu rows were a fixed 32px tall at every breakpoint — bump toward a tappable size on mobile only */
+  .submenu-item { padding: 10px 14px !important; }
+  /* Trade panel covered ~85% of a narrow screen with no margin at all */
+  #tradePanelOverlay { width: 92vw !important; }
 }
 
 /* ── Small phones ── */

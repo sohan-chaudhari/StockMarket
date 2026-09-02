@@ -34,6 +34,18 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(snapped_dt.hour, 15)
         self.assertEqual(snapped_dt.minute, 25)
 
+    def test_snap_to_nse_session_grace_window_no_phantom(self):
+        # Ticks at exactly 15:30:00 and inside the grace window (15:30-15:44:59)
+        # must snap to 15:25 (the last real session bucket), NOT create a
+        # phantom 15:30 bucket outside the session.
+        for minute_offset in (0, 5, 14, 14 * 60 + 59):
+            dt = datetime(2026, 7, 1, 15, 30, 0)
+            epoch = int(dt.replace(tzinfo=None).timestamp()) + 19800 + minute_offset
+            snapped = snap_to_nse_session(epoch, 5)
+            snapped_dt = datetime.fromtimestamp(snapped, tz=None)
+            self.assertEqual(snapped_dt.hour, 15, msg=f"offset={minute_offset}")
+            self.assertEqual(snapped_dt.minute, 25, msg=f"offset={minute_offset}")
+
     def test_validate_ohlc_valid(self):
         valid, _ = validate_ohlc(100, 105, 95, 102)
         self.assertTrue(valid)
@@ -58,6 +70,100 @@ class TestUtils(unittest.TestCase):
     def test_is_trading_day_with_holiday(self):
         d = datetime(2026, 7, 1).date()
         self.assertFalse(is_trading_day(d, {d}))
+
+    # ── Decision 4: special/shortened session overrides ─────────────────────
+
+    def test_is_market_hour_rejects_standard_hours_by_default(self):
+        # 18:15 IST is well outside the standard 09:15-15:45(grace) window.
+        evening = datetime(2026, 7, 1, 18, 15, 0)
+        self.assertFalse(is_market_hour(evening))
+
+    def test_is_market_hour_accepts_special_session_override(self):
+        # Same 18:15 IST instant, but with a Muhurat-style 18:15-19:15 window
+        # passed explicitly — this is exactly what Live5mBuilder._session_bounds
+        # produces for a date registered via set_special_sessions().
+        evening = datetime(2026, 7, 1, 18, 15, 0)
+        special_open = 18 * 3600 + 15 * 60
+        special_close_grace = 19 * 3600 + 15 * 60 + 15 * 60
+        self.assertTrue(is_market_hour(evening, special_open, special_close_grace))
+
+    def test_snap_to_nse_session_default_unaffected_by_new_params(self):
+        # Omitting the new optional args must reproduce the exact standard-day
+        # bucket the pre-existing tests assert — i.e. zero behavior change for
+        # every normal trading day.
+        from datetime import timezone
+        utc_ts = int(datetime(2026, 7, 1, 4, 30, 0, tzinfo=timezone.utc).timestamp())
+        snapped = snap_to_nse_session(utc_ts, 5)
+        snapped_dt = datetime.fromtimestamp(snapped, tz=timezone.utc)
+        self.assertEqual(snapped_dt.hour, 4)
+        self.assertEqual(snapped_dt.minute, 30)
+
+    def test_snap_to_nse_session_special_window(self):
+        # A tick at 18:20 IST during a registered 18:15-19:15 special session
+        # should snap to the 18:15 bucket (the session's own open), not fall
+        # through the standard-day "post-close" branch.
+        from datetime import timezone
+        ist = timezone(timedelta(hours=5, minutes=30))
+        tick = datetime(2026, 10, 21, 18, 20, 0, tzinfo=ist)
+        ts_epoch = int(tick.timestamp())
+        special_open = 18 * 3600 + 15 * 60
+        special_close = 19 * 3600 + 15 * 60
+        special_close_grace = special_close + 15 * 60
+        snapped = snap_to_nse_session(ts_epoch, 5, special_open, special_close, special_close_grace)
+        snapped_dt = datetime.fromtimestamp(snapped, tz=ist)
+        self.assertEqual(snapped_dt.hour, 18)
+        self.assertEqual(snapped_dt.minute, 20)
+
+
+class TestSpecialSessionWiring(unittest.TestCase):
+    """Live5mBuilder honors a registered special session end-to-end via process_tick.
+
+    process_tick substitutes the real server clock for tick_ts whenever the
+    supplied timestamp looks "frozen" (>30s behind the actual wall clock) —
+    a deliberate guard against a stale broker feed. That means a fixed
+    Muhurat-style timestamp can't be asserted against reliably unless
+    aggregator's own clock is patched to match it, exactly like the existing
+    process_tick tests above do for is_market_hour/is_trading_day.
+    """
+
+    def setUp(self):
+        self.builder = Live5mBuilder()
+
+    def tearDown(self):
+        self.builder._flush_worker_running = False
+
+    def test_tick_outside_standard_hours_rejected_without_special_session(self):
+        from datetime import timezone
+        ist = timezone(timedelta(hours=5, minutes=30))
+        tick_dt = datetime(2026, 10, 21, 18, 20, 0, tzinfo=ist)
+        ts = int(tick_dt.timestamp())
+        naive_now = tick_dt.replace(tzinfo=None)
+        with patch("aggregator.ist_now_naive", return_value=naive_now), \
+             patch("time.time", return_value=ts):
+            result = self.builder.process_tick("MUHURAT", 100.0, volume=10, tick_ts=ts)
+        self.assertEqual(result, {})
+
+    def test_tick_during_registered_special_session_builds_a_candle(self):
+        from datetime import date as date_cls, timezone
+        ist = timezone(timedelta(hours=5, minutes=30))
+        d = date_cls(2026, 10, 21)
+        special_open = 18 * 3600 + 15 * 60
+        special_close = 19 * 3600 + 15 * 60
+        self.builder.set_special_sessions({d: (special_open, special_close, special_close + 15 * 60)})
+
+        tick_dt = datetime(2026, 10, 21, 18, 20, 0, tzinfo=ist)
+        ts = int(tick_dt.timestamp())
+        naive_now = tick_dt.replace(tzinfo=None)
+        with patch("aggregator.ist_now_naive", return_value=naive_now), \
+             patch("time.time", return_value=ts):
+            result = self.builder.process_tick("MUHURAT", 100.0, volume=10, tick_ts=ts)
+        self.assertIn("5m", result)
+        self.assertEqual(result["5m"]["close"], 100.0)
+
+    def test_session_bounds_defaults_to_standard_when_no_override(self):
+        from datetime import date as date_cls
+        bounds = self.builder._session_bounds(date_cls(2026, 7, 1))
+        self.assertEqual(bounds, (9 * 3600 + 15 * 60, 15 * 3600 + 30 * 60, 15 * 3600 + 45 * 60))
 
     def test_is_trading_day_normal(self):
         wed = datetime(2026, 7, 1).date()
@@ -172,17 +278,20 @@ class TestLive5mBuilder(unittest.TestCase):
     @patch("aggregator.is_trading_day", return_value=True)
     def test_post_market_flush(self, mock_td, mock_mh):
         self.builder._flush_batch_now = MagicMock()
-        ts = datetime(2026, 7, 1, 16, 0, 0).timestamp() + 19800
+        mock_now = datetime(2026, 7, 1, 16, 0, 0)
+        ts = mock_now.timestamp() + 19800
         self.builder.active_candles["RELIANCE"] = {
             "5m": {"timestamp": datetime(2026, 7, 1, 15, 25, 0),
                     "open": 100, "high": 105, "low": 95, "close": 102, "volume": 1000}
         }
-        res = self.builder.process_tick("RELIANCE", 102.0, tick_ts=ts)
+        with patch("aggregator.ist_now_naive", return_value=mock_now), \
+             patch("time.time", return_value=ts):
+            res = self.builder.process_tick("RELIANCE", 102.0, tick_ts=ts)
         self.assertEqual(res, {})
         self.assertNotIn("RELIANCE", self.builder.active_candles)
 
     def test_stale_tick_skipped(self):
-        ts = datetime(2026, 7, 1, 10, 0, 0).timestamp() + 19800
+        ts = time.time()
         self.builder._last_tick_ts["RELIANCE"] = ts + 120
         with patch("aggregator.is_market_hour", return_value=True), \
              patch("aggregator.is_trading_day", return_value=True):
@@ -204,7 +313,7 @@ class TestLive5mBuilder(unittest.TestCase):
         self.assertIn("tickers", stats)
         self.assertIn("stale_skips", stats)
         self.assertIn("pending_flush", stats)
-        self.assertIn("backpressure_events", stats)
+        self.assertNotIn("backpressure_events", stats)
 
     def test_fix_ohlc_ensures_valid(self):
         with patch("aggregator.is_market_hour", return_value=True), \

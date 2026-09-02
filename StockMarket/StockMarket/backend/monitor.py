@@ -65,7 +65,6 @@ class Monitor:
                 "pending_late_buffer": s.get("pending_late_buffer", 0),
                 "pending_flush": s.get("pending_flush", 0),
                 "queue_size": s.get("queue_size", 0),
-                "backpressure_events": s.get("backpressure_events", 0),
                 "stale_skips": sum(s.get("stale_skips", {}).values()),
                 "worker_alive": s.get("worker_alive", False),
             }

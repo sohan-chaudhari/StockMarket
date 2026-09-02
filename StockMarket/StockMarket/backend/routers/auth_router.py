@@ -6,6 +6,7 @@ import threading
 
 import models, schemas, auth
 from database import get_db, get_ist_now
+from rate_limiter import limiter
 
 router = APIRouter()
 
@@ -20,7 +21,8 @@ async def get_profile(current_user: models.User = Depends(auth.get_current_user)
     return current_user
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register(user: schemas.UserRegister, request: Request, db: Session = Depends(get_db)):
+@limiter.limit("10/hour")
+def register(request: Request, user: schemas.UserRegister, db: Session = Depends(get_db)):
     # Check if email exists
     existing = db.query(models.User).filter(models.User.email == user.email).first()
     if existing:
@@ -63,6 +65,7 @@ def register(user: schemas.UserRegister, request: Request, db: Session = Depends
     return {"message": "User registered. Please verify your email.", "user_id": new_user.user_id}
 
 @router.post("/login", response_model=schemas.TokenResponse)
+@limiter.limit("20/hour")
 def login(creds: schemas.UserLogin, request: Request, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == creds.email).with_for_update().first()
     
@@ -140,6 +143,7 @@ def verify_email(req: schemas.VerifyEmailRequest, request: Request, db: Session 
     return {"message": "Email successfully verified"}
 
 @router.post("/resend-verification")
+@limiter.limit("3/hour")
 def resend_verification(req: schemas.ResendVerificationRequest, request: Request, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == req.email).first()
     if not user:
@@ -162,7 +166,8 @@ def resend_verification(req: schemas.ResendVerificationRequest, request: Request
     return {"message": "A new verification code has been sent to your email."}
 
 @router.post("/forgot-password")
-def forgot_password(req: schemas.ForgotPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def forgot_password(req: schemas.ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == req.email).first()
     if user:
         token_jti = auth.generate_token()

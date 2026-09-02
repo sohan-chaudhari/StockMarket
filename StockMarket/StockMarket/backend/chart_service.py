@@ -3,7 +3,23 @@ from typing import Dict, List, Optional, Tuple
 from config.timeframe_registry import TIMEFRAME_REGISTRY
 from exchange_calendar import IST
 
-SOURCE_HIERARCHY = ["5m", "15m", "30m", "1h", "4h", "1d", "1w", "1m"]
+# Decision/Candidate A fix: must match config.timeframe_registry.TIMEFRAME_REGISTRY's
+# actual casing exactly ("1D"/"1W"/"1M", uppercase for session/week/month tiers) —
+# the lowercase entries previously here ("1d"/"1w"/"1m") could never match a real
+# target_tf value coming from the registry, so SOURCE_HIERARCHY.index(target_tf)
+# always raised ValueError for those three timeframes, silently caught by the
+# broad except in _build_candles and returned as empty candles.
+SOURCE_HIERARCHY = ["5m", "15m", "30m", "1h", "4h", "1D", "1W", "1M"]
+
+# Decision 6 fix: the caller-supplied `limit` is now bounded at the API layer
+# (main.py's /api/stock-data/chart route, le=50000 — matching the ceiling the
+# sibling paginated endpoints already use), but _build_candles derives a
+# SEPARATE source-tier query size (`limit * 60` below) to have enough lower-
+# timeframe rows to resample from. That derived size must have its own fixed
+# ceiling too, independent of how large the caller's `limit` is allowed to be,
+# or a large-but-"reasonable" limit on a coarse target timeframe could still
+# explode into an unbounded query against the 5m/lower-tier table.
+MAX_SOURCE_QUERY_ROWS = 50000
 
 
 class ChartService:
@@ -89,59 +105,23 @@ class ChartService:
                        limit: int) -> Optional[Dict]:
         db = self._db_factory()
         try:
-            from models import IntradayCandle1Min, IntradayCandle5Min, IntradayCandle15Min, IntradayCandle30Min, IntradayCandle1H, StockData, Candle
+            from models import Candle
 
             def _fetch_tf(tf: str, query_limit: int = None):
                 if query_limit is None:
                     query_limit = limit
-                model = None
-                if tf == "1m":
-                    model = IntradayCandle1Min
-                elif tf == "5m":
-                    model = IntradayCandle5Min
-                elif tf == "15m":
-                    model = IntradayCandle15Min
-                elif tf == "30m":
-                    model = IntradayCandle30Min
-                elif tf == "1h":
-                    model = IntradayCandle1H
-                elif tf in ["1d", "1D"]:
-                    model = StockData
-                
-                if not model:
-                    # Query unified Candle table for 4h, 1w, 1m, etc.
-                    q = db.query(Candle).filter(Candle.ticker == ticker, Candle.timeframe == tf)
-                    if start:
-                        q = q.filter(Candle.timestamp >= datetime.fromtimestamp(start, tz=IST).replace(tzinfo=None))
-                    if end:
-                        q = q.filter(Candle.timestamp <= datetime.fromtimestamp(end, tz=IST).replace(tzinfo=None))
-                    if not start:
-                        res = q.order_by(Candle.timestamp.desc()).limit(query_limit).all()
-                        return list(reversed(res))
-                    return q.order_by(Candle.timestamp.asc()).limit(query_limit).all()
-                
-                q = db.query(model).filter(model.ticker == ticker)
-                
-                if model == StockData:
-                    # StockData uses 'date' column
-                    if start:
-                        q = q.filter(model.date >= datetime.fromtimestamp(start, tz=IST).date())
-                    if end:
-                        q = q.filter(model.date <= datetime.fromtimestamp(end, tz=IST).date())
-                    if not start:
-                        res = q.order_by(model.date.desc()).limit(query_limit).all()
-                        return list(reversed(res))
-                    return q.order_by(model.date.asc()).limit(query_limit).all()
-                else:
-                    # Intraday tables use 'timestamp'
-                    if start:
-                        q = q.filter(model.timestamp >= datetime.fromtimestamp(start, tz=IST).replace(tzinfo=None))
-                    if end:
-                        q = q.filter(model.timestamp <= datetime.fromtimestamp(end, tz=IST).replace(tzinfo=None))
-                    if not start:
-                        res = q.order_by(model.timestamp.desc()).limit(query_limit).all()
-                        return list(reversed(res))
-                    return q.order_by(model.timestamp.asc()).limit(query_limit).all()
+                query_limit = min(query_limit, MAX_SOURCE_QUERY_ROWS)
+                # All timeframes (including 1D) read from the unified Candle table.
+                # candles(1D) is the SSOT; the old StockData path for "1d"/"1D" is removed.
+                q = db.query(Candle).filter(Candle.ticker == ticker, Candle.timeframe == tf)
+                if start:
+                    q = q.filter(Candle.timestamp >= datetime.fromtimestamp(start, tz=IST).replace(tzinfo=None))
+                if end:
+                    q = q.filter(Candle.timestamp <= datetime.fromtimestamp(end, tz=IST).replace(tzinfo=None))
+                if not start:
+                    res = q.order_by(Candle.timestamp.desc()).limit(query_limit).all()
+                    return list(reversed(res))
+                return q.order_by(Candle.timestamp.asc()).limit(query_limit).all()
 
             exact_stored = _fetch_tf(target_tf)
 
@@ -155,10 +135,12 @@ class ChartService:
                 }
 
             target_idx = SOURCE_HIERARCHY.index(target_tf)
-            # Optimize: ONLY pull from the immediate lower timeframe to build the target chart!
-            source_tfs = [SOURCE_HIERARCHY[target_idx - 1]]
+            # Fallback through source hierarchy: try from the immediate lower TF down to 5m.
+            # Highest TFs win on duplicate timestamps (prefer already-aggregated data).
+            source_tfs = list(reversed(SOURCE_HIERARCHY[:target_idx]))
 
             all_resampled_dicts = []
+            seen_resampled_times = set()
 
             for src_tf in source_tfs:
                 src_candles = _fetch_tf(src_tf, query_limit=limit * 60)
@@ -171,7 +153,7 @@ class ChartService:
                     # if it's a python date but not a datetime, convert to datetime for resampling
                     if ts and not isinstance(ts, datetime):
                         ts = datetime.combine(ts, datetime.min.time())
-                    
+
                     src_dicts.append({
                         "timestamp": ts,
                         "open": r.open, "high": r.high,
@@ -188,6 +170,7 @@ class ChartService:
                 if not target:
                     continue
 
+                added_this_tf = 0
                 for c in target:
                     ts = c.get("timestamp")
                     if isinstance(ts, datetime):
@@ -202,6 +185,11 @@ class ChartService:
                         continue
                     if end and ts_epoch > end:
                         continue
+                    # Highest TF wins: skip if already filled by a higher TF
+                    if ts_epoch in seen_resampled_times:
+                        continue
+                    seen_resampled_times.add(ts_epoch)
+                    added_this_tf += 1
                     all_resampled_dicts.append({
                         "time": ts_epoch,
                         "open": c.get("open", 0),
@@ -210,6 +198,8 @@ class ChartService:
                         "close": c.get("close", 0),
                         "volume": c.get("volume", 0),
                     })
+                if added_this_tf:
+                    print(f"[ChartService] {ticker} {target_tf}: +{added_this_tf} candles resampled from {src_tf}")
 
             stored_dicts = self._stored_to_dict(exact_stored)
             stored_times = {c["time"] for c in stored_dicts}

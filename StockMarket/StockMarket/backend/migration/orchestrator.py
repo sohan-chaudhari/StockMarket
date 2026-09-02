@@ -9,6 +9,7 @@ from migration.config import MigrationConfig, TierConfig, compute_tier_date_rang
 from migration.batch_downloader import BatchDownloader
 from migration.progress_tracker import ProgressTracker
 from migration.report import generate_report, format_bytes
+from migration.identity import TickerIdentity
 
 
 class MigrationOrchestrator:
@@ -167,12 +168,26 @@ class MigrationOrchestrator:
         finally:
             db.close()
 
-    def _get_all_tickers(self) -> List[str]:
+    def _get_all_tickers(self) -> List["TickerIdentity"]:
+        """Returns one TickerIdentity per distinct ticker string (NSE-priority
+        when a symbol is active on more than one exchange), not bare ticker
+        strings. The previous `SELECT DISTINCT ticker` here dropped the
+        `exchange` column entirely -- see migration/identity.py for why that
+        was unsafe (candles has no exchange column, so an NSE and a BSE
+        listing sharing a ticker string could silently overwrite each
+        other's history)."""
+        from migration.identity import resolve_ticker_universe_from_db
         db = SessionLocal()
         try:
-            rows = db.execute(
-                sql_text("SELECT DISTINCT ticker FROM stock_metadata WHERE is_active = TRUE ORDER BY ticker")
-            ).fetchall()
-            return [r[0] for r in rows]
+            identities, shadowed = resolve_ticker_universe_from_db(db)
+            if shadowed:
+                print(f"[Migration] {len(shadowed)} active listing(s) shadowed by a same-ticker, "
+                      f"higher-priority-exchange listing and excluded from this run "
+                      f"(candles has no exchange column -- see migration/identity.py):")
+                for s in shadowed[:20]:
+                    print(f"  {s.ticker}: {s.excluded_exchange} shadowed by {s.canonical_exchange}")
+                if len(shadowed) > 20:
+                    print(f"  ... and {len(shadowed) - 20} more")
+            return sorted(identities, key=lambda i: i.ticker)
         finally:
             db.close()

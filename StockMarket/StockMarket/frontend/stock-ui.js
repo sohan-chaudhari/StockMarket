@@ -46,7 +46,7 @@
         
         const modalContent = document.createElement('div');
         modalContent.className = 'modal-content';
-        modalContent.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:2rem;max-width:800px;width:90%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.6);';
+        modalContent.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:2rem;max-width:800px;width:90%;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.6);text-align:left;';
         
         modalContent.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:1rem;">
@@ -87,76 +87,28 @@
           }
           
           const container = document.getElementById('ticker-news-container');
-          if (container) {
-            container.innerHTML = `
-              <div class="leverage-loader simple-glow-theme news-loader" style="padding: 2rem;text-align:center;">
-                  <div style="width:24px;height:24px;border:3px solid rgba(74,144,226,0.3);border-top-color:#4A90E2;border-radius:50%;animation:dashNewsSpinAnim 0.8s linear infinite;margin:0 auto 1rem;"></div>
-                  <div class="loader-message-text" style="color:#a1a1aa;">Downloading live news for ${ticker}...</div>
-              </div>
-            `;
+          if (container && typeof _newsSkeletonCards === 'function') {
+            container.innerHTML = _newsSkeletonCards(5);
           }
-          
-          // Use fetchStockNews to get data
+
+          // fetchStockNews + renderNewsCards are defined in news.js (loaded first)
           fetchStockNews(ticker).then(news => {
               renderNewsCards('ticker-news-container', news);
           }).catch(e => {
               console.error(e);
-              if (container) container.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--text-secondary);">Failed to load news. <button onclick="toggleNewsModal()" style="background:none;border:none;color:#4A90E2;cursor:pointer;font-family:inherit;">Close</button></div>';
+              if (container) container.innerHTML =
+                  '<div style="padding:3rem 1rem;text-align:center;">' +
+                  '<div style="font-size:1.75rem;margin-bottom:0.75rem;">📡</div>' +
+                  '<div style="color:#e2e8f0;font-weight:600;margin-bottom:0.4rem;font-size:0.95rem;">Failed to load news</div>' +
+                  '<div style="color:#6b7280;font-size:0.82rem;margin-bottom:1.25rem;">Check your connection and try again.</div>' +
+                  '<button onclick="toggleNewsModal()" style="padding:7px 18px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-size:0.82rem;">Close</button>' +
+                  '</div>';
           });
       }
     }
 
-    async function fetchStockNews(ticker) {
-        const resp = await fetch('/api/scanx/news/fast/' + encodeURIComponent(ticker));
-        if (!resp.ok) throw new Error('Failed to fetch news');
-        return await resp.json();
-    }
-
-    function renderNewsCards(containerId, newsData) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        
-        if (!newsData || !Array.isArray(newsData) || newsData.length === 0) {
-            container.innerHTML = '<p style="color:#a1a1aa;padding:1rem;text-align:center;">No recent market news available for this ticker.</p>';
-            return;
-        }
-        
-        let html = '<div style="display:flex;flex-direction:column;gap:15px;padding-bottom:20px;">';
-        newsData.forEach(item => {
-            const label = (item.sentiment && item.sentiment.label) ? item.sentiment.label : 'Neutral';
-            const score = (item.sentiment && item.sentiment.sentiment_score !== undefined) ? item.sentiment.sentiment_score.toFixed(2) : '0.00';
-            let sentColor = '#a1a1aa';
-            let sentEmoji = '🎯';
-            if (label.toLowerCase() === 'bullish' || label.toLowerCase() === 'positive') { sentColor = '#00E676'; sentEmoji = '📈'; }
-            if (label.toLowerCase() === 'bearish' || label.toLowerCase() === 'negative') { sentColor = '#FF0055'; sentEmoji = '📉'; }
-            
-            const dateStr = item.published_at ? new Date(item.published_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : '';
-            
-            html += `
-              <div style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.05);border-radius:10px;padding:16px;">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
-                      <a href="${item.url || '#'}" target="_blank" rel="noopener" style="color:#fff;font-size:1.1rem;font-weight:600;text-decoration:none;flex:1;margin-right:15px;line-height:1.4;" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">
-                          ${item.title || item.headline || 'No Title'}
-                      </a>
-                      <div style="font-size:0.75rem;color:${sentColor};background:rgba(255,255,255,0.05);padding:4px 10px;border-radius:20px;font-weight:600;white-space:nowrap;display:flex;flex-direction:column;align-items:center;">
-                          <span>${sentEmoji} ${label}</span>
-                          <span style="font-size:0.65rem;opacity:0.8;margin-top:2px;">Score: ${score}</span>
-                      </div>
-                  </div>
-                  <div style="font-size:0.75rem;color:#8a8a8a;margin-bottom:10px;display:flex;gap:10px;">
-                      <span>${item.source || 'ScanX News'}</span>
-                      ${dateStr ? '<span>•</span><span>' + dateStr + '</span>' : ''}
-                  </div>
-                  <div style="font-size:0.9rem;color:#d1d1d6;line-height:1.5;">
-                      ${item.excerpt || item.snippet || ''}
-                  </div>
-              </div>
-            `;
-        });
-        html += '</div>';
-        
-        container.innerHTML = html;
-    }
+    // fetchStockNews and renderNewsCards live in news.js (loaded before this file).
+    // Delegate to those authoritative implementations so the card UI is always identical.
 
     // Missing UI Dropdown Handlers
     window.toggleRangeMenu = function toggleRangeMenu() {
@@ -165,7 +117,6 @@
     }
 
     window.selectRange = function selectRange(range) {
-      // Close the dropdown menu first
       const menu = document.getElementById('rangeMenu');
       if (menu) menu.classList.remove('visible');
       var crt = document.getElementById('currentRangeText'); if (crt) crt.innerText = range;
@@ -195,6 +146,19 @@
       }
     }
 
+    // Mobile-only "more" menu: consolidates Trade/Positions/News/Indicators into one button
+    // so the chart header only shows 2 controls (range + this) on a narrow screen.
+    function toggleMobileMoreMenu(event) {
+      event.stopPropagation();
+      const menu = document.getElementById('mobileMoreMenu');
+      if (menu) menu.classList.toggle('visible');
+    }
+
+    function closeMobileMoreMenu() {
+      const menu = document.getElementById('mobileMoreMenu');
+      if (menu) menu.classList.remove('visible');
+    }
+
     // Click outside to close dropdowns
     document.addEventListener('click', (e) => {
       if (!e.target.closest('.range-dropdown')) {
@@ -204,5 +168,9 @@
       if (!e.target.closest('.indicator-dropdown')) {
         const indMenu = document.getElementById('indicatorMenu');
         if (indMenu) indMenu.style.display = 'none';
+      }
+      if (!e.target.closest('.mobile-more-dropdown')) {
+        const moreMenu = document.getElementById('mobileMoreMenu');
+        if (moreMenu) moreMenu.classList.remove('visible');
       }
     });

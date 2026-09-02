@@ -18,7 +18,8 @@
         var redirect = encodeURIComponent(window.location.href);
         var btn = document.getElementById('signInRedirectBtn');
         if (btn) btn.href = 'login.html?redirect=' + redirect;
-        document.getElementById('signInPromptModal').classList.add('visible');
+        var modal = document.getElementById('signInPromptModal');
+        if (modal) modal.classList.add('visible');
       } else {
         showTradeModal();
       }
@@ -126,7 +127,7 @@
 
     function launchChart(ticker, exchange) {
       if (!ticker) return;
-      window.location.href = (exchange === 'INDEX' ? 'index_chart.html?ticker=' : 'stock.html?ticker=') + encodeURIComponent(ticker);
+      window.location.href = (exchange === 'INDEX' ? 'stock.html?ticker=' : 'stock.html?ticker=') + encodeURIComponent(ticker);
     }
 
     // Show Trade Modal
@@ -162,12 +163,21 @@
 
       setPositionType('LONG');
       calculateTotal();
-      document.getElementById('tradeModal').classList.add('visible');
+      document.getElementById('tradePanelOverlay').classList.add('visible');
     }
 
     function hideTradeModal() {
-      document.getElementById('tradeModal').classList.remove('visible');
+      document.getElementById('tradePanelOverlay').classList.remove('visible');
     }
+
+    window.toggleTradeModal = function() {
+      const panel = document.getElementById('tradePanelOverlay');
+      if (panel && panel.classList.contains('visible')) {
+        hideTradeModal();
+      } else {
+        showTradeModal();
+      }
+    };
 
     function setPositionType(type) {
       currentPositionType = type;
@@ -220,12 +230,16 @@
       };
 
       try {
+        const csrfRes = await fetch(`${API_BASE}/api/csrf-token`);
+        if (!csrfRes.ok) throw new Error('CSRF token fetch failed');
+        const csrfData = await csrfRes.json();
+
         const res = await fetch(`${API_BASE}/api/trade/place-order`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
-            'X-CSRF-Token': csrfToken
+            'X-CSRF-Token': csrfData.csrf_token
           },
           body: JSON.stringify(payload)
         });
@@ -317,7 +331,7 @@
         });
         var data = await res.json();
         tickers.forEach(function(t){
-          if (data[t] && data[t].current) _positionLivePrices[t] = data[t].current;
+          if (data[t]) _positionLivePrices[t] = data[t].current_price || data[t].current || 0;
         });
       } catch(e) {}
     }
@@ -458,18 +472,30 @@
     }
 
     function switchPanelTab(tab) {
-      // Update tab buttons
-      document.getElementById('tabPanelOpen').style.background = tab === 'open' ? '#4A90E2' : '#333';
-      document.getElementById('tabPanelOpen').style.color = tab === 'open' ? '#fff' : '#888';
-      document.getElementById('tabPanelClosed').style.background = tab === 'closed' ? '#4A90E2' : '#333';
-      document.getElementById('tabPanelClosed').style.color = tab === 'closed' ? '#fff' : '#888';
-      document.getElementById('tabPanelTransactions').style.background = tab === 'transactions' ? '#4A90E2' : '#333';
-      document.getElementById('tabPanelTransactions').style.color = tab === 'transactions' ? '#fff' : '#888';
+      // Update tab buttons safely
+      var tOpen = document.getElementById('tabPanelOpen');
+      if (tOpen) {
+        tOpen.style.background = tab === 'open' ? '#4A90E2' : '#333';
+        tOpen.style.color = tab === 'open' ? '#fff' : '#888';
+      }
+      var tClosed = document.getElementById('tabPanelClosed');
+      if (tClosed) {
+        tClosed.style.background = tab === 'closed' ? '#4A90E2' : '#333';
+        tClosed.style.color = tab === 'closed' ? '#fff' : '#888';
+      }
+      var tTrans = document.getElementById('tabPanelTransactions');
+      if (tTrans) {
+        tTrans.style.background = tab === 'transactions' ? '#4A90E2' : '#333';
+        tTrans.style.color = tab === 'transactions' ? '#fff' : '#888';
+      }
 
       // Show/hide content
-      document.getElementById('panelOpenContent').style.display = tab === 'open' ? 'block' : 'none';
-      document.getElementById('panelClosedContent').style.display = tab === 'closed' ? 'block' : 'none';
-      document.getElementById('panelTransactionsContent').style.display = tab === 'transactions' ? 'block' : 'none';
+      var cOpen = document.getElementById('panelOpenContent');
+      if (cOpen) cOpen.style.display = tab === 'open' ? 'block' : 'none';
+      var cClosed = document.getElementById('panelClosedContent');
+      if (cClosed) cClosed.style.display = tab === 'closed' ? 'block' : 'none';
+      var cTrans = document.getElementById('panelTransactionsContent');
+      if (cTrans) cTrans.style.display = tab === 'transactions' ? 'block' : 'none';
 
       // Load data if needed
       if (tab === 'closed') loadPanelClosedPositions();
@@ -649,7 +675,10 @@
     }
 
     async function confirmClosePosition() {
-      const btn = document.getElementById('closePositionModal').querySelector('button:last-of-type');
+      // Guard: prevent double-click while request is in flight
+      if (window._isClosingPosition) return;
+
+      const btn = document.getElementById('btnConfirmClose');
       const positionId = parseInt(document.getElementById('closePositionId').value, 10);
       const token = sessionStorage.getItem('token');
       const msgEl = document.getElementById('closePositionMessage');
@@ -687,23 +716,52 @@
         return;
       }
 
+      // Lock the UI — show loading spinner inside button
+      window._isClosingPosition = true;
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        btn.style.cursor = 'not-allowed';
+        btn.innerHTML = '<span style="display:inline-flex;align-items:center;gap:8px;">'
+          + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" style="animation:spin 0.8s linear infinite;">'
+          + '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>'
+          + '</svg>Closing...</span>';
+      }
+      msgEl.innerHTML = '';
+
       try {
-        if (btn) btn.disabled = true;
-        const csrfRes = await fetch(`${API_BASE}/api/csrf-token`);
-        if (!csrfRes.ok) throw new Error('CSRF token fetch failed');
-        const csrfData = await csrfRes.json();
+        // Fetch CSRF token — if it fails, proceed without it (endpoint may not require it)
+        let csrfToken = '';
+        try {
+          const csrfRes = await fetch(`${API_BASE}/api/csrf-token`, { credentials: 'include' });
+          if (csrfRes.ok) {
+            const csrfData = await csrfRes.json();
+            csrfToken = csrfData.csrf_token || '';
+          }
+        } catch (csrfErr) {
+          console.warn('CSRF fetch failed, proceeding without:', csrfErr);
+        }
+
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        };
+        if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
         const res = await fetch(`${API_BASE}/api/trade/close-position`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-            'X-CSRF-Token': csrfData.csrf_token
-          },
+          headers: headers,
+          credentials: 'include',
           body: JSON.stringify({ position_id: positionId, closing_price: closingPrice })
         });
 
-        const data = await res.json();
+        let data;
+        try {
+          data = await res.json();
+        } catch (parseErr) {
+          throw new Error('Server returned an invalid response (status ' + res.status + ')');
+        }
+
         if (res.ok) {
           // Update balance
           const user = JSON.parse(sessionStorage.getItem('user') || '{}');
@@ -725,11 +783,22 @@
           // Reload positions
           loadOpenPositions();
         } else {
-          msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(data.detail || 'Failed to close position') + '</div>';
+          // Show the actual backend error message
+          const detail = data.detail || data.message || ('Server error: ' + res.status);
+          msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(detail) + '</div>';
         }
-        if (btn) btn.disabled = false;
       } catch (e) {
-        msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">Network error. Please try again.</div>';
+        console.error('Close position error:', e);
+        msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">' + escapeHTML(e.message || 'Network error. Please try again.') + '</div>';
+      } finally {
+        // Always unlock so user can retry if needed
+        window._isClosingPosition = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+          btn.innerHTML = 'Yes, Close';
+        }
       }
     }
 
@@ -1142,4 +1211,11 @@
       setTimeout(loadOpenPositions, 2000);
       setTimeout(startPositionsPoll, 5000);
       connectUserWebSocket();
+      
+      const panel = document.getElementById('openPositionsPanel');
+      if (panel) {
+        new MutationObserver(() => {
+          setTimeout(() => window.dispatchEvent(new Event('resize')), 10);
+        }).observe(panel, { attributes: true, attributeFilter: ['style'] });
+      }
     });

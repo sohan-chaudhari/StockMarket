@@ -17,12 +17,21 @@ class StockData(Base):
     volume = Column(Integer)
 
     __table_args__ = (
+        # DB-03: same redundancy as Candle above -- UniqueConstraint already
+        # backs these exact columns/order with its own index. This model-only
+        # duplicate never actually got created on the live DB (SQLAlchemy
+        # only auto-creates indexes for brand-new tables, and stock_data
+        # already existed), but leaving it here would create it on any fresh
+        # database. ix_stock_data_ticker_date_desc (startup-injected, DESC
+        # order) is the genuinely useful second index.
         UniqueConstraint('ticker', 'date', name='uix_ticker_date'),
-        Index('idx_stock_data_ticker_date', 'ticker', 'date'),
     )
 
 class IntradayTick(Base):
-    __tablename__ = "intraday_ticks"
+    # DB-09: dead in the live app (superseded by the unified `candles` table
+    # + aggregator.py), renamed live to make that unambiguous rather than
+    # dropped -- 8,753 rows of real historical data, kept for now.
+    __tablename__ = "deprecated_intraday_ticks"
 
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True)
@@ -51,7 +60,10 @@ class CurrentDayCandle(Base):
     )
 
 class IntradayCandle5Min(Base):
-    __tablename__ = "intraday_candles_5min"
+    # DB-09: dead in the live app (superseded by the unified `candles`
+    # table), renamed live rather than dropped -- 7.2M rows of real
+    # historical data, kept for now.
+    __tablename__ = "deprecated_intraday_candles_5min"
 
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True)
@@ -68,7 +80,8 @@ class IntradayCandle5Min(Base):
     )
 
 class IntradayCandle15Min(Base):
-    __tablename__ = "intraday_candles_15min"
+    # DB-09: same rationale as IntradayCandle5Min above.
+    __tablename__ = "deprecated_intraday_candles_15min"
 
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True)
@@ -85,7 +98,8 @@ class IntradayCandle15Min(Base):
     )
 
 class IntradayCandle1Min(Base):
-    __tablename__ = "intraday_candles_1min"
+    # DB-09: same rationale as IntradayCandle5Min above.
+    __tablename__ = "deprecated_intraday_candles_1min"
 
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True)
@@ -124,8 +138,13 @@ class Candle(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     __table_args__ = (
+        # DB-03: no separate Index() here -- UniqueConstraint already creates
+        # a backing btree index on these exact columns/order. A duplicate
+        # Index("idx_candle_lookup", ...) used to sit here too, tripling
+        # write cost on this table's every insert with zero query benefit
+        # (ix_candle_ticker_tf_ts below, DESC-ordered, is the genuinely
+        # useful second index for this app's "latest first" queries).
         UniqueConstraint("ticker", "timeframe", "timestamp", name="uix_candle_key"),
-        Index("idx_candle_lookup", "ticker", "timeframe", "timestamp"),
     )
 
 
@@ -153,6 +172,25 @@ class Holiday(Base):
     created_at = Column(DateTime, default=get_ist_now)
 
 
+class FiiDiiFlow(Base):
+    """One row per trading session of FII/DII cash + F&O flows.
+
+    /api/fii-dii scrapes NSE and Moneycontrol, both of which fail intermittently.
+    Persisting each successful scrape means a failed one can fall back to the last
+    known-good figures instead of showing N/A, and history accumulates past the
+    5 sessions the upstream page exposes.
+    """
+    __tablename__ = "fii_dii_flows"
+
+    date = Column(String(20), primary_key=True, index=True)
+    fii_cash_cr = Column(Float, default=0.0)
+    dii_cash_cr = Column(Float, default=0.0)
+    fii_fo_cr = Column(Float, default=0.0)
+    net_total_cr = Column(Float, default=0.0)
+    source = Column(String(40))
+    updated_at = Column(DateTime, default=get_ist_now, onupdate=get_ist_now)
+
+
 class RetentionJob(Base):
     __tablename__ = "retention_jobs"
 
@@ -166,6 +204,26 @@ class RetentionJob(Base):
     rows_target = Column(BigInteger, default=0)
     error_message = Column(String(500), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+class IntradayPrefillJob(Base):
+    """One row per NSE trading session. Tracks the daily 5m prefill run."""
+    __tablename__ = "intraday_prefill_jobs"
+
+    id               = Column(Integer, primary_key=True, index=True)
+    session_date     = Column(Date, nullable=False, unique=True)
+    status           = Column(String(20), nullable=False, default="RUNNING")
+    tickers_total    = Column(Integer, default=0)
+    tickers_skipped  = Column(Integer, default=0)
+    tickers_fetched  = Column(Integer, default=0)
+    tickers_no_data  = Column(Integer, default=0)
+    tickers_partial  = Column(Integer, default=0)
+    tickers_failed   = Column(Integer, default=0)
+    candles_inserted = Column(Integer, default=0)
+    candles_existed  = Column(Integer, default=0)
+    started_at       = Column(DateTime, server_default=func.now())
+    completed_at     = Column(DateTime, nullable=True)
+    error_detail     = Column(String(2000), nullable=True)
+
 
 class StockMetadata(Base):
     __tablename__ = "stock_metadata"
@@ -270,6 +328,7 @@ class Position(Base):
     realized_pnl = Column(Float, nullable=True)
     status = Column(String(20), default='OPEN', index=True)  # 'OPEN', 'CLOSED'
     close_type = Column(String(20), nullable=True)  # 'MANUAL', 'TP_EXECUTED', 'SL_EXECUTED'
+    exit_reason = Column(String(20), nullable=True)  # 'TP_HIT', 'SL_HIT', 'MANUAL_CLOSE'
     take_profit = Column(Float, nullable=True)
     stop_loss = Column(Float, nullable=True)
     tp_edit_count = Column(Integer, default=0)  # Max 3 edits allowed
@@ -277,21 +336,42 @@ class Position(Base):
     created_at = Column(DateTime, default=get_ist_now, index=True)
     closed_at = Column(DateTime, nullable=True)
 
+    __table_args__ = (
+        # DB-07: the open/closed-positions endpoints always filter by both
+        # columns together ("this user's OPEN positions" / "...CLOSED...").
+        # Separate single-column indexes on user_id and status already
+        # existed; this composite serves that exact query pattern directly
+        # instead of relying on a bitmap AND of the two.
+        Index("idx_positions_user_status", "user_id", "status"),
+    )
+
 
 class Order(Base):
-    """Tracks Take Profit and Stop Loss orders"""
+    """Tracks Take Profit, Stop Loss, and Queued AMO entry orders"""
     __tablename__ = "orders"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=False, index=True)
+    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False, index=True)
     ticker = Column(String(50), nullable=False, index=True)
-    order_type = Column(String(10), nullable=False)  # 'TP' or 'SL'
-    trigger_price = Column(Float, nullable=False)
+    stock_name = Column(String(255), nullable=True)
+    order_type = Column(String(20), nullable=False)  # 'TP', 'SL', 'AMO_ENTRY'
+    position_type = Column(String(10), nullable=True)  # 'LONG' or 'SHORT' (for AMO_ENTRY)
+    quantity = Column(Integer, nullable=True)  # (for AMO_ENTRY)
+    trigger_price = Column(Float, nullable=False)  # (for TP/SL: trigger price; for AMO: requested entry price)
     execution_price = Column(Float, nullable=True)
-    status = Column(String(20), default='PENDING', index=True)  # 'PENDING', 'EXECUTED', 'CANCELLED'
+    take_profit = Column(Float, nullable=True)  # (for AMO_ENTRY)
+    stop_loss = Column(Float, nullable=True)  # (for AMO_ENTRY)
+    locked_amount = Column(Float, nullable=True)  # (for AMO_ENTRY)
+    status = Column(String(20), default='PENDING', index=True)  # 'PENDING', 'EXECUTED', 'CANCELLED', 'QUEUED_AMO'
     created_at = Column(DateTime, default=get_ist_now)
     executed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        # DB-07: same rationale as Position -- "this user's PENDING orders"
+        # is the common access pattern.
+        Index("idx_orders_user_status", "user_id", "status"),
+    )
 
 
 class Transaction(Base):
@@ -330,7 +410,8 @@ class UserWatchlist(Base):
 
 
 class IntradayCandle1H(Base):
-    __tablename__ = "intraday_candles_1h"
+    # DB-09: same rationale as IntradayCandle5Min above.
+    __tablename__ = "deprecated_intraday_candles_1h"
 
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True)
@@ -347,7 +428,8 @@ class IntradayCandle1H(Base):
     )
 
 class IntradayCandle30Min(Base):
-    __tablename__ = "intraday_candles_30min"
+    # DB-09: same rationale as IntradayCandle5Min above.
+    __tablename__ = "deprecated_intraday_candles_30min"
 
     id = Column(Integer, primary_key=True, index=True)
     ticker = Column(String, index=True)

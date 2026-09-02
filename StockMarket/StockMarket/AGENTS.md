@@ -124,6 +124,107 @@
 | 9 | 🟡 LOW | `recover_from_db()` created phantom forming candles when restarting after market close (15:30+) | Wrapped forming candle init in `if is_market_hour(now_dt):` |
 | 10 | 🟡 LOW | `compute_candle_health` used `datetime.now()` (UTC on Linux) vs IST-naive candle timestamps — 5.5h offset | Changed to `ist_now_naive()` |
 
+### Session 6: TV Drawing Tools — Engine Architecture (Phase 2) + Basic Line Tools (Phase 3.1)
+
+**Goal:** Build a TradingView-compatible drawing engine with proper separation of concerns and implement all basic line tools.
+
+## Files Modified
+- `frontend/drawing-core.js` — DrawingEngine, HitTestService, GeometryUtils, SnappingEngine, SelectionManager, UndoRedoManager, CoordinateMapper, DrawingModel, Serializer
+- `frontend/drawings.js` — All drawing renderer classes + ToolManager
+
+## Architecture (Phase 2)
+### DrawingModel (§1)
+- Pure data container: id, type, points[{time, price}], style, locked, hidden, zIndex, groupId
+- `toJSON()` serialization / `fromJSON()` reconstruction
+- `clone()` deep copy with new id
+- `equals()` structural comparison (used by UndoRedoManager)
+
+### DrawingEngine (§2)
+- Central orchestrator: `addDrawing()`, `removeDrawing()`, `updateDrawing()`, `finalizeDrawing()`
+- `finalizeDrawing()` creates DrawingModel from renderer, links bidirectionally, creates snapshot, emits events, pushes undo
+- `syncModel()` / `syncRenderer()` bi-directional state sync
+- `render(ctx, chartState, selectedId, hoveredId)` — DPR-scaled, z-ordered, viewport-culled, with post-render handle pass
+- `_getVisibleDrawings()` viewport culling using line-canvas intersection
+- EventBus for decoupled event handling
+
+### HitTestService (§3)
+- 5-tier hit testing: anchor → midpoint → edge → fill → body
+- Handle hit via `getAnchorPoints()` / `getMidpoints()` / `getFillShape()`
+- Single-point drawing body hit via distance check
+
+### GeometryUtils (§3.2)
+- `lineCanvasIntersection()` — clip line to canvas rect
+- `pointToLineSegment()` — closest point + distance
+- `pointInPolygon()` — ray casting
+- `segmentIntersection()` — line segment intersection
+- `distance()` — Euclidean
+
+### SnappingEngine (§3.3)
+- `snapToPrice()` / `snapToTime()` / `getSnappedPos()` with configurable thresholds
+- OHLC snap points from data provider
+- Shift temporarily inverts snap mode
+- `toggleMagnet()` / `isEnabled()`
+
+### SelectionManager (§4)
+- Single-selection via `select(id)`, `deselect()`, `getPrimary()`
+- Multi-select via `toggle(id)`, `selectRange(ids)`, `clear()`
+- Marquee selection support
+
+### UndoRedoManager (§5)
+- Snapshot-based undo/redo with configurable capacity (default 50)
+- `capture(snapshot)`, `undo()`, `redo()`, `clear()`
+- Snapshots store full drawing state array
+
+### CoordinateMapper (Phase 1 bridge)
+- `pixelToCoord(x, y)` / `coordToPixel(c)` — bridges TV chart API coordinate system
+- Handles time-to-x and price-to-y conversions via TV chart methods
+
+## P0 Fixes (Phase 2 verification)
+1. **Fill hit-testing**: Unified API via `getFillShape(pixels)`. Rectangle returns 4 corners. Circle returns 32-gon. TriangleShape returns 3 vertices. ParallelChannel returns 4 vertices.
+2. **Midpoint drag**: Now translates entire drawing (body drag behavior) by computing delta from midpoint start/end and mapping through `translate(dx, dy, chartState)`.
+3. **Handle rendering layer**: Removed inline handle drawing from `TwoPointDrawing.draw()`. Engine's post-render pass handles it via `drawHandles()`.
+4. **HiDPI**: DPR scaling via `ctx.scale(dpr, dpr)` in render pipeline. `clearRect` uses CSS coordinates.
+5. **Selection model**: Single source of truth via `engine.selection.getPrimary()`. `selectedDrawing` is a getter that calls this.
+6. **Snapping fully wired**: SnappingEngine in ToolManager, data provider for OHLC, `getMousePos` uses snap, Shift toggles temporarily, `toggleMagnet()` functional.
+7. **Placement preview**: Already implemented — `onMouseMove` calls `currentDrawing.update()`.
+
+## Phase 3.1 — Basic Line Tools (complete)
+Refactored four 1-point tools from `TwoPointDrawing` to `BaseDrawing`:
+- **HorizontalLine** — 1-point price-only line spanning full width. Constrained Y-only translate. Price badge at right edge.
+- **VerticalLine** — 1-point time-only line spanning full height. Constrained X-only translate. Price badge at top.
+- **HorizontalRay** — 1-point (time+price anchor), extends rightward to canvas edge. Points changed from 2→1 in ToolDefinitions.
+- **CrossLine** — 1-point crosshair (vertical + horizontal through anchor). Price badge at right edge. Points changed from 2→1 in ToolDefinitions.
+
+Moved `getPriceLabel()` and `drawPriceBadge()` from `TwoPointDrawing` to `BaseDrawing` for reuse.
+
+Existing 2-point tools verified correct:
+- **TrendLine** — 2-point, bidirectional segment
+- **Ray** — 2-point (anchor + direction), extends infinitely from p1 through p2
+- **ExtendedLine** — 2-point, extends infinitely both directions
+- **InfoLine** — 2-point, info bubble at midpoint
+- **TrendAngle** — 2-point, angle label at p2
+
+All nine Phase 3.1 tools implement `drawHandles()` for engine post-render pass, `getAnchorPoints()`, `getMidpoints()`, and proper `translate()` behavior.
+
+## Next Steps
+- Phase 3.2: Channels — ParallelChannel (3-point), Regression Trend, Pitchfork (3-point with median + outer lines)
+
+### Session 5: Dashboard load performance fixes
+
+**Goal:** Fix ~1-minute dashboard load time by eliminating redundant API calls and adding fetch timeouts.
+
+### Root Cause
+On DOMContentLoaded, both `index.js` and `dashboard.js` independently call `/api/live-prices` with overlapping tickers. If AngelOne WS data is missing for any ticker, both calls fall through to yfinance (12s each via semaphore). With multiple concurrent backend consumers, each `/api/live-prices` call can take 12-24s, and 2-3 such calls = ~1 minute.
+
+### Files Modified
+- `frontend/index.js` — Skip immediate `updatePrices()` call on dashboard pages (`.dashboard-main` present); `fetchIndexPrices()` + WS events provide initial data, 15s interval still covers backup
+- `frontend/dashboard.js` — Added 12s AbortController timeout to `fetchIndexPrices()`, 10s timeout to `fetchMarketMovers()` so hung requests don't delay rendering
+
+### Key Decisions
+- **Frontend-only fixes**: Backend was reverted by user earlier in this session
+- **Timeout over complex caching**: AbortController is simpler and more robust than a shared promise cache across files
+- **Non-dashboard pages (profile.html) still get immediate `updatePrices()`** since they don't load `dashboard.js`
+
 ### Total Progress
 - **18 of 14+ candle building/storage bugs fixed** (8 from earlier sessions + 10 from this audit)
 - Original 14-bug tracker now has 12 fixed; 2 low-severity remain unaddressed

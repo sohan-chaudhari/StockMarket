@@ -263,8 +263,8 @@ async def get_scanx_news_fast_by_ticker(
         from urllib.parse import quote_plus
         from email.utils import parsedate_to_datetime
         
-        # Prepend scanx.trade\ to curate results from the scanx.trade platform as requested
-        search_term = f"scanx.trade\\{ticker}"
+        # Use just the ticker for broader Google News RSS search
+        search_term = f"{ticker} stock India"
         query = quote_plus(search_term)
         url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
         

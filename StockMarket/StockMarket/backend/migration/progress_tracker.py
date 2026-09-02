@@ -64,11 +64,56 @@ class ProgressTracker:
         checksum_src: str,
         checksum_db: str,
     ):
+        # MIG-01: enforce the checksum gate — if checksums diverge the DB
+        # write was silently corrupted; fail the job so it gets retried
+        # rather than masking bad data under a DONE status.
+        if checksum_src and checksum_db and checksum_src != checksum_db:
+            self.mark_failed(
+                db, job,
+                f"Checksum mismatch: src={checksum_src} db={checksum_db}"
+            )
+            print(f"[Migration] CHECKSUM MISMATCH for {job.ticker} tier={job.tier} "
+                  f"— marked FAILED for retry (src={checksum_src}, db={checksum_db})")
+            return
         job.status = "DONE"
         job.rows_fetched = rows_fetched
         job.rows_inserted = rows_inserted
         job.checksum_src = checksum_src
         job.checksum_db = checksum_db
+        job.completed_at = datetime.now()
+        job.last_updated = datetime.now()
+
+    # Terminal statuses: a job in one of these is finished and must NOT be
+    # re-fetched by a later run. get_pending_jobs() only picks up
+    # PENDING/FAILED, and BatchDownloader._worker_loop skips these.
+    #
+    # MigrationJob.status is Column(String(20)) -- every value here MUST fit
+    # in 20 characters. The first attempt used the far more descriptive
+    # "COMPLETE_WITH_KNOWN_ABSENCES" (29 chars); Postgres rejected the UPDATE
+    # with StringDataRightTruncation *after* a full 1,001-ticker migration had
+    # already fetched and promoted, losing only the status labels. Checking
+    # that a column is a String is not the same as checking its width.
+    # test_status_values_fit_column asserts this invariant.
+    KNOWN_ABSENCES = "KNOWN_ABSENCES"
+    TERMINAL_STATUSES = ("DONE", KNOWN_ABSENCES)
+
+    def mark_complete_with_known_absences(self, db: Session, job: MigrationJob, detail: str):
+        """The ticker's fetch fully SUCCEEDED (every requested chunk returned
+        a successful response), yet some sessions are still absent because
+        Angel One's own dataset does not contain them -- e.g. illiquid
+        securities with genuine no-trade days, and cases where 5m data proves
+        the security traded but no 1D candle exists.
+
+        This is deliberately NOT 'DONE' (the history is genuinely incomplete
+        and that must stay visible) and NOT 'FAILED' (nothing failed, and
+        retrying would re-request the identical range, get the identical
+        empty-but-successful answer, and fail forever). Stored in the
+        existing status String column -- no schema change required.
+
+        Only reachable when zero chunks failed; a ticker with any real fetch
+        failure stays FAILED and remains eligible for retry."""
+        job.status = self.KNOWN_ABSENCES
+        job.error_message = detail
         job.completed_at = datetime.now()
         job.last_updated = datetime.now()
 
@@ -130,6 +175,33 @@ class ProgressTracker:
             "total_rows": r[6],
             "total_retries": r[7],
         } for r in rows]
+
+    def recover_stuck_fetching(self, db: Session, older_than_minutes: int = 30) -> int:
+        """MIG-01: Reset jobs stuck in FETCHING (app crashed mid-migration)
+        back to PENDING so they are retried on the next resume.
+
+        A job should complete in well under a minute.  Any FETCHING row
+        older than *older_than_minutes* was left stranded by a crash and
+        will never self-recover — it just holds the slot forever with
+        retry_count=0.
+        """
+        from datetime import timedelta as _td
+        cutoff = datetime.now() - _td(minutes=older_than_minutes)
+        stuck = db.execute(text("""
+            SELECT id FROM migration_jobs
+            WHERE status = 'FETCHING'
+              AND (started_at IS NULL OR started_at < :cutoff)
+        """), {"cutoff": cutoff}).fetchall()
+        if not stuck:
+            return 0
+        ids = [r[0] for r in stuck]
+        db.execute(text("""
+            UPDATE migration_jobs
+            SET status = 'PENDING', last_updated = NOW()
+            WHERE id = ANY(:ids)
+        """), {"ids": ids})
+        print(f"[Migration] Recovered {len(ids)} stuck FETCHING job(s) → PENDING")
+        return len(ids)
 
     def get_failed_jobs(self, db: Session) -> List[dict]:
         rows = db.execute(text("""

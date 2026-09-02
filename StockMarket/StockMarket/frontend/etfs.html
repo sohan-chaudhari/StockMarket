@@ -1,11 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ETFs - LEVERAGE</title>
-    <link rel="stylesheet" href="index.css">
-    <link rel="stylesheet" href="nav.css">
+    <link rel="stylesheet" href="tokens.css?v=2">
+    <link rel="stylesheet" href="index.css?v=82">
+    <link rel="stylesheet" href="nav.css?v=12">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
     <style>
         body { background: #0A0A0B; color: #fff; font-family: 'Inter', sans-serif; }
@@ -19,10 +21,11 @@
         .etf-ticker { font-size: 0.75rem; color: #4A90E2; margin-bottom: 8px; }
         .etf-price { font-family: 'Roboto Mono', monospace; font-size: 1.2rem; font-weight: 700; }
         .etf-change { font-family: 'Roboto Mono', monospace; font-size: 0.85rem; }
-        .text-green { color: #00E676; } .text-red { color: #FF0055; }
+        .text-green { color: #089981; } .text-red { color: #f23645; }
         .category-tag { display: inline-block; padding: 2px 8px; background: rgba(255,255,255,0.06); border-radius: 10px; font-size: 0.7rem; color: #a1a1aa; margin-top: 6px; }
     </style>
     <script src="page-cache.js"></script>
+    <script src="ws.js"></script>
 </head>
 <body>
     <div id="nav-root"></div>
@@ -68,7 +71,7 @@
                     var pct = prev>0 ? (diff/prev)*100 : 0;
                     var cls = diff>=0 ? 'text-green' : 'text-red';
                     var sign = diff>=0 ? '+' : '';
-                    return '<div class="etf-card" onclick="window.location.href=\'stock.html?ticker='+e.ticker+'\'">' +
+                    return '<div class="etf-card" onclick="window.location.href=\'overview.html?ticker='+e.ticker+'\'">' +
                         '<div class="etf-name">'+e.name+'</div>' +
                         '<div class="etf-ticker">'+e.ticker+' <span class="category-tag">'+e.category+'</span></div>' +
                         '<div class="etf-price">'+(price?'\u20B9'+price.toFixed(2):'--')+'</div>' +
@@ -82,6 +85,7 @@
         loadETFs();
     </script>
     <script src="stocks.js"></script>
-    <script src="nav.js?v=3"></script>
+    <script src="nav.js?v=8"></script>
 </body>
 </html>
+

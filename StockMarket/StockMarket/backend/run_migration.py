@@ -91,9 +91,17 @@ def cmd_migrate(args):
 def cmd_resume(args):
     db = SessionLocal()
     try:
+        # MIG-01: reset any jobs stranded in FETCHING (app crashed mid-run)
+        cfg = MigrationConfig.load()
+        tracker = ProgressTracker(cfg)
+        recovered = tracker.recover_stuck_fetching(db, older_than_minutes=30)
+        if recovered:
+            db.commit()
+            print(f"[Resume] Recovered {recovered} stuck FETCHING job(s) → PENDING")
+
         incomplete = db.execute(sql_text("""
             SELECT COUNT(*) FROM migration_jobs
-            WHERE status NOT IN ('DONE', 'FAILED_RETRY_EXHAUSTED')
+            WHERE status NOT IN ('DONE', 'FAILED_RETRY_EXHAUSTED', 'KNOWN_ABSENCES')
         """)).scalar()
         if incomplete == 0:
             print("[OK] All jobs are complete or exhausted. Nothing to resume.\n")

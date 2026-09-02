@@ -4,13 +4,13 @@ import time
 import argparse
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from backend.database import SessionLocal, engine
-from backend.models import IntradayCandle5Min
-from backend.historical_service import HistoricalDataService
-from backend.angelone_service import angelone_service
-import pandas as pd
+from sqlalchemy import text
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from database import SessionLocal, engine
+from historical_service import HistoricalDataService
+from angelone_service import angelone_service
 
 # Initialize Services
 historical_service = HistoricalDataService()
@@ -72,16 +72,11 @@ def fetch_and_store_ticker(ticker, session):
                         continue
 
                 if valid_candles:
-                    # Bulk Insert with conflict handling (Postgres specific)
+                    # Bulk Insert — DO NOTHING so existing candles are never overwritten by the backfill
                     stmt = text("""
-                        INSERT INTO intraday_candles_5min (ticker, timestamp, open, high, low, close, volume)
-                        VALUES (:ticker, :timestamp, :open, :high, :low, :close, :volume)
-                        ON CONFLICT (ticker, timestamp) DO UPDATE SET
-                            open = EXCLUDED.open,
-                            high = EXCLUDED.high,
-                            low = EXCLUDED.low,
-                            close = EXCLUDED.close,
-                            volume = EXCLUDED.volume;
+                        INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close, volume, is_completed, is_backfilled, data_source)
+                        VALUES (:ticker, '5m', :timestamp, :open, :high, :low, :close, :volume, TRUE, TRUE, 'BACKFILL')
+                        ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
                     """)
                     
                     session.execute(stmt, valid_candles)
@@ -143,15 +138,8 @@ def main():
     else:
         # Get Tickers
         print("Fetching tickers from Database...")
-        try:
-            # Try fetching from 'tickers' table first
-            result = session.execute(text("SELECT ticker FROM tickers"))
-            tickers = [row[0] for row in result.fetchall()]
-        except Exception:
-            print("'tickers' table not found/empty. Falling back to 'stock_metadata'...")
-            # Fallback
-            res = session.execute(text("SELECT ticker FROM stock_metadata"))
-            tickers = [row[0] for row in res.fetchall()]
+        res = session.execute(text("SELECT ticker FROM stock_metadata"))
+        tickers = [row[0] for row in res.fetchall()]
     
     session.close() # Close main session
     

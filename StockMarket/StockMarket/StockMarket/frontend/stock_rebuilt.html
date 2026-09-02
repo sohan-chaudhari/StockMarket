@@ -7,13 +7,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Stock Analysis - Live</title>
   <script src="lightweight-charts.js"></script>
-  <link rel="stylesheet" href="styles.css?v=35">
-  <link rel="stylesheet" href="index.css?v=50">
-  <link rel="stylesheet" href="nav.css?v=2">
-  <link rel="stylesheet" href="drawings.css?v=3">
-  <link rel="stylesheet" href="loader.css?v=2">
+  <link rel="stylesheet" href="index.css?v=66">
+  <link rel="stylesheet" href="nav.css?v=4">
+  <link rel="stylesheet" href="loader.css?v=4">
+  <link rel="stylesheet" href="drawings.css?v=6">
+  
   <link rel="stylesheet" href="responsive.css?v=1">
 
+    <script src="page-cache.js"></script>
 </head>
 
 <body style="background-color: #0A0A0B;">
@@ -118,6 +119,12 @@
           </svg>
           <span>Cross Line</span>
         </div>
+        <div class="submenu-item" onclick="activateTool('trend_angle', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 24L24 4" stroke="currentColor" stroke-width="2" /><text x="14" y="10" font-size="7" fill="currentColor">30°</text>
+          </svg>
+          <span>Trend Angle</span>
+        </div>
         <div class="submenu-header">CHANNELS</div>
         <div class="submenu-item" onclick="activateTool('channel', event);">
           <svg viewBox="0 0 28 28">
@@ -131,6 +138,44 @@
               fill="none" />
           </svg>
           <span>Pitchfork</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('flat_top_channel', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 8H24M4 20L24 14" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Flat Top/Bottom Channel</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('disjoint_channel', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M4 18L14 8M10 22L24 4M14 8H10M14 8L24 4" stroke="currentColor" stroke-width="2" />
+          </svg>
+          <span>Disjoint Channel</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('regression_trend', event);">
+          <svg viewBox="0 0 28 28">
+            <line x1="4" y1="20" x2="24" y2="8" stroke="currentColor" stroke-width="2" stroke-dasharray="3,2" />
+            <circle cx="4" cy="20" r="2" fill="currentColor" />
+            <circle cx="24" cy="8" r="2" fill="currentColor" />
+          </svg>
+          <span>Regression Trend</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('schiff_pitchfork', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 22L14 6M14 6L26 22M10 22L14 14" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Schiff Pitchfork</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('modified_schiff_pitchfork', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 22L14 8M14 8L26 22M6 22L14 14M22 22L14 14" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Modified Schiff Pitchfork</span>
+        </div>
+        <div class="submenu-item" onclick="activateTool('inside_pitchfork', event);">
+          <svg viewBox="0 0 28 28">
+            <path d="M2 22L14 6M14 6L26 22M6 18L14 10M22 18L14 10" stroke="currentColor" stroke-width="2" fill="none" />
+          </svg>
+          <span>Inside Pitchfork</span>
         </div>
       </div>
     </div>
@@ -391,6 +436,41 @@
         </div>
       </div>
     </div>
+    
+    <div class="toolbar-separator"></div>
+
+    <div class="toolbar-item" title="Weak Magnet" data-active="true"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleMagnet(this)">
+      <svg viewBox="0 0 28 28">
+        <path d="M4 10C4 6 7 2 14 2C21 2 24 6 24 10V16H20V10C20 8 18 6 14 6C10 6 8 8 8 10V16H4V10Z"
+          fill="currentColor" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Stay in Drawing Mode"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleStayMode(this)">
+      <svg viewBox="0 0 28 28">
+        <rect x="6" y="12" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" fill="none" />
+        <path d="M14 12V6C14 4 15 2 17 2" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Lock All Drawing Tools"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleLockAll(this)">
+      <svg viewBox="0 0 28 28">
+        <rect x="6" y="12" width="16" height="12" rx="2" fill="currentColor" />
+        <path d="M14 12V6C14 4 15 2 17 2H11C13 2 14 4 14 6" stroke="currentColor" stroke-width="2" fill="none" />
+      </svg>
+    </div>
+
+    <div class="toolbar-item" title="Hide All Drawing Tools"
+      onclick="document.querySelectorAll('.drawing-submenu').forEach(el => el.classList.remove('visible')); toggleHideAll(this)">
+      <svg viewBox="0 0 28 28">
+        <path d="M2 14Q7 4 14 4Q21 4 26 14Q21 24 14 24Q7 24 2 14Z" stroke="currentColor" stroke-width="2"
+          fill="none" />
+        <circle cx="14" cy="14" r="4" fill="currentColor" />
+      </svg>
+    </div>
 
     <div class="toolbar-separator"></div>
 
@@ -417,6 +497,13 @@
           <span>Remove Drawings</span>
         </div>
       </div>
+    </div>
+
+    <!-- Fullscreen Button -->
+    <div class="toolbar-item" title="Toggle Fullscreen Mode" onclick="if(!document.fullscreenElement){document.documentElement.requestFullscreen();}else{document.exitFullscreen();}">
+      <svg viewBox="0 0 28 28">
+        <path d="M4 10V4H10M18 4H24V10M24 18V24H18M10 24H4V18" stroke="currentColor" stroke-width="2.5" fill="none" />
+      </svg>
     </div>
   </div>
 
@@ -502,15 +589,10 @@
                   style="color: #d1d4dc; font-weight: 700;">--</span></span>
               <span><span style="font-weight: 700;">C:</span> <span id="ohlc-close"
                   style="color: #d1d4dc; font-weight: 700;">--</span></span>
-            <div class="trade-buttons"
-                style="display: flex; gap: 10px; margin-left: 10px; transform: translateY(-15px);">
-                <button class="trade-btn" onclick="window.location.href='login.html'"
-                  style="font-size: 16px; padding: 8px 24px; background: #4A90E2; border: none; border-radius: 8px; color: white; cursor: pointer; font-weight: 600;">Trade</button>
-                <button class="news-btn" onclick="toggleNewsModal()"
-                  style="font-size: 16px; padding: 8px 24px; background: #ff9800; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);">
-                  <span style="margin-right: 6px;">📰</span> News Sentiment
-                </button>
-              </div>
+              <span style="color:#555;margin:0 8px;">|</span>
+              <span><span style="font-weight: 700;">Vol:</span> <span id="ohlc-volume"
+                  style="color: #d1d4dc; font-weight: 700;">--</span></span>
+            </div>
             </div>
           </div>
         </div>
@@ -523,7 +605,7 @@
 
 
     <!-- Chart -->
-    <div id="chart-container" style="position: relative;">
+    <div id="chart-container" style="position: relative; padding-bottom: 20px; box-sizing: border-box;">
       <div class="loading" id="loading">Loading...</div>
       <div class="error" id="error-msg"></div>
       <div id="chart"></div>
@@ -553,8 +635,9 @@
   <script src="nav.js?v=4"></script>
   <script src="news.js"></script>
   <script src="cache.js?v=1"></script>
-  <script src="dashboard.js?v=1004"></script> <!-- TradingView Logic -->
-  <script src="drawings.js?v=7"></script>
+  <script src="dashboard.js?v=1027"></script> <!-- TradingView Logic -->
+  <script src="drawing-core.js?v=25"></script>
+<script src="drawings.js?v=75"></script>
 
   <!-- News Modal -->
   <div id="newsModal" class="modal">
@@ -581,7 +664,7 @@
       const isVisible = modal.classList.toggle('visible');
       
       if (isVisible) {
-        const ticker = currentTicker || 'RELIANCE.NS';
+        const ticker = window.currentTicker || 'RELIANCE.NS';
         document.getElementById('newsModalTitle').innerText = `${ticker} News Sentiment`;
         document.getElementById('loading-ticker').innerText = ticker;
         

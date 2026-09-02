@@ -29,13 +29,14 @@ class TestCandleResampler(unittest.TestCase):
             make_5m_candle(datetime(2026, 7, 1, 9, 30), 109, 112, 108, 110, 600),
             make_5m_candle(datetime(2026, 7, 1, 9, 35), 110, 115, 109, 113, 900),
             make_5m_candle(datetime(2026, 7, 1, 9, 40), 113, 114, 111, 112, 700),
+            make_5m_candle(datetime(2026, 7, 1, 9, 45), 112, 116, 110, 114, 800),
         ]
         result = CandleResampler.resample_5m_to(candles, "30m")
-        # Pandas 30min buckets: [9:00, 9:30) and [9:30, 10:00)
+        # Pandas 30min buckets with offset='15min': [9:15, 9:45) and [9:45, 10:15)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["open"], 100)
-        self.assertEqual(result[1]["close"], 112)
-        self.assertEqual(result[0]["volume"] + result[1]["volume"], 5200)
+        self.assertEqual(result[1]["close"], 114)
+        self.assertEqual(result[0]["volume"] + result[1]["volume"], 6000)
 
     def test_resample_to_1h(self):
         many = []
@@ -104,6 +105,63 @@ class TestCandleResampler(unittest.TestCase):
         candles = [make_5m_candle(datetime(2026, 7, d, 10, 0), 100, 105, 95, 102, 1000) for d in range(1, 15)]
         result = CandleResampler.resample_5m_to(candles, "1M")
         self.assertGreater(len(result), 0)
+
+    # ── Decision: Chain B (1D -> 1W -> 1M) OHLCV correctness ─────────────────
+    # 2026-07-06 was a Monday — a full Mon-Fri trading week, all in one W-MON
+    # bucket, so this test isolates exactly one resulting weekly candle and
+    # checks every field the retention boundary test (item #15) requires:
+    # open = first session's open, high = max, low = min,
+    # close = final session's close, volume = sum.
+
+    def test_resample_1d_to_1w_ohlcv_correctness(self):
+        daily_candles = [
+            make_5m_candle(datetime(2026, 7, 6), 100, 108, 98, 104, 1000),   # Mon (first)
+            make_5m_candle(datetime(2026, 7, 7), 104, 112, 102, 109, 1500),  # Tue
+            make_5m_candle(datetime(2026, 7, 8), 109, 115, 105, 111, 900),   # Wed
+            make_5m_candle(datetime(2026, 7, 9), 111, 118, 108, 114, 1200),  # Thu
+            make_5m_candle(datetime(2026, 7, 10), 114, 120, 110, 117, 1100), # Fri (last)
+        ]
+        result = CandleResampler.resample_5m_to(daily_candles, "1W")
+        self.assertEqual(len(result), 1, "a single Mon-Fri week must resample to exactly one weekly candle")
+        week = result[0]
+        self.assertEqual(week["open"], 100, "weekly open must be the first session's open")
+        self.assertEqual(week["high"], 120, "weekly high must be the max across all sessions")
+        self.assertEqual(week["low"], 98, "weekly low must be the min across all sessions")
+        self.assertEqual(week["close"], 117, "weekly close must be the final session's close")
+        self.assertEqual(week["volume"], 1000 + 1500 + 900 + 1200 + 1100, "weekly volume must be the sum")
+
+    def test_resample_1w_to_1m_ohlcv_correctness(self):
+        # Four weekly candles inside January 2026 must aggregate into one
+        # monthly candle with the same open/high/low/close/volume rules as
+        # the 1D->1W case; a fifth week (in February) must NOT be merged in.
+        weekly_candles = [
+            make_5m_candle(datetime(2026, 1, 5),  100, 110, 95,  105, 1000),
+            make_5m_candle(datetime(2026, 1, 12), 105, 115, 100, 112, 1200),
+            make_5m_candle(datetime(2026, 1, 19), 112, 120, 108, 118, 900),
+            make_5m_candle(datetime(2026, 1, 26), 118, 125, 114, 121, 1100),
+            make_5m_candle(datetime(2026, 2, 2),  121, 128, 119, 124, 800),
+        ]
+        result = CandleResampler.resample_5m_to(weekly_candles, "1M")
+        self.assertEqual(len(result), 2, "January and February must be separate monthly candles")
+        january = result[0]
+        self.assertEqual(january["open"], 100, "monthly open must be the first week's open")
+        self.assertEqual(january["high"], 125, "monthly high must be the max across all weeks in the month")
+        self.assertEqual(january["low"], 95, "monthly low must be the min across all weeks in the month")
+        self.assertEqual(january["close"], 121, "monthly close must be the final week's close")
+        self.assertEqual(january["volume"], 1000 + 1200 + 900 + 1100, "monthly volume must be the sum")
+        self.assertEqual(result[1]["open"], 121)
+
+    def test_resample_1d_to_1w_splits_across_week_boundary(self):
+        # Fri 2026-07-03 (end of one week) and Mon 2026-07-06 (start of the
+        # next) must land in two DIFFERENT weekly candles, not be merged.
+        candles = [
+            make_5m_candle(datetime(2026, 7, 3), 100, 105, 95, 102, 500),   # Fri
+            make_5m_candle(datetime(2026, 7, 6), 200, 205, 195, 202, 700),  # Mon (next week)
+        ]
+        result = CandleResampler.resample_5m_to(candles, "1W")
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["close"], 102)
+        self.assertEqual(result[1]["open"], 200)
 
     def test_resample_empty_candles(self):
         result = CandleResampler.resample_5m_to([], "15m")

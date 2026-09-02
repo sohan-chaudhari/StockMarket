@@ -19,7 +19,10 @@ window.addEventListener('error', function (e) {
   // ── 1. Fetch the lightweight version string from server ──────────────────
   var serverVersion = null;
   try {
-    var vRes = await fetch('/api/stocks-version');
+    var vAc = new AbortController();
+    var vTo = setTimeout(function () { vAc.abort(); }, 15000);
+    var vRes = await fetch('/api/stocks-version', { signal: vAc.signal });
+    clearTimeout(vTo);
     if (vRes.ok) {
       var vData = await vRes.json();
       serverVersion = vData.version || null;
@@ -59,7 +62,7 @@ window.addEventListener('error', function (e) {
   for (var attempt = 0; attempt < 2; attempt++) {
     try {
       var ac = new AbortController();
-      var to = setTimeout(function () { ac.abort(); }, 15000);
+      var to = setTimeout(function () { ac.abort(); }, 25000);
       var response = await fetch('/api/all-stocks', { signal: ac.signal });
       clearTimeout(to);
       if (!response.ok) throw new Error('HTTP ' + response.status);

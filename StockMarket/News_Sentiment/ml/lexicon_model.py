@@ -52,7 +52,7 @@ class LexiconModel:
             "raise", "raised", "raising", "raises",
             "ipo", "listing", "listed", "lists", "debut",
             "infusion", "inject", "injection",
-            "capital", "stake", "equity", # Managed by ContextualWordAnalyzer
+            "capital", "equity", # "stake" removed — context-dependent; handled by patterns
             
             # === Growth & Subscriber Metrics ===
             "adds", "added", "adding", "addition", "additions",
@@ -376,6 +376,18 @@ class LexiconModel:
             r'(reduces?|cuts?|slashes?|lowers?) .{0,20}?(interest|rates?|returns?)': -0.3,
             r'(increases?|hikes?|raises?) .{0,20}?(fees?|charges?|penalties?)': -0.4,
             r'(withdraws?|removes?|discontinues?) .{0,20}?(benefits?|features?|offers?)': -0.4,
+
+            # Promoter stake reduction (insider selling — bearish signal)
+            r'promoter[s]? (reduce[s]?|sell[s]?|offload[s]?|divest[s]?|cuts?) .{0,30}?stake': -0.45,
+            r'(reduce[s]?|sell[s]?|offload[s]?|divest[s]?) .{0,30}?stake .{0,30}?(open market|block deal|bulk deal)': -0.4,
+            r'open market sale .{0,30}?promoter': -0.35,
+            r'promoter[s]? .{0,30}?stake .{0,30}?(open market|block deal|bulk deal)': -0.35,
+            r'promoter[s]? (holding|stake) (falls?|drops?|declines?|reduces?)': -0.4,
+
+            # Director/management resignation (leadership instability)
+            r'(steps? down|resign[s]?|quits?|stepped down) .{0,30}?(director|ceo|cfo|md|chairman|coo)': -0.3,
+            r'(director|ceo|cfo|md|chairman) .{0,30}?(steps? down|resign[s]?|quits?)': -0.3,
+            r'(independent |executive |whole-time )?director .{0,10}(steps? down|resignation)': -0.25,
         }
         
         # Strong bullish signals
@@ -423,6 +435,10 @@ class LexiconModel:
             r'(expands?|increases?|doubles?) (capacity|production|output)': 0.3,
             r'(new|additional) (plant|factory|facility)': 0.3,
             r'(commissioning|inaugurates?) (new|additional)': 0.3,
+
+            # Corporate governance / scheduled events (mild positive — active company)
+            r'(schedules?|announces?|convenes?) .{0,30}?(agm|annual general meeting|egm|board meeting)': 0.08,
+            r'(record date|book closure) .{0,30}?(dividend|bonus|rights)': 0.15,
         }
         
         # ============================================================

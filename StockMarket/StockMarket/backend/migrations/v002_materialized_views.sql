@@ -11,7 +11,8 @@ SELECT ticker,
        MIN(low)   AS low,
        (array_agg(close ORDER BY timestamp DESC))[1] AS close,
        SUM(volume) AS volume
-FROM intraday_candles_5min
+FROM candles
+WHERE timeframe = '5m'
 GROUP BY ticker, bucket
 WITH DATA;
 
@@ -25,7 +26,8 @@ SELECT ticker,
        MIN(low)   AS low,
        (array_agg(close ORDER BY timestamp DESC))[1] AS close,
        SUM(volume) AS volume
-FROM intraday_candles_5min
+FROM candles
+WHERE timeframe = '5m'
 GROUP BY ticker, bucket
 WITH DATA;
 

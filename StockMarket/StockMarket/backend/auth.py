@@ -19,13 +19,10 @@ from database import get_db, get_ist_now
 load_dotenv()
 
 # Configuration
-# BUG-11 FIX: Warn loudly if JWT_SECRET_KEY is missing. Using a static default in production
-# allows anyone who knows the default to forge valid tokens for any user.
+# BUG-11 FIX: Raise RuntimeError if JWT_SECRET_KEY is missing.
 _SECRET_KEY_RAW = os.getenv("JWT_SECRET_KEY", "")
 if not _SECRET_KEY_RAW:
-    print("\n[WARNING] FATAL: JWT_SECRET_KEY environment variable is not set!")
-    print("[WARNING] Using a temporary key. Set JWT_SECRET_KEY in .env before production!\n")
-    _SECRET_KEY_RAW = "temporary_dev_secret_key_change_me_immediately"
+    raise RuntimeError("JWT_SECRET_KEY environment variable is not set! Application cannot run in unsafe mode.")
 SECRET_KEY = _SECRET_KEY_RAW
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24

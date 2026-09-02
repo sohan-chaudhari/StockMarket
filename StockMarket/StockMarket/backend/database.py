@@ -37,8 +37,15 @@ else:
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
+    # DO NOT reduce pool_size+max_overflow below 35 total.
+    # History: raised from 10/20 (ceiling=30) because startup background jobs
+    # (daily prefill, prewarm, close sync) exhausted the pool — every request
+    # then blocked for 30s and failed with "QueuePool limit … reached".
+    # PostgreSQL max_connections is now 80; app pool ceiling (50) + system/autovacuum
+    # reserves (~30) = 80. Adjust both together if changing either value.
+    pool_size=20,
+    max_overflow=30,
+    pool_timeout=10,      # fail fast instead of stalling a request for 30s
     pool_pre_ping=True,
     pool_recycle=3600
 )

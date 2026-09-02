@@ -155,16 +155,13 @@ if (typeof ALL_STOCKS !== 'undefined') {
 // ==========================================
 // SEARCH FUNCTIONALITY
 // ==========================================
-const searchInput = document.getElementById('stockSearch');
-const searchResults = document.getElementById('searchResults');
+// Live search — elements injected by nav.js, query fresh each time
+(function() {
+  var searchInput = document.getElementById('stockSearch');
+  var searchResults = document.getElementById('searchResults');
+  if (!searchInput || !searchResults) return;
 
-// Guard: nav.js handles search now (injected header). index.js search
-// runs synchronously before nav.js DOMContentLoaded, so elements may
-// not exist yet. Skip if null to avoid TypeError.
-if (!searchInput || !searchResults) {
-  // search is handled by nav.js
-} else {
-// Live search on every keystroke
+  // Live search on every keystroke
 searchInput.addEventListener('input', (e) => {
   const query = e.target.value.trim().toLowerCase();
 
@@ -318,24 +315,26 @@ searchInput.addEventListener('input', (e) => {
 
 // Hide search results when clicking outside
 document.addEventListener('click', (e) => {
+  var sr = document.getElementById('searchResults');
+  if (!sr) return;
   if (!e.target.closest('.search-panel')) {
-    searchResults.classList.remove('visible');
-    document.body.style.overflow = ''; // Unlock Scroll
+    sr.classList.remove('visible');
+    document.body.style.overflow = '';
   }
 });
 
 // Prevent search results from closing when clicking inside
-searchResults.addEventListener('click', (e) => {
+document.getElementById('searchResults')?.addEventListener('click', (e) => {
   e.stopPropagation();
 });
-}
+}()); // end search IIFE
 
 // Navigate to chart page with ticker parameter
 // Navigate to chart page with ticker parameter
 // Navigate to chart page with ticker parameter
 function getChartPage() {
   const path = window.location.pathname;
-  return path.includes('home.html') || path.includes('stock.html') || path.includes('portfolio.html') ? 'stock.html' : 'index_chart.html';
+  return path.includes('home.html') || path.includes('stock.html') || path.includes('portfolio.html') ? 'stock.html' : 'stock.html';
 }
 
 function launchChart(ticker, exchange) {
@@ -411,6 +410,7 @@ function renderMarketCards() {
 
 // Format price based on value (adds commas for readability)
 function formatPrice(price) {
+  if (price == null || isNaN(price)) return '0.00';
   if (price >= 10000) {
     return price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
@@ -425,8 +425,13 @@ function formatPrice(price) {
 let loaderHidden = false; // Flag to hide loader only once
 let historyLoaded = false; // Flag to track when history data is loaded
 
+const STRIP_TICKERS = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY'];
+
 async function updatePrices() {
-  const tickers = [...new Set([...TRACKER_TICKERS, ...visibleSearchTickers])];
+  // Skip REST call if WS is actively pushing price data (within last 10s)
+  if (window._lastWsPriceTime && Date.now() - window._lastWsPriceTime < 10000) return;
+
+  const tickers = [...new Set([...TRACKER_TICKERS, ...STRIP_TICKERS, ...visibleSearchTickers])];
 
   try {
     const response = await fetch('/api/live-prices', {
@@ -438,21 +443,12 @@ async function updatePrices() {
     if (!response.ok) return;
     const livePrices = await response.json();
 
-    console.log('[DEBUG] Live prices received:', Object.keys(livePrices).length, 'tickers');
-
     Object.keys(livePrices).forEach(ticker => {
       const data = livePrices[ticker];
 
-      // Add defensive check
-      if (!data || typeof data !== 'object') {
-        console.debug('[DBG] Invalid data for ticker:', ticker, data);
-        return;
-      }
+      if (!data || typeof data !== 'object') return;
 
-      if (data.current === undefined || data.current === null) {
-        console.debug('[DBG] Missing price for ticker:', ticker, data);
-        return;
-      }
+      if (data.current === undefined || data.current === null) return;
 
       const newPrice = data.current;
       const openPrice = data.open;
@@ -463,7 +459,23 @@ async function updatePrices() {
         updateTrackerCard(ticker, newPrice, data.prev_close || openPrice);
       }
 
-      // 2. Update Search Result UI (if displayed)
+      // 2. Update Index Ticker Strip
+      if (STRIP_TICKERS.includes(ticker)) {
+        const stripPriceEl = document.getElementById(`strip-price-${ticker}`);
+        const stripChangeEl = document.getElementById(`strip-change-${ticker}`);
+        if (stripPriceEl && stripChangeEl) {
+          const base = data.prev_close || openPrice || newPrice;
+          const change = newPrice - base;
+          const pct = base > 0 ? (change / base) * 100 : 0;
+          const sign = change >= 0 ? '+' : '';
+          stripPriceEl.innerText = `₹${formatPrice(newPrice)}`;
+          stripChangeEl.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`;
+          stripChangeEl.className = 'change ' + (change >= 0 ? 'text-green' : 'text-red');
+        }
+      }
+
+
+      // 4. Update Search Result UI (if displayed)
       const searchPriceEl = document.getElementById(`search-price-${ticker}`);
       const searchChangeEl = document.getElementById(`search-change-${ticker}`);
 
@@ -472,7 +484,6 @@ async function updatePrices() {
         searchPriceEl.style.transition = "color 0.2s";
         searchPriceEl.style.color = "#fff";
 
-        // Use prev_close from live API for accurate percentage change
         const base = data.prev_close || openPrice || newPrice;
         const change = newPrice - base;
         const pct = base > 0 ? (change / base) * 100 : 0;
@@ -499,6 +510,7 @@ async function updatePrices() {
     }
 
   } catch (e) {
+    if (e && e.name === 'AbortError') return;
     console.error("Live update failed", e);
   }
 }
@@ -535,7 +547,10 @@ async function initStockTracker() {
     }
 
     if (!historyMap) {
-      const response = await fetch('/api/top-9-history');
+      const ac = new AbortController();
+      const tid = setTimeout(() => ac.abort(), 15000);
+      const response = await fetch('/api/top-9-history', { signal: ac.signal });
+      clearTimeout(tid);
       historyMap = await response.json();
       // Cache for 5 minutes
       try {
@@ -622,9 +637,8 @@ async function initStockTracker() {
     if (typeof syncLogos === 'function') syncLogos();
 
   } catch (e) {
-    console.error("Failed to init tracker", e);
+    if (e && e.name !== 'AbortError') console.error("Failed to init tracker", e);
     marketGrid.innerHTML = '<div style="color: #ef4444; text-align: center; grid-column: 1/-1; padding: 3rem;">Failed to load historical data.</div>';
-    // Ensure we unblock the loader even if history fails
     historyLoaded = true;
   }
 }
@@ -998,12 +1012,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const raw = evt.detail;
     if (!raw) return;
     const prices = raw.prices || raw;
-    TRACKER_TICKERS.forEach(ticker => {
+    // Update all tickers from WS price data
+    Object.keys(prices).forEach(ticker => {
       const d = prices[ticker];
-      if (d && d.current !== undefined) {
-        currentPrices[ticker] = d.current;
+      if (!d || d.current === undefined) return;
+      currentPrices[ticker] = d.current;
+
+      if (TRACKER_TICKERS.includes(ticker)) {
         updateTrackerCard(ticker, d.current, d.prev_close || d.open || d.current);
       }
+
+      // Update index ticker strip
+      if (STRIP_TICKERS.includes(ticker)) {
+        const sp = document.getElementById(`strip-price-${ticker}`);
+        const sc = document.getElementById(`strip-change-${ticker}`);
+        if (sp && sc) {
+          const base = d.prev_close || d.open || d.current;
+          const change = d.current - base;
+          const pct = base > 0 ? (change / base) * 100 : 0;
+          const sign = change >= 0 ? '+' : '';
+          sp.innerText = `₹${formatPrice(d.current)}`;
+          sc.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`;
+          sc.className = 'change ' + (change >= 0 ? 'text-green' : 'text-red');
+        }
+      }
+
     });
     // Update any visible search results
     visibleSearchTickers.forEach(ticker => {
@@ -1048,17 +1081,19 @@ document.addEventListener('DOMContentLoaded', () => {
 // KEYBOARD SHORTCUTS
 // ==========================================
 document.addEventListener('keydown', (e) => {
+  var searchInput = document.getElementById('stockSearch');
+  var searchResults = document.getElementById('searchResults');
   // Press '/' to focus search
-  if (e.key === '/' && document.activeElement !== searchInput) {
+  if (e.key === '/' && searchInput && document.activeElement !== searchInput) {
     e.preventDefault();
     searchInput.focus();
   }
 
   // Press 'Escape' to clear search
-  if (e.key === 'Escape') {
+  if (e.key === 'Escape' && searchInput && searchResults) {
     searchInput.value = '';
     searchResults.classList.remove('visible');
-    document.body.style.overflow = ''; // Unlock Scroll
+    document.body.style.overflow = '';
     searchInput.blur();
   }
 });

@@ -47,7 +47,7 @@
       'home.html': 'home', 'markets.html': 'markets', 'stocks.html': 'stocks',
       'news.html': 'news', 'watchlist.html': 'watchlist',
       'screener.html': 'screener', 'portfolio.html': 'portfolio',
-      'index.html': 'home', 'stock.html': 'stocks', 'index_chart.html': 'markets',
+      'index.html': 'home', 'stock.html': 'stocks', 'stock.html': 'markets',
     };
     return map[path] || 'home';
   }
@@ -106,12 +106,12 @@
       '        </div>' +
       '      </div>' +
       '      <div class="nav-actions">' +
-      '        <button class="nav-icon-btn" title="Notifications" id="notificationBtn">' +
-      '          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
+      '        <button class="nav-icon-btn" title="Notifications" aria-label="Notifications" id="notificationBtn">' +
+      '          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
       '          <span class="notification-badge" id="notificationBadge">3</span>' +
       '        </button>' +
-      '        <button class="nav-icon-btn" title="Toggle Theme" id="themeToggle">' +
-      '          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' +
+      '        <button class="nav-icon-btn" title="Toggle Theme" aria-label="Toggle theme" id="themeToggle">' +
+      '          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' +
       '        </button>' +
       '        <div class="auth-buttons" id="authButtons">' +
       '          <a href="login.html" class="auth-btn">Login / Register</a>' +
@@ -119,7 +119,7 @@
       '        <div class="user-info" id="userInfo" style="display:none; align-items: center; gap: 15px;">' +
       '          <div style="text-align: right;">' +
       '             <div style="font-size: 0.75rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.5px;">Balance</div>' +
-      '             <div class="user-balance" id="userBalance" style="color: #00E676; font-weight: bold; font-family: \'Roboto Mono\', monospace;">₹0</div>' +
+      '             <div class="user-balance" id="userBalance" style="color: #089981; font-weight: bold; font-family: \'Roboto Mono\', monospace;">₹0</div>' +
       '          </div>' +
       '          <a href="profile.html?v=1" class="user-profile-btn" style="text-decoration: none;" title="Account Dashboard">' +
       '            <div class="user-avatar">' +
@@ -193,13 +193,13 @@
           var displayTicker = stock.ticker;
           if (type === 'BSE' && displayTicker.indexOf('.BO') === -1) displayTicker += '.BO';
           else if (type === 'NSE' && displayTicker.indexOf('.NS') === -1 && type !== 'INDEX') displayTicker += '.NS';
-          var targetPage = type === 'INDEX' ? 'index_chart.html?ticker=' : 'stock.html?ticker=';
+          var targetPage = type === 'INDEX' ? 'overview.html?ticker=' : 'overview.html?ticker=';
           return '<div class="result-item" onclick="window.location.href=\'' + targetPage + encodeURIComponent(stock.ticker) + '\'">' +
             '<div class="result-info">' +
             '<div class="result-name">' + escapeHTML(stock.name) + '</div>' +
             '<div class="result-ticker">' + displayTicker + ' <span style="font-size:0.6rem;color:var(--text-muted)">' + type + '</span></div>' +
             '</div>' +
-            '<button class="search-launch-btn">View Chart</button>' +
+            '<button class="search-launch-btn">Overview</button>' +
             '</div>';
         }).join('');
         results.classList.add('visible');
@@ -251,6 +251,28 @@
       if (authButtons) authButtons.style.display = 'flex';
       if (userInfo) userInfo.style.display = 'none';
     }
+  }
+
+  /* ===================== MOBILE MARKET-STATUS SLOT ===================== */
+  // On pages with a #marketStatusSlot (currently home.html/index.html, between the header
+  // and the index ticker strip), move the market-status pill there on mobile so it doesn't
+  // crowd the header — and move it back into the header on desktop. Relocates the one real
+  // element rather than duplicating it, so there's still only a single #marketStatusIndicator.
+  function initMobileMarketStatusSlot() {
+    var indicator = document.getElementById('marketStatusIndicator');
+    var slot = document.getElementById('marketStatusSlot');
+    var headerRow = document.querySelector('.header-bottom-row');
+    if (!indicator || !slot || !headerRow) return;
+
+    function place() {
+      if (window.innerWidth <= 768) {
+        if (indicator.parentNode !== slot) slot.appendChild(indicator);
+      } else if (indicator.parentNode !== headerRow) {
+        headerRow.appendChild(indicator);
+      }
+    }
+    place();
+    window.addEventListener('resize', place);
   }
 
   /* ===================== MARKET STATUS ===================== */
@@ -355,6 +377,7 @@
     initMarketStatus();
     initThemeToggle();
     initNotifications();
+    initMobileMarketStatusSlot();
     setTimeout(initAuth, 0);
   }
 
@@ -363,6 +386,17 @@
   } else {
     init();
   }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key !== '/') return;
+    var active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+    var inp = document.getElementById('stockSearch');
+    if (!inp) return;
+    e.preventDefault();
+    inp.focus();
+    inp.select();
+  });
 
 })();
 

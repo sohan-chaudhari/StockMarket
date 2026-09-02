@@ -2,28 +2,30 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="LEVERAGE - Premium Stock Market Analysis">
     <!-- Cache allowed: bfcache enabled for instant back/forward navigation -->
     <title>LEVERAGE - Dashboard</title>
 
     <!-- Stylesheets -->
-    <link rel="stylesheet" href="index.css?v=66">
-    <link rel="stylesheet" href="nav.css?v=4">
+    <link rel="stylesheet" href="tokens.css?v=2">
+    <link rel="stylesheet" href="index.css?v=82">
+    <link rel="stylesheet" href="nav.css?v=12">
     <link rel="stylesheet" href="loader.css?v=4">
 
     <!-- Preload fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- Lightweight Charts (for main chart) -->
-    <script defer src="lightweight-charts.js"></script>
+    <script defer src="lightweight-charts.js?v=2"></script>
 </head>
 
 <body>
 <script>
-/* INSTANT SEED — runs before any external JS file loads.
+/* INSTANT SEED &ndash; runs before any external JS file loads.
    Reads last known prices from localStorage and populates the ticker
    strip + NIFTY header in ~0 ms, eliminating the "--" flash on every
    return visit. Data older than 10 minutes is skipped; the REST call
@@ -45,7 +47,7 @@
         var diff = d.current - prev;
         var pct  = prev > 0 ? (diff / prev) * 100 : 0;
         cEl.textContent = (diff >= 0 ? '\u25b2 +' : '\u25bc ') + Math.abs(diff).toFixed(2) + ' (' + Math.abs(pct).toFixed(2) + '%)';
-        cEl.style.color = diff >= 0 ? '#00e676' : '#ff1744';
+        cEl.style.color = diff >= 0 ? '#089981' : '#ff1744';
       }
     });
     // Seed NIFTY chart header price
@@ -60,7 +62,7 @@
       var ncEl  = document.getElementById('niftyChange');
       if (ncEl) {
         ncEl.textContent = s2 + diff2.toFixed(2) + ' (' + s2 + pct2.toFixed(2) + '%)';
-        ncEl.style.color = diff2 >= 0 ? '#00e676' : '#ff1744';
+        ncEl.style.color = diff2 >= 0 ? '#089981' : '#ff1744';
       }
       var oEl = document.getElementById('niftyO');
       if (oEl && n.open) oEl.textContent = n.open.toFixed(2);
@@ -81,32 +83,38 @@
        MAIN CONTENT
        ============================================ -->
     <main class="dashboard-main">
-        
+        <!-- Mobile only: market-status pill relocates here from the header (see nav.js) -->
+        <div class="mobile-market-status-slot" id="marketStatusSlot"></div>
+
         <!-- Section 2: Index Ticker Strip -->
         <div class="index-ticker-strip">
             <button class="strip-btn left" id="stripLeftBtn">&#8249;</button>
             <div class="strip-scroll-container" id="indexTickerContainer">
                 <!-- Pre-rendered cards: IDs used by inline seed script above and
-                     updateTickerStrip() in dashboard.js so values appear instantly. -->
-                <div class="ticker-card" onclick="window.location.href='stock.html?ticker=NIFTY'">
+                     updateTickerStrip() in dashboard.js?v=1028 so values appear instantly. -->
+                <div class="ticker-card" onclick="window.location.href='overview.html?ticker=NIFTY'">
                     <h4>NIFTY 50</h4>
                     <div class="price" id="strip-price-NIFTY" data-sid="sp-NIFTY">--</div>
                     <div class="change text-green" id="strip-change-NIFTY" data-sid="sc-NIFTY">--</div>
+                    <div id="strip-expiry-NIFTY"></div>
                 </div>
-                <div class="ticker-card" onclick="window.location.href='stock.html?ticker=SENSEX'">
+                <div class="ticker-card" onclick="window.location.href='overview.html?ticker=SENSEX'">
                     <h4>SENSEX</h4>
                     <div class="price" id="strip-price-SENSEX" data-sid="sp-SENSEX">--</div>
                     <div class="change text-green" id="strip-change-SENSEX" data-sid="sc-SENSEX">--</div>
+                    <div id="strip-expiry-SENSEX"></div>
                 </div>
-                <div class="ticker-card" onclick="window.location.href='stock.html?ticker=BANKNIFTY'">
+                <div class="ticker-card" onclick="window.location.href='overview.html?ticker=BANKNIFTY'">
                     <h4>BANK NIFTY</h4>
                     <div class="price" id="strip-price-BANKNIFTY" data-sid="sp-BANKNIFTY">--</div>
                     <div class="change text-green" id="strip-change-BANKNIFTY" data-sid="sc-BANKNIFTY">--</div>
+                    <div id="strip-expiry-BANKNIFTY"></div>
                 </div>
-                <div class="ticker-card" onclick="window.location.href='stock.html?ticker=FINNIFTY'">
+                <div class="ticker-card" onclick="window.location.href='overview.html?ticker=FINNIFTY'">
                     <h4>NIFTY FIN</h4>
                     <div class="price" id="strip-price-FINNIFTY" data-sid="sp-FINNIFTY">--</div>
                     <div class="change text-green" id="strip-change-FINNIFTY" data-sid="sc-FINNIFTY">--</div>
+                    <div id="strip-expiry-FINNIFTY"></div>
                 </div>
             </div>
             <button class="strip-btn right" id="stripRightBtn">&#8250;</button>
@@ -136,7 +144,7 @@
                             <button class="tf-btn" id="btnCandle">Candle</button>
                             <button class="tf-btn" id="btnSMA">SMA</button>
                         </div>
-                        <button class="icon-btn" onclick="window.location.href='stock.html'">⛶</button>
+                        <button class="icon-btn" onclick="var t=document.getElementById('chartTickerSelect').value||'NIFTY';window.location.href='overview.html?ticker='+t"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></button>
                     </div>
                 </div>
                 <div id="niftyChart" class="lightweight-chart-box"></div>
@@ -150,7 +158,7 @@
 
             <div class="ai-insights-panel">
                 <div class="panel-header">
-                    <h2>✨ AI Market Sentiment</h2>
+                    <h2><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="display:inline;vertical-align:middle;margin-right:6px;color:#ffd700;"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg> AI Market Sentiment</h2>
                     <span class="badge badge-green">Live</span>
                 </div>
                 <div class="sentiment-gauge-container">
@@ -181,7 +189,8 @@
             <!-- Gainers -->
             <div class="movers-column">
                 <div class="column-header">
-                    <h3><span class="icon">📈</span> Top Gainers</h3>
+                    <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#089981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span> Top Gainers</h3>
+                    <a href="stocks.html" class="view-all-link">View All &rarr;</a>
                 </div>
                 <div class="movers-list" id="gainersList">
                     <div class="skeleton-mover-row">
@@ -204,7 +213,8 @@
             <!-- Losers -->
             <div class="movers-column">
                 <div class="column-header">
-                    <h3><span class="icon">📉</span> Top Losers</h3>
+                    <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f23645" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></span> Top Losers</h3>
+                    <a href="stocks.html" class="view-all-link">View All &rarr;</a>
                 </div>
                 <div class="movers-list" id="losersList">
                     <div class="skeleton-mover-row">
@@ -227,7 +237,8 @@
             <!-- Active -->
             <div class="movers-column">
                 <div class="column-header">
-                    <h3><span class="icon">🔥</span> Most Active</h3>
+                    <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Most Active</h3>
+                    <a href="stocks.html" class="view-all-link">View All &rarr;</a>
                 </div>
                 <div class="movers-list" id="activeList">
                     <div class="skeleton-mover-row">
@@ -256,7 +267,7 @@
                     <div class="pill-indicator"></div>
                     <h2 class="section-title">Your Watchlist</h2>
                 </div>
-                <a href="watchlist.html" class="view-all-link">Manage Watchlist →</a>
+                <a href="watchlist.html" class="view-all-link">Manage Watchlist &rarr;</a>
             </div>
             <div class="watchlist-cards-container" id="watchlistContainer">
                 <div class="watchlist-skeleton" style="display:flex; gap:14px; overflow:hidden;">
@@ -275,7 +286,7 @@
                     <div class="pill-indicator bg-blue"></div>
                     <h2 class="section-title">Latest Market News</h2>
                 </div>
-                <a href="news.html" style="font-size:0.82rem;color:#4A90E2;text-decoration:none;font-weight:500;white-space:nowrap;" onmouseenter="this.style.textDecoration='underline'" onmouseleave="this.style.textDecoration='none'">View All →</a>
+                <a href="news.html" style="font-size:0.82rem;color:#4A90E2;text-decoration:none;font-weight:500;white-space:nowrap;" onmouseenter="this.style.textDecoration='underline'" onmouseleave="this.style.textDecoration='none'">View All &rarr;</a>
             </div>
             <div class="news-list" id="general-news-container">
                 <div class="news-skeleton-container" style="padding:0 16px;">
@@ -311,18 +322,19 @@
 
     <!-- Modals & Loaders -->
     <!-- Loader removed: page-cache.js provides instant paint from cache + progress bar -->
-    <div class="leverage-loader-overlay" id="logout-loader" style="display: none;"><div class="leverage-loader simple-glow-theme"><div class="loader-logo-wrapper"><img src="logo.jpeg" class="loader-main-logo" alt="LEVERAGE"></div><div class="loader-text-clean"><span class="loader-dot-pulse"></span><span class="loader-message-text">Logging out...</span></div></div></div>
+    <div class="leverage-loader-overlay" id="logout-loader" style="display: none;"><div class="leverage-loader simple-glow-theme"><div class="loader-logo-wrapper"><img src="logo-white.svg" class="loader-main-logo" alt="LEVERAGE"></div><div class="loader-text-clean"><span class="loader-dot-pulse"></span><span class="loader-message-text">Logging out...</span></div></div></div>
     <div id="logoutModal" class="modal"><div class="modal-content"><h2 style="color: #2ed573;">Logout?</h2><button class="btn-primary" onclick="confirmLogout()">Yes, Logout</button><button class="btn-secondary" onclick="hideLogoutConfirmation()">Cancel</button></div></div>
 
-    <!-- JavaScript (defer for non-blocking load — page renders immediately) -->
+    <!-- JavaScript (defer for non-blocking load &ndash; page renders immediately) -->
     <script src="page-cache.js"></script>
-    <script defer src="nav.js?v=4"></script>
+    <script defer src="nav.js?v=8"></script>
     <script async src="stocks.js?v=28"></script>
     <script defer src="loader.js?v=3"></script>
-    <script defer src="news.js?v=4"></script>
-    <script defer src="index.js?v=43"></script>
+    <script defer src="news.js?v=6"></script>
+    <script defer src="ws.js"></script>
+    <script defer src="index.js?v=46"></script>
     <script defer src="cache.js?v=2"></script>
-    <script defer src="dashboard.js?v=1020"></script>
+    <script defer src="dashboard.js?v=1043"></script>
     <script>
         (function checkAuth() {
             const token = sessionStorage.getItem('token');
@@ -361,4 +373,10 @@
     </script>
 </body>
 </html>
+
+
+
+
+
+
 

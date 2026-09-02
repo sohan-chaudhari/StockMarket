@@ -26,3 +26,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Sensitive credentials files
+backend/hardcoded_tokens.py

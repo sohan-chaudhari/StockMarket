@@ -159,7 +159,7 @@ input::placeholder {
     border-radius: 8px;
     margin-bottom: 20px;
     font-size: 14px;
-    border: 1px solid rgba(0, 230, 118, 0.3);
+    border: 1px solid rgba(8, 153, 129, 0.3);
 }
 
 .info-message {
@@ -218,7 +218,7 @@ input::placeholder {
 }
 
 .btn-primary {
-    background-color: #2563EB;
+    background-color: var(--accent-blue);
     color: #ffffff;
 }
 
@@ -338,7 +338,7 @@ input::placeholder {
 .success-icon {
     width: 80px;
     height: 80px;
-    background-color: rgba(0, 230, 118, 0.1);
+    background-color: rgba(8, 153, 129, 0.1);
     border: 2px solid var(--success);
     border-radius: 50%;
     display: flex;

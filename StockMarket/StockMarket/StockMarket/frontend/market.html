@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Market - LEVERAGE</title>
   <script src="lightweight-charts.js"></script>
-  <link rel="stylesheet" href="styles.css?v=35">
-  <link rel="stylesheet" href="drawings.css?v=3">
-  <link rel="stylesheet" href="index.css?v=50">
-  <link rel="stylesheet" href="loader.css?v=2">
+  <link rel="stylesheet" href="index.css?v=66">
+  <link rel="stylesheet" href="drawings.css?v=6">
+  <link rel="stylesheet" href="nav.css?v=4">
+  <link rel="stylesheet" href="loader.css?v=4">
   <link rel="stylesheet" href="nav.css">
   <link rel="stylesheet" href="responsive.css?v=1">
   <style>
@@ -37,6 +37,7 @@
   /* Hide duplicate logo when nav-root is present (nav.js injects its own logo) */
   #nav-root ~ .container .sticky-header-container .header-controls > .logo-container { display: none; }
   </style>
+    <script src="page-cache.js"></script>
 </head>
 <body style="background-color: #0A0A0B;">
   <div id="nav-root"></div>
@@ -84,6 +85,8 @@
               <span><span style="font-weight:700;">H:</span> <span id="ohlc-high" style="color:#d1d4dc;font-weight:700;">--</span></span>
               <span><span style="font-weight:700;">L:</span> <span id="ohlc-low" style="color:#d1d4dc;font-weight:700;">--</span></span>
               <span><span style="font-weight:700;">C:</span> <span id="ohlc-close" style="color:#d1d4dc;font-weight:700;">--</span></span>
+              <span style="color:#555;margin:0 8px;">|</span>
+              <span><span style="font-weight:700;">Vol:</span> <span id="ohlc-volume" style="color:#d1d4dc;font-weight:700;">--</span></span>
             </div>
           </div>
         </div>
@@ -130,8 +133,10 @@
   <script src="stocks.js"></script>
   <script src="loader.js"></script>
   <script src="news.js"></script>
+  <script src="ws.js"></script>
   <script src="nav.js"></script>
-  <script src="drawings.js"></script>
+  <script src="drawing-core.js?v=25"></script>
+  <script src="drawings.js?v=75"></script>
   <script src="cache.js?v=1"></script>
   <script>
   (function(){
@@ -155,7 +160,7 @@
         grid:{vertLines:{color:'rgba(42,46,57,0.5)'},horzLines:{color:'rgba(42,46,57,0.5)'}},
         crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
         rightPriceScale:{borderColor:'rgba(197,203,206,0.8)'},
-        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true},
+        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true,rightOffset:40,fixLeftEdge:false},
       });
       candleSeries = chart.addCandlestickSeries({
         upColor:'#26a69a',downColor:'#ef5350',
@@ -164,18 +169,90 @@
       });
       window.getChartCoordinateAPI = function () {
         if (!chart || !candleSeries) return null;
+        // --- Logical Index Coordinate System ---
+        // coord.time is treated as a logical bar index (0-based from first bar).
+        // Logical indexes can extend beyond the last candle — no clamping.
         return {
+          _logicalToTime: function (logical) {
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            var vr = chart.timeScale().getVisibleRange();
+            if (lr && vr && lr[1] > lr[0] && vr.from != null && vr.to != null) {
+              var secsPerBar = (Number(vr.to) - Number(vr.from)) / (lr[1] - lr[0]);
+              return Number(vr.to) + (logical - lr[1]) * secsPerBar;
+            }
+            return logical;
+          },
+          _timeToLogical: function (time) {
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            var vr = chart.timeScale().getVisibleRange();
+            if (lr && vr && lr[1] > lr[0] && vr.from != null && vr.to != null) {
+              var secsPerBar = (Number(vr.to) - Number(vr.from)) / (lr[1] - lr[0]);
+              return lr[1] + (Number(time) - Number(vr.to)) / secsPerBar;
+            }
+            return time;
+          },
           coordToPixel: function (coord) {
             if (!coord) return null;
-            var x = chart.timeScale().timeToCoordinate(coord.time);
-            var y = candleSeries.priceToCoordinate(coord.price);
-            if (x == null || y == null) return null;
-            return { x: x, y: y };
+            if (coord.time == null && coord.price == null) return null;
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            var y = coord.price != null ? candleSeries.priceToCoordinate(coord.price) : null;
+            if (!lr || lr[1] <= lr[0]) {
+              var x = coord.time != null ? chart.timeScale().timeToCoordinate(coord.time) : null;
+              if ((x == null || y == null) && (x != null || y != null)) return { x: x || 0, y: y || 0 };
+              return null;
+            }
+            var chartWidth = chart.timeScale().width();
+            var ro = (typeof this.getRightOffset === 'function' ? this.getRightOffset() : 40);
+            var visibleBars = (lr[1] - lr[0]) + ro;
+            var pixelsPerBar = chartWidth / visibleBars;
+            var logical = coord.time;
+            var x = (logical - lr[0]) * pixelsPerBar;
+            if (y == null && x == null) return null;
+            return { x: x, y: y || 0 };
           },
           pixelToCoord: function (x, y) {
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            if (lr && lr[1] > lr[0]) {
+              var chartWidth = chart.timeScale().width();
+              var ro = (typeof this.getRightOffset === 'function' ? this.getRightOffset() : 40);
+              var visibleBars = (lr[1] - lr[0]) + ro;
+              var pixelsPerBar = chartWidth / visibleBars;
+              var logical = lr[0] + x / pixelsPerBar;
+              var price = candleSeries.coordinateToPrice(y);
+              return { time: logical, price: price };
+            }
             var time = chart.timeScale().coordinateToTime(x);
             var price = candleSeries.coordinateToPrice(y);
             return { time: time, price: price };
+          },
+          xToTime: function (x) {
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            if (lr && lr[1] > lr[0]) {
+              var chartWidth = chart.timeScale().width();
+              var ro = (typeof this.getRightOffset === 'function' ? this.getRightOffset() : 40);
+              var visibleBars = (lr[1] - lr[0]) + ro;
+              var pixelsPerBar = chartWidth / visibleBars;
+              return lr[0] + x / pixelsPerBar;
+            }
+            return chart.timeScale().coordinateToTime(x);
+          },
+          timeToX: function (time) {
+            var lr = chart.timeScale().getVisibleLogicalRange();
+            if (lr && lr[1] > lr[0]) {
+              var chartWidth = chart.timeScale().width();
+              var ro = (typeof this.getRightOffset === 'function' ? this.getRightOffset() : 40);
+              var visibleBars = (lr[1] - lr[0]) + ro;
+              var pixelsPerBar = chartWidth / visibleBars;
+              return (time - lr[0]) * pixelsPerBar;
+            }
+            if (time != null) return chart.timeScale().timeToCoordinate(time);
+            return null;
+          },
+          priceToY: function (price) {
+            return candleSeries.priceToCoordinate(price);
+          },
+          yToPrice: function (y) {
+            return candleSeries.coordinateToPrice(y);
           },
           getMagnetPoint: function (x, y) {
             return this.pixelToCoord(x, y);
@@ -184,6 +261,9 @@
             var lr = chart.timeScale().getVisibleLogicalRange();
             if (!lr) return 20;
             return chart.timeScale().width() / (lr[1] - lr[0] || 1);
+          },
+          getRightOffset: function () {
+            return 40;
           }
         };
       };
@@ -216,7 +296,6 @@
 
       var cacheInterval = range;
       if(range==='1D') cacheInterval='5m';
-      else if(range==='1W') cacheInterval='15m';
       var memKey = ticker+'|'+cacheInterval+'|'+range;
       var memData = window._recentRanges ? window._recentRanges.get(memKey) : null;
       if(memData){ renderChartCached(memData,range); if(loader)loader.style.display='none'; return; }
@@ -233,9 +312,11 @@
 
       try{
         var url = "/api/stock-data/range?ticker="+encodeURIComponent(ticker)+"&range="+range;
-        if(range==='1D') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval=5m";
-        else if(range==='1W') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval=15m";
-        else if(range==='5m'||range==='15m'||range==='30m'||range==='1h') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval="+range;
+        if(range==='1D') url = "/api/stock-data/intraday/paginated?ticker="+encodeURIComponent(ticker)+"&interval=5m&limit=15000";
+        else if(range==='1m'||range==='5m') url = "/api/stock-data/intraday/paginated?ticker="+encodeURIComponent(ticker)+"&interval="+range+"&limit=15000";
+        else if(range==='15m'||range==='30m'||range==='1h') url = "/api/stock-data/stitched?ticker="+encodeURIComponent(ticker)+"&interval="+range;
+        else if(range==='1W') url = "/api/stock-data/weekly?ticker="+encodeURIComponent(ticker);
+        else if(range==='1M') url = "/api/stock-data/monthly?ticker="+encodeURIComponent(ticker);
 
         var res = await fetch(url, {signal:signal});
         if(myLoadId!==_loadId){if(loader)loader.style.display='none';return;}
@@ -326,7 +407,9 @@
     }
 
     function renderChartCached(data,range){
-      var f = data.map(function(p){
+      var f = data.filter(function(p) { 
+        return p.open > 0 && p.high > 0 && p.low > 0 && p.close > 0; 
+      }).map(function(p){
         var t = toTimeNum(p.time);
         if(t==null)return null;
         return {time:Math.floor(t),open:p.open,high:p.high,low:p.low,close:p.close};
@@ -338,7 +421,13 @@
       _earliestLoadedTime = u.length>0 ? u[0].time : null;
       candleSeries.setData(u);
       _setupLazyLoad();
-      chart.timeScale().fitContent();
+      if (u.length > 200 && range !== 'ALL' && range !== '1Y' && range !== '6M') {
+        var endIdx = u.length - 1;
+        var startIdx = Math.max(0, endIdx - 150);
+        chart.timeScale().setVisibleLogicalRange({ from: startIdx, to: endIdx });
+      } else {
+        chart.timeScale().fitContent();
+      }
       var last = u[u.length-1];
       if(last){
         document.getElementById('statOpen').textContent = fmt(last.open);
@@ -378,6 +467,8 @@
             document.getElementById('ohlc-low').textContent = fmt(d.low);
           }
           document.getElementById('ohlc-close').textContent = fmt(p);
+          var mktVol = document.getElementById('ohlc-volume');
+          if (mktVol && d.volume != null) mktVol.textContent = fmtL(d.volume);
           // Update sector tag from live-prices response
           var secEl = document.getElementById('sector-tag');
           if (secEl && d.sector) {
@@ -398,17 +489,21 @@
 
     async function renderMovers(){
       try{
-        var res = await fetch('/api/market-movers');
-        var data = await res.json();
+        var fetchPromise = window._fetchCached ? window._fetchCached('/api/market-movers', 30000) : fetch('/api/market-movers').then(r=>r.json());
+        var data = await fetchPromise;
+        if (!data) return;
+        var dataCopy = JSON.parse(JSON.stringify(data));
+        if (dataCopy.gainers) dataCopy.gainers = dataCopy.gainers.slice(0, 8);
+        if (dataCopy.losers) dataCopy.losers = dataCopy.losers.slice(0, 8);
         var allTickers = [];
-        (data.gainers||[]).concat(data.losers||[]).forEach(function(s){if(s&&s.ticker)allTickers.push(s.ticker);});
+        (dataCopy.gainers||[]).concat(dataCopy.losers||[]).forEach(function(s){if(s&&s.ticker)allTickers.push(s.ticker);});
         var liveData = {};
         try {
           var lr = await fetch('/api/live-prices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tickers:allTickers})});
           if(lr.ok) liveData = await lr.json();
         } catch(e){}
         var all = [];
-        (data.gainers||[]).concat(data.losers||[]).forEach(function(s){
+        (dataCopy.gainers||[]).concat(dataCopy.losers||[]).forEach(function(s){
           if(!s) return;
           var live = liveData[s.ticker];
           var curr = (live&&live.current!=null) ? live.current : s.current_price;
@@ -499,6 +594,137 @@
             if (!_intStatus) { _intStatus = setInterval(refreshMarketStatus, 60000); refreshMarketStatus(); }
         }
     });
+    
+    // Listen for WebSocket price updates to update UI instantly
+    window.addEventListener('dashboard_price_update', function(evt) {
+      var raw = evt.detail;
+      if (!raw) return;
+      var prices = raw.prices || raw;
+      
+      // Update strip prices
+      var stripIds = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCAP'];
+      stripIds.forEach(function(sId) {
+        var d = prices[sId];
+        if (!d || d.current == null) return;
+        var p = document.getElementById('strip-price-'+sId);
+        var c = document.getElementById('strip-change-'+sId);
+        if(!p || !c) return;
+        p.textContent = fmt(d.current);
+        var prev = (d.prev_close != null && d.prev_close > 0) ? d.prev_close : ((d.open != null && d.open > 0) ? d.open : d.current);
+        var diff = d.current - prev;
+        var pct  = (prev > 0) ? (diff / prev) * 100 : 0;
+        var sn   = diff >= 0 ? '▲ +' : '▼ ';
+        c.textContent = sn + diff.toFixed(2) + ' (' + pct.toFixed(2) + '%)';
+        c.className = 'val ' + (diff >= 0 ? 'text-green' : 'text-red');
+      });
+      
+      // Update main chart ticker
+      var d = prices[ticker];
+      if (d && d.current != null) {
+        var p = d.current;
+        var prev = (d.prev_close != null && d.prev_close > 0) ? d.prev_close : ((d.open != null && d.open > 0) ? d.open : p);
+        var diff = p - prev;
+        var pct = (prev > 0) ? (diff / prev) * 100 : 0;
+        var sn = diff >= 0 ? '+' : '';
+        document.getElementById('header-price').textContent = fmt(p);
+        document.getElementById('header-price').style.color = diff>=0?'#00E676':'#FF0055';
+        var chg = document.getElementById('header-change');
+        if (chg) {
+          chg.textContent = sn+diff.toFixed(2)+' ('+sn+pct.toFixed(2)+'%)';
+          chg.style.color = diff>=0?'#00E676':'#FF0055';
+        }
+        if (d.volume != null) {
+          var volEl = document.getElementById('statVolume');
+          if (volEl) volEl.textContent = fmtL(d.volume);
+        }
+        if (d.open != null && d.open > 0) {
+          document.getElementById('statOpen').textContent = fmt(d.open);
+          document.getElementById('ohlc-open').textContent = fmt(d.open);
+        }
+        if (d.high != null && d.high > 0) {
+          document.getElementById('statHigh').textContent = fmt(d.high);
+          document.getElementById('ohlc-high').textContent = fmt(d.high);
+        }
+        if (d.low != null && d.low > 0) {
+          document.getElementById('statLow').textContent = fmt(d.low);
+          document.getElementById('ohlc-low').textContent = fmt(d.low);
+        }
+        var ohlcC = document.getElementById('ohlc-close');
+        if (ohlcC) ohlcC.textContent = fmt(p);
+        var mktVol2 = document.getElementById('ohlc-volume');
+        if (mktVol2 && d.volume != null) mktVol2.textContent = fmtL(d.volume);
+        
+        // Update live chart candle
+        if (typeof candleSeries !== 'undefined' && candleSeries) {
+          var activeRange = window._loadedRange || '1D';
+          var isIntraday = ['1m','5m','15m','30m','1h'].indexOf(activeRange) !== -1;
+          if (isIntraday) {
+            var intervalMin = {'1m':1, '5m':5, '15m':15, '30m':30, '1h':60}[activeRange];
+            var ms = intervalMin * 60 * 1000;
+            var now = new Date();
+            var utcMs = now.getTime();
+            var IST_OFFSET_MS = 5.5 * 3600 * 1000;
+            var SESSION_START_MIN = 9 * 60 + 15;
+            
+            var istDayStartMs = (Math.floor((utcMs + IST_OFFSET_MS) / 86400000) * 86400000) - IST_OFFSET_MS;
+            var sessionStartMs = istDayStartMs + SESSION_START_MIN * 60000;
+            var offsetFromSession = utcMs - sessionStartMs;
+            var snappedMs = offsetFromSession < 0 ? sessionStartMs : sessionStartMs + Math.floor(offsetFromSession / ms) * ms;
+            var snappedSec = Math.floor(snappedMs / 1000);
+            
+            if (!window._formingCandle || window._formingCandle.time !== snappedSec) {
+              var fallbackC = (window._chartDataCache && window._chartDataCache.length > 0) ? window._chartDataCache[window._chartDataCache.length - 1].close : p;
+              var openPrice = (d.current > 0) ? d.current : (window._formingCandle ? window._formingCandle.close : fallbackC);
+              window._formingCandle = { time: snappedSec, open: openPrice, high: Math.max(openPrice, p), low: Math.min(openPrice, p), close: p };
+            } else {
+              window._formingCandle.high = Math.max(window._formingCandle.high, p);
+              window._formingCandle.low = Math.min(window._formingCandle.low, p);
+              window._formingCandle.close = p;
+            }
+            try { candleSeries.update(window._formingCandle); } catch(e) {}
+          } else {
+            // Daily / non-intraday ticking
+            var nowIST = new Date(Date.now() + 5.5 * 3600 * 1000);
+            var dayStr = nowIST.getUTCFullYear() + '-' + String(nowIST.getUTCMonth()+1).padStart(2,'0') + '-' + String(nowIST.getUTCDate()).padStart(2,'0');
+            var snappedSec = Math.floor(new Date(dayStr + 'T00:00:00Z').getTime() / 1000);
+            
+            // For 1W/1M, we can just update the last historical candle if we are inside it
+            if (activeRange !== '1D' && window._chartDataCache && window._chartDataCache.length > 0) {
+                var lastTime = window._chartDataCache[window._chartDataCache.length - 1].time;
+                if (snappedSec >= lastTime) snappedSec = lastTime;
+            }
+            
+            if (!window._formingCandle || window._formingCandle.time !== snappedSec) {
+              var fallbackC = (window._chartDataCache && window._chartDataCache.length > 0) ? window._chartDataCache[window._chartDataCache.length - 1].close : p;
+              var openPrice = (d.current > 0) ? d.current : (window._formingCandle ? window._formingCandle.close : fallbackC);
+              window._formingCandle = { time: snappedSec, open: openPrice, high: Math.max(openPrice, p), low: Math.min(openPrice, p), close: p };
+            } else {
+              window._formingCandle.high = Math.max(window._formingCandle.high, p);
+              window._formingCandle.low = Math.min(window._formingCandle.low, p);
+              window._formingCandle.close = p;
+            }
+            try { candleSeries.update(window._formingCandle); } catch(e) {}
+          }
+        }
+        
+        var secEl = document.getElementById('sector-tag');
+        if (secEl && d.sector) {
+          var secText = d.sector;
+          if (d.sectorPct != null) {
+            var secSn = d.sectorPct >= 0 ? '+' : '';
+            secText += ' (' + secSn + d.sectorPct.toFixed(2) + '%)';
+          }
+          secEl.textContent = secText;
+          secEl.style.display = 'inline-block';
+          secEl.style.color = d.sectorPct >= 0 ? '#26a69a' : '#ef5350';
+        }
+      }
+    });
+    
+    // Start WebSocket
+    if (window.DashboardWS) {
+      window.DashboardWS.start([ticker, 'NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCAP']);
+    }
   })();
   </script>
 </body>

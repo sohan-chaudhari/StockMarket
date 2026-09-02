@@ -133,6 +133,7 @@ var TVDatafeed = (function () {
     fetch(url)
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        if (data && data.data) { data = data.data; }
         if (!Array.isArray(data) || data.length === 0) return;
         // Find the subscription for this ticker
         var uid = Object.keys(_subscriptions).find(function (u) {
@@ -320,6 +321,7 @@ var TVDatafeed = (function () {
       var ri = resolutionToApi(resolution);
 
       function makeBars(data) {
+        if (data && data.data) { data = data.data; }
         if (!Array.isArray(data) || data.length === 0) {
           return [];
         }
@@ -341,7 +343,7 @@ var TVDatafeed = (function () {
       }
 
       if (ri.type === 'intraday') {
-        var url = '/api/stock-data/intraday?ticker=' + encodeURIComponent(ticker) + '&interval=' + ri.interval;
+        var url = '/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(ticker) + '&interval=' + ri.interval + '&before=' + to + '&limit=5000';
         fetch(url)
           .then(function (r) { return r.json(); })
           .then(function (data) {

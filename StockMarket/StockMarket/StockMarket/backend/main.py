@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -23,6 +27,7 @@ from fastapi.responses import JSONResponse
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from typing import List, Optional, Dict, Tuple
@@ -46,9 +51,34 @@ YFINANCE_INDEX_MAP = {
     # India VIX
     '^INDIAVIX': '^INDIAVIX',
 }
-def _yfinance_ticker(clean_ticker: str) -> str:
-    """Map an internal clean ticker to the yfinance symbol."""
-    return YFINANCE_INDEX_MAP.get(clean_ticker, f"{clean_ticker}.NS")
+def _resolve_ticker_exchange(db: Session, clean_ticker: str) -> str:
+    """Resolve a ticker's real listed exchange from stock_metadata.
+
+    Prefers NSE when dual-listed (matches the resolution order used
+    elsewhere, e.g. WS ticker validation). Falls back to "NSE" only when
+    there's no metadata row to consult at all -- the same default every
+    caller assumed before this function existed, so a ticker missing from
+    stock_metadata sees no behavior change.
+    """
+    exch_rows = db.query(models.StockMetadata.exchange).filter(models.StockMetadata.ticker == clean_ticker).all()
+    exchanges = {r[0] for r in exch_rows}
+    return "NSE" if ("NSE" in exchanges or not exchanges) else next(iter(exchanges))
+
+
+def _yfinance_ticker(clean_ticker: str, exchange: str = "NSE") -> str:
+    """Map an internal clean ticker to the yfinance symbol.
+
+    `exchange` defaults to "NSE" so every existing call site keeps its
+    current behavior unchanged. Callers that know a ticker is BSE-only
+    should pass exchange="BSE" -- otherwise a BSE-only ticker silently
+    queries yfinance under the wrong suffix (.NS), which can return a
+    different real instrument or garbage data under the same symbol
+    rather than a clean "not found".
+    """
+    if clean_ticker in YFINANCE_INDEX_MAP:
+        return YFINANCE_INDEX_MAP[clean_ticker]
+    suffix = ".BO" if exchange == "BSE" else ".NS"
+    return f"{clean_ticker}{suffix}"
 
 def _is_yfinance_failed(ticker: str) -> bool:
     """Check if a ticker is in the yfinance failure cache (delisted / invalid).
@@ -124,19 +154,21 @@ from database import get_db, get_ist_now
 
 from routers.auth_router import router as auth_router
 from routers.trade_router import router as trade_router
-from price_poller import PricePoller
+from price_poller import PricePoller, CriticalIndexPoller
 
 # ── Dynamic ticker viewership manager ──
-# Tracks which tickers are actively viewed across all connected clients.
+# Tracks which tickers are actively viewed across all connected clients or pinned by active orders.
 # Subscribes/unsubscribes from AngelOne WS dynamically.
-# When the 500-subscription cap is hit, evicts the least recently viewed
-# ticker that has no active viewers (debounce expired).
+# Subscription invariant: ticker is subscribed iff viewer_ref_count > 0 OR execution_ref_count > 0.
+# When the subscription cap is hit, evicts the least recently viewed ticker that has no active viewers
+# and zero execution references (debounce expired).
 class ViewedTickerManager:
     def __init__(self, angel_svc, max_subscriptions=500):
         self._angel = angel_svc
         self._max = max_subscriptions
         self._lock = threading.Lock()
         self._view_counts: Dict[str, int] = {}
+        self._execution_counts: Dict[str, int] = {}
         self._pending_unsub: Dict[str, float] = {}
         self._lru: Dict[str, float] = {}  # ticker -> last view timestamp
         self._subscribed: set = set()  # tracks actual subscribed tickers (avoids count drift)
@@ -144,7 +176,12 @@ class ViewedTickerManager:
         self.stats = {
             "subscribe_calls": 0, "unsubscribe_calls": 0,
             "evictions": 0, "rejections": 0,
+            "audit_repairs": 0,
         }
+
+    def _has_interest(self, ticker: str) -> bool:
+        """Returns True if ticker has at least one viewer or one active order."""
+        return self._view_counts.get(ticker, 0) > 0 or self._execution_counts.get(ticker, 0) > 0
 
     def view(self, ticker: str):
         with self._lock:
@@ -163,10 +200,10 @@ class ViewedTickerManager:
             threading.Thread(target=self._angel.subscribe_tickers, args=([ticker],), daemon=True).start()
             return
         # Cap reached — try to evict a safe candidate
-        # Safe = in pending_unsub (no active viewers) AND debounce expired (>5min)
+        # Safe = in pending_unsub (no active viewers) AND debounce expired (>5min) AND zero execution refs
         now = time.time()
         evictable = [(t, ts) for t, ts in self._pending_unsub.items()
-                     if now - ts > 300 and t not in self._view_counts]
+                     if now - ts > 300 and not self._has_interest(t)]
         if evictable:
             evictable.sort(key=lambda x: self._lru.get(x[0], 0))
             to_evict = evictable[0][0]
@@ -182,14 +219,16 @@ class ViewedTickerManager:
         else:
             self.stats["rejections"] += 1
             print(f"[ViewedTicker] REJECTED subscription to {ticker}: cap {self._max} reached, "
-                  f"{len(self._pending_unsub)} pending unsubs, none expired 5min debounce")
+                  f"{len(self._pending_unsub)} pending unsubs, none expired 5min debounce (or all pinned)")
 
     def unview(self, ticker: str):
         with self._lock:
             cnt = self._view_counts.get(ticker, 0)
             if cnt <= 1:
                 self._view_counts.pop(ticker, None)
-                self._pending_unsub[ticker] = time.time()
+                # Only enter debounce unsubscription if there is also NO execution interest
+                if self._execution_counts.get(ticker, 0) == 0:
+                    self._pending_unsub[ticker] = time.time()
             else:
                 self._view_counts[ticker] = cnt - 1
 
@@ -197,20 +236,83 @@ class ViewedTickerManager:
         for t in tickers:
             self.unview(t)
 
+    def set_execution_ref_counts(self, counts: Dict[str, int]):
+        """
+        Replaces execution reference counts from DB-authoritative truth.
+        Subscribes any newly referenced tickers that are not yet subscribed.
+        Enters debounce unsubscription for tickers that lost all execution interest and have no viewers.
+        """
+        to_subscribe = []
+        with self._lock:
+            # Reconcile counts from authoritative DB snapshot
+            new_counts = {t: c for t, c in counts.items() if c > 0}
+            old_pinned = set(self._execution_counts.keys())
+            new_pinned = set(new_counts.keys())
+            self._execution_counts = new_counts
+
+            # Tickers newly acquiring execution references
+            for t in new_pinned:
+                self._pending_unsub.pop(t, None)
+                if t not in self._subscribed:
+                    if len(self._subscribed) < self._max:
+                        self._subscribed.add(t)
+                        to_subscribe.append(t)
+                        self.stats["subscribe_calls"] += 1
+                    else:
+                        self._try_subscribe(t)
+
+            # Tickers that lost all execution references
+            for t in (old_pinned - new_pinned):
+                if self._view_counts.get(t, 0) == 0:
+                    self._pending_unsub[t] = time.time()
+
+        if to_subscribe:
+            threading.Thread(target=self._angel.subscribe_tickers, args=(to_subscribe,), daemon=True).start()
+
+    def get_execution_ref_count(self, ticker: str) -> int:
+        with self._lock:
+            return self._execution_counts.get(ticker, 0)
+
     def get_viewed_tickers(self) -> list:
         with self._lock:
             return list(self._view_counts.keys())
+
+    def get_all_interested_tickers(self) -> list:
+        with self._lock:
+            return list(set(self._view_counts.keys()) | set(self._execution_counts.keys()))
 
     def get_metrics(self) -> dict:
         with self._lock:
             return {
                 "active_viewers": len(self._view_counts),
+                "execution_pinned": len(self._execution_counts),
                 "subscribed": len(self._subscribed),
                 "max_subscriptions": self._max,
                 "pending_unsub": len(self._pending_unsub),
                 **self.stats,
                 "most_viewed": sorted(self._view_counts.items(), key=lambda x: -x[1])[:10],
             }
+
+    def audit_and_repair(self):
+        """
+        Consistency audit (runs every 60s).
+        Subscribe-only guarantee: repairs missing subscriptions immediately.
+        NEVER directly unsubscribes (delegates unsubscription safely through debounce).
+        """
+        to_repair = []
+        with self._lock:
+            for t in set(self._view_counts.keys()) | set(self._execution_counts.keys()):
+                if t not in self._subscribed:
+                    if len(self._subscribed) < self._max:
+                        self._subscribed.add(t)
+                        to_repair.append(t)
+                        self.stats["audit_repairs"] += 1
+                        self.stats["subscribe_calls"] += 1
+                    self._pending_unsub.pop(t, None)
+
+        if to_repair:
+            print(f"[SubscriptionAudit] Repaired {len(to_repair)} missing subscriptions: {to_repair}")
+            threading.Thread(target=self._angel.subscribe_tickers, args=(to_repair,), daemon=True).start()
 
     def _process_pending(self):
         while True:
@@ -219,7 +321,8 @@ class ViewedTickerManager:
             with self._lock:
                 now = time.time()
                 for t, ts in list(self._pending_unsub.items()):
-                    if now - ts > 300 and t not in self._view_counts:
+                    # Must have elapsed 5m debounce AND have zero viewer & zero execution interest
+                    if now - ts > 300 and not self._has_interest(t):
                         to_unsub.append(t)
                 for t in to_unsub:
                     del self._pending_unsub[t]
@@ -234,9 +337,9 @@ viewed_ticker_mgr = None  # initialized in startup
 
 # ── YFinance concurrent download limiter ──
 # Prevents 100 concurrent yfinance calls when many users request different tickers.
-_yf_semaphore = threading.BoundedSemaphore(3)
+_yf_semaphore = threading.BoundedSemaphore(10)
 # Separate semaphore for background tasks (daily prefill, prewarm) so user requests aren't starved
-_yf_bg_semaphore = threading.BoundedSemaphore(3)
+_yf_bg_semaphore = threading.BoundedSemaphore(10)
 
 def _yf_bg_download(yf_ticker: str, period: str, interval: str, timeout=8):
     """Wrapper around yf.download for background tasks (separate semaphore from user requests)."""
@@ -269,10 +372,19 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path.startswith('/logos/') or path.endswith(('.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico')):
             response.headers['Cache-Control'] = 'public, max-age=86400'
+        elif path in ('/drawings.js', '/drawing-core.js', '/news.js', '/stock-ui.js', '/dashboard.js'):
+            # Under active iteration — always revalidate so edits are picked up
+            # on the very next reload without needing a manual ?v= bump.
+            # Restore to the blanket max-age=3600 below once this stabilizes.
+            response.headers['Cache-Control'] = 'no-cache'
         elif path.endswith(('.js', '.css')):
             response.headers['Cache-Control'] = 'public, max-age=3600'
         elif path.endswith('.html') or path == '/' or path == '':
-            response.headers['Cache-Control'] = 'no-cache'
+            # 'private, must-revalidate' lets the browser store the page
+            # in its Back/Forward Cache (bfcache) so navigating Back is
+            # instant. The browser still re-validates with the server when
+            # doing a fresh forward navigation.
+            response.headers['Cache-Control'] = 'private, must-revalidate'
         return response
 
 app.add_middleware(CacheControlMiddleware)
@@ -328,19 +440,16 @@ async def favicon():
 
 import auth
 
-from slowapi import Limiter
-
-from slowapi.util import get_remote_address
-
 from slowapi.errors import RateLimitExceeded
 
 from fastapi import Request
 
 from fastapi.responses import JSONResponse
 
-# Rate limiter
-
-limiter = Limiter(key_func=get_remote_address)
+# Rate limiter -- shared instance from rate_limiter.py so routers/*.py can
+# also import it without a circular import (they're imported by main.py
+# before this point in the file).
+from rate_limiter import limiter
 app.state.limiter = limiter
 
 @app.exception_handler(RateLimitExceeded)
@@ -394,7 +503,7 @@ _ALL_STOCKS_CACHE_TTL = 3600  # 1 hour
 _news_general_cache: dict = None
 _news_general_cache_ts: float = 0
 _news_ticker_cache: dict = {}
-_NEWS_CACHE_TTL = 60  # 60 seconds
+_NEWS_CACHE_TTL = 180  # 180 seconds
 
 # --- AngelOne WebSocket Tick Buffer (thread-safe) ---
 # AngelOne WS runs in a background thread; ticks are buffered here
@@ -661,35 +770,106 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
     db = database.SessionLocal()
     try:
 
-        model = models.Candle
+        if interval in ("1m", "5m", "15m", "30m", "1h"):
+            model = models.Candle
+        else:
+            model = models.Candle
 
         # Ensure logged in
 
         if not historical_service.is_logged_in:
 
             historical_service.login()
+        # Cap backfill_start to avoid API rejections (yfinance max 60d for intraday, AngelOne ~100d)
+        max_days = {"1m": 7, "5m": 60, "15m": 60, "30m": 60, "1h": 730}.get(interval, 60)
+        cutoff_dt = now - timedelta(days=max_days - 1)
+        if backfill_start < cutoff_dt:
+            print(f"[GapFill] Capping backfill_start from {backfill_start} to {cutoff_dt} due to API limits")
+            backfill_start = cutoff_dt
 
         print(f"[Intraday] [BG] Fetching {ticker} from {backfill_start} to {now}...")
-
         # Try AngelOne first (unless it's an index which often lags)
 
-        candles = []
-
+        intraday_candles = []
         is_index = (ticker.upper() in ["NIFTY", "BANKNIFTY", "SENSEX", "NIFTY 50", "NIFTY BANK"])
 
-        if not is_index:
+        angel_interval_map = {
+            "1m": "ONE_MINUTE",
+            "5m": "FIVE_MINUTE",
+            "15m": "FIFTEEN_MINUTE",
+            "30m": "THIRTY_MINUTE",
+            "1h": "ONE_HOUR",
+            "1D": "ONE_DAY"
+        }
+        angel_interval = angel_interval_map.get(interval, "FIVE_MINUTE")
 
-            candles = historical_service.get_historical_candles(
-                token=ticker,
-                exchange="NSE",
-                interval=interval,
-                from_date=backfill_start.date(),
-                to_date=now.date()
-            ) or []
+        exchange_val = "BSE" if ticker.upper() == "SENSEX" else "NSE"
 
-        if candles:
+        intraday_candles = historical_service.get_historical_candles(
+            ticker=ticker,
+            exchange=exchange_val,
+            interval=angel_interval,
+            from_date=backfill_start,
+            to_date=now
+        ) or []
+
+        if not intraday_candles:
+            try:
+                yf_data = _fetch_yfinance_intraday(None, ticker, interval, use_bg_semaphore=True)
+                if yf_data:
+                    intraday_candles = []
+                    for row in yf_data:
+                        dt = row.timestamp
+                        if backfill_start <= dt <= now:
+                            intraday_candles.append({
+                                "timestamp": dt,
+                                "open": row.open,
+                                "high": row.high,
+                                "low": row.low,
+                                "close": row.close,
+                                "volume": row.volume
+                            })
+            except Exception as e:
+                print(f"[GapFill] YFinance fallback failed for {ticker}: {e}")
+
+        # === RESAMPLE FALLBACK: if API fetch failed, build from stored 5m candles ===
+        if not intraday_candles and interval in ("15m", "30m", "1h"):
+            try:
+                from models import Candle
+                from resampler import CandleResampler
+                five_min_rows = db.query(Candle).filter(
+                    Candle.ticker == ticker,
+                    Candle.timeframe == '5m',
+                    Candle.timestamp >= backfill_start
+                ).order_by(Candle.timestamp.asc()).all()
+                if five_min_rows:
+                    five_min_dicts = [{
+                        "timestamp": r.timestamp,
+                        "open": float(r.open), "high": float(r.high),
+                        "low": float(r.low), "close": float(r.close),
+                        "volume": int(r.volume)
+                    } for r in five_min_rows]
+                    resampled = CandleResampler.resample_5m_to(five_min_dicts, interval)
+                    if resampled:
+                        intraday_candles = resampled
+                        print(f"[GapFill] Resample fallback: built {len(resampled)} {interval} candles from 5m for {ticker}")
+            except Exception as e:
+                print(f"[GapFill] Resample fallback failed for {ticker} {interval}: {e}")
+
+        if intraday_candles:
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
-            for c in candles:
+            
+            # Bulk fetch existing timestamps to prevent N+1 query slowdown
+            existing_query = db.query(model.timestamp).filter(
+                model.ticker == ticker,
+                model.timestamp >= backfill_start,
+                model.timestamp <= now
+            )
+            if hasattr(model, 'timeframe'):
+                existing_query = existing_query.filter(model.timeframe == interval)
+            existing_ts_set = {r.timestamp for r in existing_query.all()}
+            
+            for c in intraday_candles:
                 ts = c.get("timestamp")
                 if isinstance(ts, str):
                     ts = datetime.fromisoformat(ts)
@@ -705,22 +885,25 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                 cl = c.get("close", 0)
                 v = int(c.get("volume", 0))
                 o, h, l, cl = fix_ohlc(o, h, l, cl)
-                existing = db.query(model).filter(
-                    model.ticker == ticker,
-                    model.timeframe == interval,
-                    model.timestamp == snapped_dt
-                ).first()
-                if not existing:
-                    record = model(
-                        ticker=ticker,
-                        timeframe=interval,
-                        timestamp=snapped_dt,
-                        open=o, high=h, low=l, close=cl, volume=v,
-                        is_completed=True,
-                    )
-                    db.add(record)
+                
+                if snapped_dt not in existing_ts_set:
+                    record_kwargs = {
+                        "ticker": ticker,
+                        "timestamp": snapped_dt,
+                        "open": o, "high": h, "low": l, "close": cl, "volume": v,
+                        "timeframe": interval,
+                        "is_completed": True,
+                    }
+                    # B-2: Use ON CONFLICT DO NOTHING instead of db.add() to eliminate
+                    # the TOCTOU race where a concurrent writer (daily sync or live
+                    # aggregator) inserts the same candle between our existing_ts_set
+                    # snapshot and this commit, causing an IntegrityError that rolls
+                    # back the entire batch.
+                    from sqlalchemy.dialects.postgresql import insert as _pg_ins
+                    _stmt = _pg_ins(models.Candle).values(**record_kwargs).on_conflict_do_nothing(constraint="uix_candle_key")
+                    db.execute(_stmt)
             db.commit()
-            print(f"[Intraday] [BG] Saved ~{len(candles)} candles for {ticker}")
+            print(f"[Intraday] [BG] Saved ~{len(intraday_candles)} intraday candles for {ticker}")
 
     except Exception as e:
         print(f"[Intraday] [BG] Error backfilling {ticker}: {e}")
@@ -757,71 +940,44 @@ async def place_order(
 
     stock_name = stock_meta.name if stock_meta else order.ticker
 
-    # ── Bug 1 fix: validate entry_price against live market price ────
-    from aggregator import candle_aggregator
-    live_state = candle_aggregator.get_current(order.ticker)
-    market_price = None
-    if live_state and "1m" in live_state:
-        market_price = live_state["1m"]["close"]
-    if market_price is None:
-        latest = db.query(models.Candle).filter(
-            models.Candle.ticker == order.ticker,
-            models.Candle.is_completed == True
-        ).order_by(models.Candle.timestamp.desc()).first()
-        if latest:
-            market_price = latest.close
-    if market_price is None:
-        latest_sd = db.query(models.StockData).filter(
-            models.StockData.ticker == order.ticker
-        ).order_by(models.StockData.date.desc()).first()
-        if latest_sd:
-            market_price = latest_sd.close
+    # ── Entry price validation & synchronization ────
+    # PriceProvider resolves the authoritative current price (live tick -> forming 5m -> completed 5m -> daily close).
+    from execution_engine import price_monitor
+    market_price = price_monitor.get_price(order.ticker)
     if market_price is not None and market_price > 0:
         PRICE_TOLERANCE = 0.05  # ±5%
         lower_bound = market_price * (1 - PRICE_TOLERANCE)
         upper_bound = market_price * (1 + PRICE_TOLERANCE)
+        # If client passed an outdated cached price outside tolerance, automatically sync to current authoritative price
         if order.entry_price < lower_bound or order.entry_price > upper_bound:
-            raise HTTPException(status_code=400, detail=f"entry_price ₹{order.entry_price:.2f} is outside ±5% of market price ₹{market_price:.2f}")
+            order.entry_price = market_price
 
     position_type = order.position_type.upper()
     if position_type not in ("LONG", "SHORT"):
         raise HTTPException(status_code=400, detail=f"position_type must be LONG or SHORT, got {position_type}")
 
-    position, message = TradingService.open_position(
-
+    position, message, amo_order = TradingService.open_position(
         db=db,
-
         user_id=current_user.user_id,
-
         ticker=order.ticker,
-
         position_type=position_type,
-
         quantity=order.quantity,
-
         entry_price=order.entry_price,
-
         take_profit=order.take_profit,
-
         stop_loss=order.stop_loss,
-
         stock_name=stock_name
-
     )
 
-    if not position:
-
+    if not position and not amo_order:
         raise HTTPException(status_code=400, detail=message)
 
     user = db.query(models.User).filter(models.User.user_id == current_user.user_id).first()
     return {
-
         "message": message,
-
-        "position_id": position.id,
-
+        "is_amo": amo_order is not None,
+        "position_id": position.id if position else None,
+        "order_id": amo_order.id if amo_order else None,
         "balance": user.virtual_balance if user else 0
-
     }
 
 # ==================== USER WEBSOCKET ====================
@@ -832,7 +988,7 @@ from fastapi import WebSocketDisconnect
 
 @app.websocket("/ws/user")
 
-async def user_websocket_endpoint(websocket: WebSocket, db: Session = Depends(get_db)):
+async def user_websocket_endpoint(websocket: WebSocket):
 
     """
 
@@ -841,6 +997,8 @@ async def user_websocket_endpoint(websocket: WebSocket, db: Session = Depends(ge
     Client connects then sends auth token as first JSON message: {"token": "JWT_TOKEN"}
 
     """
+
+    user_id = None
 
     try:
 
@@ -866,9 +1024,11 @@ async def user_websocket_endpoint(websocket: WebSocket, db: Session = Depends(ge
 
         user_id = payload.get("user_id")
 
-        user = db.query(models.User).filter(models.User.user_id == user_id).first()
+        with database.SessionLocal() as db:
+            user = db.query(models.User).filter(models.User.user_id == user_id).first()
+            is_active = user.is_active if user else False
 
-        if not user or not user.is_active:
+        if not user or not is_active:
 
              print(f"[WS] Auth failed: User not found or inactive")
 
@@ -890,6 +1050,8 @@ async def user_websocket_endpoint(websocket: WebSocket, db: Session = Depends(ge
 
     except Exception as e:
         print(f"[WS User] Error: {e}")
+        if user_id is not None:
+            user_ws_manager.disconnect(user_id, websocket)
         try: await websocket.close()
         except: pass
 
@@ -909,11 +1071,15 @@ async def get_closed_positions(
 
     # BUG-04 FIX: Closed positions don't need live prices — use stored realized_pnl and closing_price
 
+    # DB-06: one batched query for every position's TP/SL orders instead of
+    # one query per position in the loop below.
+    orders_by_position = TradingService.get_orders_for_positions(db, [pos.id for pos in positions])
+
     result = []
 
     for pos in positions:
 
-        orders = TradingService.get_position_orders(db, pos.id)
+        orders = orders_by_position.get(pos.id, {"TP": None, "SL": None})
         # BUG-04 FIX: Use stored realized_pnl and closing_price — not live prices re-computed each call
         realized_pnl = pos.realized_pnl if pos.realized_pnl is not None else 0.0
         closing_price = pos.closing_price if pos.closing_price is not None else pos.entry_price
@@ -1053,6 +1219,15 @@ def _fmt_volume(vol):
         return f"{v / 100000:.2f} L"
     return str(v)
 
+_live_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+# Dedicated pool for long-running background jobs (startup prewarm, daily prefill,
+# historical sync). These used to run on asyncio's DEFAULT executor via
+# run_in_executor(None, ...) — the same pool asyncio.to_thread() hands request
+# handlers, so a multi-minute yfinance batch would occupy every worker and stall
+# ordinary requests (measured /api/market-movers at 10s+ during startup).
+_bg_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="bgjob")
+
 async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -> Dict[str, Dict]:
     prices = {}
     if not tickers:
@@ -1067,13 +1242,31 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
         print(f"[Live] Filtered {len(tickers) - len(valid_tickers)} invalid ticker(s)")
         tickers = valid_tickers
 
-    # ── Step 1: Fill from AngelOne WebSocket real-time ticks (fastest path) ──
-    angel_ticks = angelone_service.latest_ticks
+    # CriticalIndexPoller keeps NIFTY/SENSEX/BANKNIFTY/FINNIFTY always fresh via dedicated thread.
+    # Other tickers use WS ticks or REST poller data from latest_ticks.
+    with angelone_service.latest_ticks_lock:
+        angel_ticks = dict(angelone_service.latest_ticks)
     remaining = []
+    now_ts_sec = time.time()
+
     for t in tickers:
         raw = t.strip().upper()
         tick_data = angel_ticks.get(raw)
-        if tick_data and tick_data.get("current_price", 0) > 0:
+
+        # Check if it's an index missing OHLC data
+        is_index = raw in ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
+        missing_ohlc = is_index and (tick_data is None or tick_data.get("open", 0) == 0)
+
+        # Use _received_ts (server receive time) for stale detection — NOT exchange timestamp.
+        # This correctly handles: price hasn't moved → exchange doesn't send tick → _ts looks old.
+        is_stale = False
+        if tick_data and market_open:
+            recv_ts = tick_data.get("_received_ts") or tick_data.get("_ts", 0)
+            if isinstance(recv_ts, (float, int)) and recv_ts > 1e9:
+                if now_ts_sec - recv_ts > 30:  # 30s threshold (was incorrectly 15s)
+                    is_stale = True
+
+        if tick_data and tick_data.get("current_price", 0) > 0 and not missing_ohlc and not is_stale:
             cp = tick_data["current_price"]
             pc = tick_data.get("prev_close", 0)
             change = round(cp - pc, 2) if pc else 0
@@ -1090,230 +1283,230 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                 "volume_display": _fmt_volume(vol),
                 "change": change,
                 "change_pct": change_pct,
-                "source": "angel_ws",
+                "source": tick_data.get("_source", "angel"),
             }
         else:
             remaining.append(t)
 
-    # All tickers covered by AngelOne WS — return immediately
+    # All tickers covered by AngelOne cache — return immediately
     if not remaining:
         now_ts = time.time()
-        for tkr in prices:
-            _ticker_last_update[tkr] = now_ts
         return prices
+
 
     # ── Step 1b: Try yfinance for remaining tickers even if AngelOne is active ──
     # (AngelOne doesn't cover NSE sector indices like NIFTY_AUTO, NIFTY_IT, etc.)
 
     # ── Step 2: Check in-memory TTL cache for remaining tickers ──
     now = time.time()
-    cache_key = ",".join(sorted(remaining))
     ttl = _live_cache_ttl()
-    cached = _live_prices_cache.get(cache_key)
-    if cached and (now - cached["ts"] < ttl):
-        prices.update(cached["data"])
-        for tkr in prices:
+    still_remaining = []
+    
+    # Process cached items per ticker
+    for tkr in remaining:
+        cached = _live_prices_cache.get(tkr)
+        if cached and (now - cached["ts"] < ttl):
+            prices[tkr] = cached["data"]
             _ticker_last_update[tkr] = now
+        else:
+            still_remaining.append(tkr)
+            
+    if not still_remaining:
         return prices
 
-    # ── Step 3: Fetch remaining via yfinance (with per-key lock) ──
-    with _live_prices_cache_lock_dict_mutex:
-        if cache_key not in _live_prices_cache_lock:
-            _live_prices_cache_lock[cache_key] = threading.Lock()
-    with _live_prices_cache_lock[cache_key]:
-        ttl = _live_cache_ttl()
-        cached = _live_prices_cache.get(cache_key)
-        if cached and (now - cached["ts"] < ttl):
-            prices.update(cached["data"])
-            for tkr in prices:
-                _ticker_last_update[tkr] = now
-            return prices
+    # We just use still_remaining directly, no locks
+    final_remaining = still_remaining
 
-        # Skip tickers in yfinance failure cache (delisted, invalid) + validate symbols
-        yf_eligible = []
-        skipped_failed = 0
-        for t in remaining:
-            raw = t.strip().upper()
-            if _is_yfinance_failed(raw):
-                skipped_failed += 1
-                continue
-            is_valid, _ = yf_downloader.validate_symbol(raw)
-            if not is_valid:
-                _mark_yfinance_failed(raw)
-                skipped_failed += 1
-                continue
-            yf_eligible.append(t)
-        if skipped_failed:
-            print(f"[Live] Skipped {skipped_failed} failed/invalid tickers for yfinance")
 
-        if not yf_eligible:
-            return prices
+    # Skip tickers in yfinance failure cache (delisted, invalid) + validate symbols
+    yf_eligible = []
+    skipped_failed = 0
+    for t in final_remaining:
+        raw = t.strip().upper()
+        if _is_yfinance_failed(raw):
+            skipped_failed += 1
+            continue
+        is_valid, _ = yf_downloader.validate_symbol(raw)
+        if not is_valid:
+            _mark_yfinance_failed(raw)
+            skipped_failed += 1
+            continue
+        yf_eligible.append(t)
+    if skipped_failed:
+        print(f"[Live] Skipped {skipped_failed} failed/invalid tickers for yfinance")
 
-        yf_tickers = []
-        for t in yf_eligible:
-            t = t.strip().upper()
-            if t in INDEX_MAP:
-                yf_tickers.append(INDEX_MAP[t])
-            elif "FINNIFTY" in t:
-                yf_tickers.append("NIFTY_FIN_SERVICE.NS")
-            elif t.startswith("^"):
-                yf_tickers.append(t)
-            elif "." in t:
-                yf_tickers.append(t)
-            else:
-                yf_tickers.append(f"{t}.NS")
+    if not yf_eligible:
+        return prices
 
+    yf_tickers = []
+    for t in yf_eligible:
+        t = t.strip().upper()
+        if t in INDEX_MAP:
+            yf_tickers.append(INDEX_MAP[t])
+        elif "FINNIFTY" in t:
+            yf_tickers.append("NIFTY_FIN_SERVICE.NS")
+        elif t.startswith("^"):
+            yf_tickers.append(t)
+        elif "." in t:
+            yf_tickers.append(t)
+        else:
+            yf_tickers.append(f"{t}.NS")
+
+    try:
+        loop = asyncio.get_running_loop()
+        now_ist = datetime.now(IST)
+
+        def _fetch_daily():
+            acquired = _yf_semaphore.acquire(blocking=True, timeout=15)
+            if not acquired:
+                print(f"[Live] Timeout waiting for semaphore for daily batch ({len(yf_tickers)} tickers)")
+                return None
+            try:
+                return yf.download(
+                    tickers=yf_tickers,
+                    period="5d",
+                    interval="1d",
+                    progress=False,
+                    group_by="ticker"
+                )
+            finally:
+                _yf_semaphore.release()
         try:
-            loop = asyncio.get_running_loop()
-            now_ist = datetime.now(IST)
+            df_daily = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_daily), timeout=12)
+        except asyncio.TimeoutError:
+            print(f"[Live] yfinance daily timeout for {len(yf_tickers)} tickers")
+            df_daily = None
 
-            def _fetch_daily():
+        df_intraday = None
+        if market_open:
+            def _fetch_intraday():
                 acquired = _yf_semaphore.acquire(blocking=True, timeout=15)
                 if not acquired:
-                    print(f"[Live] Timeout waiting for semaphore for daily batch ({len(yf_tickers)} tickers)")
+                    print(f"[Live] Timeout waiting for semaphore for intraday batch ({len(yf_tickers)} tickers)")
                     return None
                 try:
                     return yf.download(
                         tickers=yf_tickers,
-                        period="5d",
-                        interval="1d",
+                        period="1d",
+                        interval="5m",
                         progress=False,
                         group_by="ticker"
                     )
                 finally:
                     _yf_semaphore.release()
             try:
-                df_daily = await asyncio.wait_for(loop.run_in_executor(None, _fetch_daily), timeout=12)
+                df_intraday = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_intraday), timeout=12)
             except asyncio.TimeoutError:
-                print(f"[Live] yfinance daily timeout for {len(yf_tickers)} tickers")
-                df_daily = None
+                print(f"[Live] yfinance intraday timeout for {len(yf_tickers)} tickers")
+                df_intraday = None
 
-            df_intraday = None
-            if market_open:
-                def _fetch_intraday():
-                    acquired = _yf_semaphore.acquire(blocking=True, timeout=15)
-                    if not acquired:
-                        print(f"[Live] Timeout waiting for semaphore for intraday batch ({len(yf_tickers)} tickers)")
-                        return None
-                    try:
-                        return yf.download(
-                            tickers=yf_tickers,
-                            period="1d",
-                            interval="5m",
-                            progress=False,
-                            group_by="ticker"
-                        )
-                    finally:
-                        _yf_semaphore.release()
-                try:
-                    df_intraday = await asyncio.wait_for(loop.run_in_executor(None, _fetch_intraday), timeout=12)
-                except asyncio.TimeoutError:
-                    print(f"[Live] yfinance intraday timeout for {len(yf_tickers)} tickers")
-                    df_intraday = None
-
-            for t in remaining:
-                raw = t.strip().upper()
-                yf_key = INDEX_MAP.get(raw)
-                if yf_key is None:
-                    if raw.startswith('^'):
-                        yf_key = raw
-                    elif "FINNIFTY" in raw:
-                        yf_key = "NIFTY_FIN_SERVICE.NS"
-                    elif "." in raw:
-                        yf_key = raw
-                    else:
-                        yf_key = f"{raw}.NS"
-                try:
-                    # Get prev_close from daily data
-                    prev_close_val = 0
-                    if df_daily is not None and not df_daily.empty:
-                        if isinstance(df_daily.columns, pd.MultiIndex):
-                            if yf_key in df_daily.columns.get_level_values(0):
-                                daily_col = df_daily[yf_key]
-                            else:
-                                continue
+        for t in remaining:
+            raw = t.strip().upper()
+            yf_key = INDEX_MAP.get(raw)
+            if yf_key is None:
+                if raw.startswith('^'):
+                    yf_key = raw
+                elif "FINNIFTY" in raw:
+                    yf_key = "NIFTY_FIN_SERVICE.NS"
+                elif "." in raw:
+                    yf_key = raw
+                else:
+                    yf_key = f"{raw}.NS"
+            try:
+                # Get prev_close from daily data
+                prev_close_val = 0
+                if df_daily is not None and not df_daily.empty:
+                    if isinstance(df_daily.columns, pd.MultiIndex):
+                        if yf_key in df_daily.columns.get_level_values(0):
+                            daily_col = df_daily[yf_key]
                         else:
-                            daily_col = df_daily
+                            daily_col = None
+                    else:
+                        daily_col = df_daily
+                    if daily_col is not None:
                         daily_col = daily_col.dropna(how='all')
                         prev_row = daily_col.iloc[-2] if len(daily_col) > 1 else None
                         if prev_row is not None:
                             prev_close_val = _safe_float(prev_row.get("Close", prev_row.get("close", 0)))
 
-                    # Get current price from intraday data (if market open) or daily data
-                    close_val = 0
-                    open_val = 0
-                    high_val = 0
-                    low_val = 0
-                    vol = 0
-                    source_col = None
-                    if df_intraday is not None and not df_intraday.empty:
-                        if isinstance(df_intraday.columns, pd.MultiIndex):
-                            if yf_key in df_intraday.columns.get_level_values(0):
-                                source_col = df_intraday[yf_key]
-                        else:
-                            source_col = df_intraday
-                    if source_col is None and df_daily is not None and not df_daily.empty:
-                        if isinstance(df_daily.columns, pd.MultiIndex):
-                            if yf_key in df_daily.columns.get_level_values(0):
-                                source_col = df_daily[yf_key]
-                        else:
-                            source_col = df_daily
-                    if source_col is not None:
-                        source_col = source_col.dropna(how='all')
-                        last_row = source_col.iloc[-1] if not source_col.empty else None
-                        if last_row is not None:
-                            close_val = _safe_float(last_row.get("Close", last_row.get("close", 0)))
-                            # When intraday (5m) data is available, compute daily OHLC across ALL bars
-                            if df_intraday is not None and not df_intraday.empty:
-                                first_row = source_col.iloc[0] if not source_col.empty else None
-                                if first_row is not None:
-                                    open_val = _safe_float(first_row.get("Open", first_row.get("open", 0)))
-                                if "High" in source_col.columns:
-                                    high_val = _safe_float(source_col["High"].max())
-                                elif "high" in source_col.columns:
-                                    high_val = _safe_float(source_col["high"].max())
-                                if "Low" in source_col.columns:
-                                    low_val = _safe_float(source_col["Low"].min())
-                                elif "low" in source_col.columns:
-                                    low_val = _safe_float(source_col["low"].min())
-                            else:
-                                open_val = _safe_float(last_row.get("Open", last_row.get("open", 0)))
-                                high_val = _safe_float(last_row.get("High", last_row.get("high", 0)))
-                                low_val = _safe_float(last_row.get("Low", last_row.get("low", 0)))
-                            vol = _safe_int(last_row.get("Volume", last_row.get("volume", 0)))
-
-                    if close_val > 0:
-                        change = round(close_val - prev_close_val, 2) if prev_close_val else 0
-                        change_pct = round(((close_val - prev_close_val) / prev_close_val) * 100, 2) if prev_close_val and prev_close_val != 0 else 0
-                        prices[raw] = {
-                            "current_price": close_val,
-                            "current": close_val,
-                            "open": open_val,
-                            "prev_close": prev_close_val,
-                            "high": high_val,
-                            "low": low_val,
-                            "volume": vol,
-                            "volume_display": _fmt_volume(vol),
-                            "change": change,
-                            "change_pct": change_pct,
-                            "_source": "yfinance",
-                            "_ts": time.time(),
-                        }
+                # Get current price from intraday data (if market open) or daily data
+                close_val = 0
+                open_val = 0
+                high_val = 0
+                low_val = 0
+                vol = 0
+                source_col = None
+                if df_intraday is not None and not df_intraday.empty:
+                    if isinstance(df_intraday.columns, pd.MultiIndex):
+                        if yf_key in df_intraday.columns.get_level_values(0):
+                            source_col = df_intraday[yf_key]
                     else:
-                        _mark_yfinance_failed(raw)
-                except Exception as e:
-                    _mark_yfinance_failed(raw)
-                    print(f"[Live] Error processing {raw}: {e}")
-        except Exception as e:
-            print(f"[Live] fetch_batch error: {e}")
+                        source_col = df_intraday
+                if source_col is None and df_daily is not None and not df_daily.empty:
+                    if isinstance(df_daily.columns, pd.MultiIndex):
+                        if yf_key in df_daily.columns.get_level_values(0):
+                            source_col = df_daily[yf_key]
+                    else:
+                        source_col = df_daily
+                if source_col is not None:
+                    source_col = source_col.dropna(how='all')
+                    last_row = source_col.iloc[-1] if not source_col.empty else None
+                    if last_row is not None:
+                        close_val = _safe_float(last_row.get("Close", last_row.get("close", 0)))
+                        # When intraday (5m) data is available, compute daily OHLC across ALL bars
+                        if df_intraday is not None and not df_intraday.empty:
+                            first_row = source_col.iloc[0] if not source_col.empty else None
+                            if first_row is not None:
+                                open_val = _safe_float(first_row.get("Open", first_row.get("open", 0)))
+                            if isinstance(source_col, pd.DataFrame) and "High" in source_col.columns:
+                                high_val = _safe_float(source_col["High"].max())
+                            elif isinstance(source_col, pd.DataFrame) and "high" in source_col.columns:
+                                high_val = _safe_float(source_col["high"].max())
+                            if isinstance(source_col, pd.DataFrame) and "Low" in source_col.columns:
+                                low_val = _safe_float(source_col["Low"].min())
+                            elif isinstance(source_col, pd.DataFrame) and "low" in source_col.columns:
+                                low_val = _safe_float(source_col["low"].min())
+                        else:
+                            open_val = _safe_float(last_row.get("Open", last_row.get("open", 0)))
+                            high_val = _safe_float(last_row.get("High", last_row.get("high", 0)))
+                            low_val = _safe_float(last_row.get("Low", last_row.get("low", 0)))
+                        vol = _safe_int(last_row.get("Volume", last_row.get("volume", 0)))
 
-        _live_prices_cache[cache_key] = {"data": {k: v for k, v in prices.items() if v.get("source") != "angel_ws"}, "ts": time.time()}
-        if len(_live_prices_cache) > LIVE_CACHE_MAX:
-            with _live_prices_cache_lock_dict_mutex:
-                oldest = sorted(_live_prices_cache.items(), key=lambda x: x[1]["ts"])[:len(_live_prices_cache) - LIVE_CACHE_MAX]
-                for k, _ in oldest:
-                    del _live_prices_cache[k]
-                    _live_prices_cache_lock.pop(k, None)
+                if close_val > 0:
+                    change = round(close_val - prev_close_val, 2) if prev_close_val else 0
+                    change_pct = round(((close_val - prev_close_val) / prev_close_val) * 100, 2) if prev_close_val and prev_close_val != 0 else 0
+                    prices[raw] = {
+                        "current_price": close_val,
+                        "current": close_val,
+                        "open": open_val,
+                        "prev_close": prev_close_val,
+                        "high": high_val,
+                        "low": low_val,
+                        "volume": vol,
+                        "volume_display": _fmt_volume(vol),
+                        "change": change,
+                        "change_pct": change_pct,
+                        "_source": "yfinance",
+                        "_ts": time.time(),
+                    }
+                else:
+                    _mark_yfinance_failed(raw)
+            except Exception as e:
+                _mark_yfinance_failed(raw)
+                print(f"[Live] Error processing {raw}: {e}")
+    except Exception as e:
+        print(f"[Live] fetch_batch error: {e}")
+
+    ts_now = time.time()
+    for k, v in prices.items():
+        if v.get("_source") != "angel_ws" and k in final_remaining:
+            _live_prices_cache[k] = {"data": v, "ts": ts_now}
+            
+    if len(_live_prices_cache) > LIVE_CACHE_MAX:
+        with _live_prices_cache_lock_dict_mutex:
+            oldest = sorted(_live_prices_cache.items(), key=lambda x: x[1]["ts"])[:len(_live_prices_cache) - LIVE_CACHE_MAX]
+            for k, _ in oldest:
+                del _live_prices_cache[k]
 
     now_ts = time.time()
     for tkr in prices:
@@ -1448,71 +1641,371 @@ def get_poller_stats():
         ws_count = len(angelone_service.latest_ticks)
     return {"status": "running", "poller": stats, "ws_ticks_cached": ws_count}
 
-@app.get("/api/market-movers")
-async def get_market_movers():
+# Precomputed movers snapshot. Built once at startup and refreshed on a timer by
+# _movers_refresh_loop(), so /api/market-movers serves a ready dict instead of
+# re-scanning ~4000 live ticks (and re-sorting three lists) on every single request.
+_movers_snapshot = {"data": None, "ts": 0.0}
+_movers_snapshot_lock = threading.Lock()
+_MOVERS_REFRESH_SEC = 10
+
+
+def _build_movers(prices: dict) -> dict:
     gainers, losers, most_active = [], [], []
-    try:
-        # Step 1: Attempt to get live ticks from AngelOne WebSocket (covers 4000+ stocks instantly)
-        with angelone_service.latest_ticks_lock:
-            live_ticks = dict(angelone_service.latest_ticks)
-            
-        prices = {}
-        if live_ticks:
-            for ticker, tick_data in live_ticks.items():
-                if ticker not in MOVER_TICKERS:
-                    continue
-                cp = tick_data.get("current_price", 0)
-                pc = tick_data.get("prev_close", 0)
-                vol = tick_data.get("volume", 0)
-                # Filter out illiquid stocks and penny stocks to provide realistic top gainers
-                if cp > 20 and pc > 0 and vol > 50000:
-                    prices[ticker] = {
-                        "current": cp,
-                        "open": tick_data.get("open", 0),
-                        "prev_close": pc,
-                        "change": cp - pc,
-                        "change_pct": ((cp - pc) / pc) * 100,
-                        "volume": vol
-                    }
-        else:
-            # Fallback if WS is down or empty (will only scan up to 50 due to batch limits)
-            prices = await fetch_batch_live_data(MOVER_TICKERS)
-            
-        for ticker, p in prices.items():
-            cp = _safe_float(p.get("current", p.get("current_price", 0)))
-            open_price = _safe_float(p.get("open", 0))
-            prev_close = _safe_float(p.get("prev_close", 0))
-            if cp == 0 and prev_close == 0 and open_price == 0:
-                continue
-            change = _safe_float(p.get("change", 0))
-            change_pct = _safe_float(p.get("change_pct", 0))
-            vol = _safe_int(p.get("volume", 0))
-            meta = STOCK_META.get(ticker, {})
-            name = meta.get("name", ticker)
-            logo = _safe_logo(meta.get("logo") or "")
-            sector = _SECTOR_MAP.get(ticker, "")
-            
-            # Avoid showing indices as market movers, only individual stocks
-            if ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP", "NIFTYMIDCAP100", "NIFTYSMLCAP100"]:
-                continue
-                
-            entry = {"ticker": ticker, "name": name, "logo": logo, "current_price": cp, "current": cp, "prev_close": prev_close, "open": open_price, "change": change, "change_pct": change_pct, "volume": vol, "volume_display": _fmt_volume(vol), "sector": sector}
-            if change_pct >= 0.01:
-                gainers.append(entry)
-            elif change_pct <= -0.01:
-                losers.append(entry)
-            most_active.append(entry)
-            
-        gainers.sort(key=lambda x: x["change_pct"], reverse=True)
-        losers.sort(key=lambda x: x["change_pct"])
-        most_active.sort(key=lambda x: x["volume"], reverse=True)
-    except Exception as e:
-        print(f"[Movers] Error: {e}")
+    for ticker, p in prices.items():
+        cp = _safe_float(p.get("current", p.get("current_price", 0)))
+        open_price = _safe_float(p.get("open", 0))
+        prev_close = _safe_float(p.get("prev_close", 0))
+        if cp == 0 and prev_close == 0 and open_price == 0:
+            continue
+        change = _safe_float(p.get("change", 0))
+        change_pct = _safe_float(p.get("change_pct", 0))
+        vol = _safe_int(p.get("volume", 0))
+        meta = STOCK_META.get(ticker, {})
+        name = meta.get("name", ticker)
+        logo = _safe_logo(meta.get("logo") or "")
+        sector = _SECTOR_MAP.get(ticker, "")
+
+        # Avoid showing indices as market movers, only individual stocks
+        if ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP", "NIFTYMIDCAP100", "NIFTYSMLCAP100"]:
+            continue
+
+        entry = {"ticker": ticker, "name": name, "logo": logo, "current_price": cp, "current": cp, "prev_close": prev_close, "open": open_price, "change": change, "change_pct": change_pct, "volume": vol, "volume_display": _fmt_volume(vol), "sector": sector}
+        if change_pct >= 0.01:
+            gainers.append(entry)
+        elif change_pct <= -0.01:
+            losers.append(entry)
+        most_active.append(entry)
+
+    gainers.sort(key=lambda x: x["change_pct"], reverse=True)
+    losers.sort(key=lambda x: x["change_pct"])
+    most_active.sort(key=lambda x: x["volume"], reverse=True)
     return {
         "gainers": gainers[:15], "losers": losers[:15], "most_active": most_active[:15],
         "market_open": is_market_open_now(),
         "last_updated": datetime.now(IST).isoformat(),
         "advance_count": len(gainers), "decline_count": len(losers)
+    }
+
+
+def _movers_prices_from_ticks() -> dict:
+    """Liquidity-filtered price map from the WS tick cache. Empty when the WS has no data."""
+    with angelone_service.latest_ticks_lock:
+        live_ticks = dict(angelone_service.latest_ticks)
+    prices = {}
+    # Scan every subscribed ticker (~4000+, see ALL_WS_TICKERS at startup), not just the
+    # ~216-ticker "premium" MOVER_TICKERS list — that used to make gainers/losers/most-active
+    # (and the advance/decline counts derived from them) reflect only ~4% of the market.
+    # The liquidity filter below still keeps illiquid/penny-stock noise out.
+    for ticker, tick_data in live_ticks.items():
+        cp = tick_data.get("current_price", 0)
+        pc = tick_data.get("prev_close", 0)
+        vol = tick_data.get("volume", 0)
+        # Filter out illiquid stocks and penny stocks to provide realistic top gainers
+        is_index = ticker in ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
+        if is_index or (cp > 20 and pc > 0 and vol > 50000):
+            prices[ticker] = {
+                "current": cp,
+                "open": tick_data.get("open", 0),
+                "prev_close": pc,
+                "change": cp - pc,
+                "change_pct": ((cp - pc) / pc) * 100,
+                "volume": vol,
+            }
+    return prices
+
+
+async def refresh_movers_snapshot():
+    """Recompute the movers snapshot. Safe to call at startup and from the timer."""
+    try:
+        prices = _movers_prices_from_ticks()
+        if not prices:
+            # WS empty (pre-market, or feed down) — fall back to a REST batch.
+            prices = await fetch_batch_live_data(MOVER_TICKERS)
+        data = _build_movers(prices)
+        with _movers_snapshot_lock:
+            _movers_snapshot["data"] = data
+            _movers_snapshot["ts"] = time.time()
+        return data
+    except Exception as e:
+        print(f"[Movers] snapshot refresh failed: {e}")
+        return None
+
+
+@app.get("/api/market-movers")
+async def get_market_movers():
+    with _movers_snapshot_lock:
+        cached, ts = _movers_snapshot["data"], _movers_snapshot["ts"]
+    # Serve the snapshot while it's within one refresh interval of being current.
+    if cached is not None and (time.time() - ts) < _MOVERS_REFRESH_SEC * 3:
+        return cached
+    data = await refresh_movers_snapshot()
+    if data is not None:
+        return data
+    return cached or {
+        "gainers": [], "losers": [], "most_active": [],
+        "market_open": is_market_open_now(),
+        "last_updated": datetime.now(IST).isoformat(),
+        "advance_count": 0, "decline_count": 0,
+    }
+
+
+# ==================== MARKET INTERNALS ====================
+# Move-distribution histogram + 52-week high/low extremes, both computed over the
+# whole live ticker universe rather than the ~200-ticker screener subset.
+
+_52w_cache = {"data": None, "ts": 0.0}
+_52w_cache_lock = threading.Lock()
+
+# (label, min_pct_inclusive, max_pct_exclusive); None == unbounded
+_DIST_BUCKETS = [
+    ("<-5",   None, -5.0),
+    ("-5:-3", -5.0, -3.0),
+    ("-3:-1", -3.0, -1.0),
+    ("-1:0",  -1.0,  0.0),
+    ("0:+1",   0.0,  1.0),
+    ("+1:+3",  1.0,  3.0),
+    ("+3:+5",  3.0,  5.0),
+    (">+5",    5.0, None),
+]
+
+
+def _load_52w_ranges():
+    """Per-ticker 52-week high/low from daily history, cached 6h.
+
+    Only the *range* comes from the DB. The comparison against it happens
+    per-request using live WebSocket prices, so the result stays real-time even
+    though the daily candle sync runs once per day.
+    """
+    with _52w_cache_lock:
+        cached, ts = _52w_cache["data"], _52w_cache["ts"]
+    if cached is not None and (time.time() - ts) < 21600:
+        return cached
+
+    ranges = {}
+    try:
+        from database import SessionLocal as _S
+        from sqlalchemy import text as _txt
+        s = _S()
+        try:
+            # Window is anchored to the newest date present, not CURRENT_DATE, so a
+            # lagging daily sync still yields a full 12-month window.
+            rows = s.execute(_txt("""
+                SELECT ticker, MAX(high), MIN(low), COUNT(*)
+                FROM candles
+                WHERE timeframe = '1D'
+                  AND timestamp >= (SELECT MAX(timestamp) FROM candles WHERE timeframe = '1D') - INTERVAL '365 days'
+                  AND high > 0 AND low > 0
+                GROUP BY ticker
+                HAVING COUNT(*) >= 60
+            """)).fetchall()
+            for tkr, hi, lo, _d in rows:
+                if hi and lo and float(hi) > 0 and float(lo) > 0:
+                    ranges[tkr] = (float(hi), float(lo))
+        finally:
+            s.close()
+        print(f"[Internals] Loaded 52w ranges for {len(ranges)} tickers")
+    except Exception as e:
+        print(f"[Internals] 52w range load failed: {e}")
+
+    with _52w_cache_lock:
+        _52w_cache["data"] = ranges
+        _52w_cache["ts"] = time.time()
+    return ranges
+
+
+def _dist_bucket_index(pct: float) -> int:
+    for i, (_label, lo, hi) in enumerate(_DIST_BUCKETS):
+        if (lo is None or pct >= lo) and (hi is None or pct < hi):
+            return i
+    return len(_DIST_BUCKETS) - 1
+
+
+def _distribution_from_db():
+    """Fallback when the WS carries no ticks: latest vs previous daily close."""
+    pairs = []
+    try:
+        from database import SessionLocal as _S
+        from sqlalchemy import text as _txt
+        s = _S()
+        try:
+            rows = s.execute(_txt("""
+                WITH ranked AS (
+                    SELECT ticker, close,
+                           ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
+                    FROM candles
+                    WHERE timeframe = '1D'
+                      AND timestamp >= (SELECT MAX(timestamp) FROM candles WHERE timeframe = '1D') - INTERVAL '30 days'
+                      AND close > 0
+                )
+                SELECT a.ticker, a.close, b.close
+                FROM ranked a
+                JOIN ranked b ON b.ticker = a.ticker AND b.rn = 2
+                WHERE a.rn = 1
+            """)).fetchall()
+            for tkr, cur, prev in rows:
+                pairs.append((tkr, float(cur), float(prev)))
+        finally:
+            s.close()
+    except Exception as e:
+        print(f"[Internals] DB distribution fallback failed: {e}")
+    return pairs
+
+
+@app.get("/api/market-internals")
+def get_market_internals():
+    # Deliberately a sync def, not async: everything below is blocking (a lock copy and,
+    # on a cold cache, a DB scan). FastAPI runs sync handlers in a threadpool, so this
+    # can't stall the event loop that the WS aggregator shares.
+    counts = [0] * len(_DIST_BUCKETS)
+    at_high, at_low = [], []
+    total = 0
+    scanned_52w = 0
+    source = "live"
+
+    try:
+        with angelone_service.latest_ticks_lock:
+            live_ticks = dict(angelone_service.latest_ticks)
+
+        ranges = _load_52w_ranges()
+        indices = {"NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP",
+                   "NIFTYMIDCAP100", "NIFTYSMLCAP100"}
+
+        pairs = []
+        if live_ticks:
+            for ticker, td in live_ticks.items():
+                if ticker in indices:
+                    continue
+                cp = _safe_float(td.get("current_price", 0))
+                pc = _safe_float(td.get("prev_close", 0))
+                vol = _safe_int(td.get("volume", 0))
+                # Much lighter floor than /api/market-movers' (cp>20, vol>50000). This is a
+                # breadth statistic, so it should cover the market rather than the top ~500
+                # names; the gate here only drops untraded and sub-rupee scrips, whose prints
+                # would otherwise land in the tail buckets on a handful of shares.
+                if cp > 5 and pc > 0 and vol > 1000:
+                    pairs.append((ticker, cp, pc))
+        else:
+            source = "db"
+            pairs = [(t, c, p) for (t, c, p) in _distribution_from_db() if t not in indices]
+
+        for ticker, cp, pc in pairs:
+            if pc <= 0:
+                continue
+            pct = (cp - pc) / pc * 100.0
+            counts[_dist_bucket_index(pct)] += 1
+            total += 1
+
+            rng = ranges.get(ticker)
+            if not rng:
+                continue
+            scanned_52w += 1
+            hi52, lo52 = rng
+            # Live price can exceed the stored range (a genuine new high), so clamp
+            # the reported distance at 0 rather than showing a positive "gap".
+            if cp >= hi52 * 0.98:
+                at_high.append({
+                    "ticker": ticker,
+                    "name": STOCK_META.get(ticker, {}).get("name", ticker),
+                    "price": round(cp, 2),
+                    "level": round(hi52, 2),
+                    "pct_from": round(min(0.0, (cp - hi52) / hi52 * 100.0), 2),
+                    "change_pct": round(pct, 2),
+                })
+            elif cp <= lo52 * 1.02:
+                at_low.append({
+                    "ticker": ticker,
+                    "name": STOCK_META.get(ticker, {}).get("name", ticker),
+                    "price": round(cp, 2),
+                    "level": round(lo52, 2),
+                    "pct_from": round(max(0.0, (cp - lo52) / lo52 * 100.0), 2),
+                    "change_pct": round(pct, 2),
+                })
+
+        # ── 52W scan for DB-only tickers (no live WS price) ──────────────────
+        # Tickers that have a 52W range in the DB but no live tick are compared
+        # using the two most-recent daily closes so the widget covers all tickers
+        # with daily history, not just those currently streaming from AngelOne.
+        if ranges:
+            from database import SessionLocal as _S52
+            from sqlalchemy import text as _txt52
+            live_set = {t for t, _, _ in pairs}
+            db_only_tickers = [t for t in ranges if t not in live_set and t not in indices]
+            if db_only_tickers:
+                try:
+                    s52 = _S52()
+                    try:
+                        db52_rows = s52.execute(_txt52("""
+                            SELECT ticker, close, prev_close FROM (
+                                SELECT ticker, close,
+                                       LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) AS prev_close,
+                                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
+                                FROM candles
+                                WHERE timeframe = '1D'
+                                  AND ticker = ANY(:tickers)
+                                  AND close > 0
+                                  AND timestamp >= NOW() - INTERVAL '10 days'
+                            ) sub WHERE rn = 1
+                        """), {"tickers": db_only_tickers}).fetchall()
+                    finally:
+                        s52.close()
+                    for tkr, db_close, db_prev in db52_rows:
+                        cp = float(db_close or 0)
+                        pc = float(db_prev or 0)
+                        if cp < 5:
+                            continue
+                        rng = ranges.get(tkr)
+                        if not rng:
+                            continue
+                        scanned_52w += 1
+                        hi52, lo52 = rng
+                        pct = (cp - pc) / pc * 100.0 if pc > 0 else 0.0
+                        if cp >= hi52 * 0.98:
+                            at_high.append({
+                                "ticker": tkr,
+                                "name": STOCK_META.get(tkr, {}).get("name", tkr),
+                                "price": round(cp, 2),
+                                "level": round(hi52, 2),
+                                "pct_from": round(min(0.0, (cp - hi52) / hi52 * 100.0), 2),
+                                "change_pct": round(pct, 2),
+                            })
+                        elif cp <= lo52 * 1.02:
+                            at_low.append({
+                                "ticker": tkr,
+                                "name": STOCK_META.get(tkr, {}).get("name", tkr),
+                                "price": round(cp, 2),
+                                "level": round(lo52, 2),
+                                "pct_from": round(max(0.0, (cp - lo52) / lo52 * 100.0), 2),
+                                "change_pct": round(pct, 2),
+                            })
+                except Exception as e:
+                    print(f"[Internals] DB-only 52W scan error: {e}")
+
+        # Sort by proximity to the extreme: stocks literally AT their 52W high/low first
+        at_high.sort(key=lambda x: x["pct_from"], reverse=True)   # pct_from ≤ 0; 0.0 = at high, -1.9 = 1.9% below
+        at_low.sort(key=lambda x: x["pct_from"])                   # pct_from ≥ 0; 0.0 = at low, 1.9 = 1.9% above
+    except Exception as e:
+        print(f"[Internals] Error: {e}")
+
+    return {
+        "distribution": {
+            "buckets": [
+                {"label": lbl, "count": counts[i]}
+                for i, (lbl, _lo, _hi) in enumerate(_DIST_BUCKETS)
+            ],
+            "total": total,
+            "source": source,
+        },
+        "extremes": {
+            "at_high_count": len(at_high),
+            "at_low_count": len(at_low),
+            "at_high": at_high,
+            "at_low": at_low,
+            # Stocks actually compared against a 52-week range this request — not the size
+            # of the range table, which would overstate the real coverage.
+            "scanned": scanned_52w,
+        },
+        "market_open": is_market_open_now(),
+        "last_updated": datetime.now(IST).isoformat(),
     }
 
 # ==================== SECTOR LEADERS ====================
@@ -1616,66 +2109,432 @@ def get_sector_leaders(db: Session = Depends(get_db)):
 
 # ==================== NEWS & SENTIMENT ====================
 
+# --------------- Direct ScanX news search (bypasses port 8003) ---------------
+_vader_analyzer = None
+def _get_vader_analyzer():
+    global _vader_analyzer
+    if _vader_analyzer is None:
+        try:
+            import nltk
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+            _vader_analyzer = SentimentIntensityAnalyzer()
+            # Comprehensive Stock Market & Financial News Lexicon
+            financial_lexicon = {
+                # Growth & Expansion (Bullish)
+                "partnership": 2.2, "partners": 2.0, "partner": 2.0, "partnering": 2.0,
+                "launch": 2.0, "launches": 2.2, "launched": 2.2, "launching": 2.0,
+                "accelerate": 2.0, "accelerates": 2.2, "accelerating": 2.0, "adoption": 1.8,
+                "scale": 1.8, "scaling": 1.8, "expansion": 2.2, "expands": 2.2, "expanding": 2.2,
+                "deal": 2.0, "deals": 2.0, "contract": 1.8, "contracts": 1.8, "multimillion": 2.8,
+                "order": 1.5, "orders": 1.5, "awarded": 2.5, "wins": 2.8, "won": 2.8, "win": 2.5,
+                "acquisition": 2.0, "acquires": 2.2, "acquired": 2.2, "merger": 1.8,
+                "innovation": 2.0, "transformation": 2.0, "transform": 1.8, "breakthrough": 2.8,
+                
+                # Earnings & Performance (Bullish)
+                "rises": 2.4, "rise": 2.2, "rising": 2.2, "jumped": 2.5, "jumps": 2.5,
+                "surge": 2.8, "surges": 2.8, "surged": 2.8, "surging": 2.8,
+                "profit": 2.5, "profits": 2.5, "profitable": 2.2, "profitability": 2.2,
+                "growth": 2.2, "gain": 2.0, "gains": 2.0, "gained": 2.0, "gaining": 2.0,
+                "rally": 2.2, "rallies": 2.2, "all-time high": 3.2, "record": 2.0, "high": 1.5,
+                "dividend": 2.0, "bonus": 2.2, "buyback": 2.5, "upgrade": 2.5, "upgrades": 2.5, "upgraded": 2.5,
+                "outperform": 2.8, "beat": 2.4, "beats": 2.4, "beating": 2.2, "bullish": 2.8,
+                "revenue": 1.5, "ebitda": 1.5, "margin": 1.2, "margins": 1.5, "milestone": 2.2,
+
+                # Declines & Downturns (Bearish)
+                "fell": -2.4, "falls": -2.4, "falling": -2.2, "fall": -2.0,
+                "plunges": -3.0, "plunged": -3.0, "plunge": -2.8, "plunging": -2.8,
+                "drop": -2.0, "drops": -2.0, "dropped": -2.0, "dropping": -2.0,
+                "loss": -2.5, "losses": -2.5, "losing": -2.0, "slump": -2.8, "slumps": -2.8, "slumped": -2.8,
+                "downgrade": -2.8, "downgrades": -2.8, "downgraded": -2.8,
+                "underperform": -2.8, "miss": -2.2, "misses": -2.2, "missed": -2.2,
+                "bearish": -2.8, "fraud": -3.8, "default": -3.8, "defaults": -3.8, "defaulted": -3.8,
+                "crash": -3.5, "crashes": -3.5, "crashed": -3.5, "crashing": -3.5,
+                "probe": -2.5, "investigation": -2.5, "penalty": -2.5, "penalized": -2.5,
+                "fine": -2.0, "fined": -2.2, "ban": -3.0, "banned": -3.0, "scam": -4.0,
+                "debt": -1.8, "layoff": -2.8, "layoffs": -2.8, "fire": -2.0, "fired": -2.2
+            }
+            _vader_analyzer.lexicon.update(financial_lexicon)
+        except Exception:
+            _vader_analyzer = False
+    return _vader_analyzer if _vader_analyzer is not False else None
+
+_FINANCIAL_LEXICON: dict = {
+    # Bullish / Growth / Positive Financial Keywords
+    "gain": 2.2, "gains": 2.2, "gained": 2.0, "gaining": 2.0,
+    "rises": 2.4, "rise": 2.2, "rising": 2.2, "rose": 2.2,
+    "jumped": 2.5, "jumps": 2.5, "jumping": 2.2,
+    "surge": 2.8, "surges": 2.8, "surged": 2.8, "surging": 2.8,
+    "rally": 2.2, "rallied": 2.2, "rallies": 2.2, "rallying": 2.2,
+    "profit": 2.5, "profits": 2.5, "profitable": 2.2, "profitability": 2.2,
+    "growth": 2.2, "grow": 2.0, "grows": 2.0, "growing": 2.0,
+    "record": 2.0, "dividend": 2.2, "dividends": 2.2, "buyback": 2.5,
+    "upgrade": 2.5, "upgraded": 2.5, "upgrades": 2.5,
+    "outperform": 2.8, "outperformed": 2.8, "outperforming": 2.8,
+    "beat": 2.4, "beats": 2.4, "beating": 2.2, "beaten": 1.5,
+    "bullish": 2.8, "milestone": 2.2, "deal": 2.0, "deals": 2.0,
+    "win": 2.5, "wins": 2.8, "won": 2.8, "winning": 2.5,
+    "expansion": 2.2, "expands": 2.2, "expanded": 2.2, "expanding": 2.2,
+    "launch": 2.0, "launches": 2.2, "launched": 2.2, "launching": 2.0,
+    "partnership": 2.2, "partner": 2.0, "partners": 2.0, "partnering": 2.0,
+    "acquisition": 2.0, "acquires": 2.2, "acquired": 2.2, "acquiring": 2.0,
+    "breakout": 2.5, "soars": 2.8, "soared": 2.8, "soaring": 2.8, "soar": 2.5,
+    "recovery": 2.0, "recover": 2.0, "recovered": 2.0, "rebound": 2.2, "rebounds": 2.2,
+    "higher": 1.8, "highest": 2.2, "high": 1.5, "strong": 2.0, "stronger": 2.2, "strongest": 2.4,
+    "positive": 1.8, "order": 1.5, "orders": 1.8, "ordered": 1.2,
+    "bonus": 2.2, "innovation": 1.8, "innovative": 1.8, "breakthrough": 2.8,
+    "awarded": 2.5, "awards": 2.2, "unveils": 2.2, "unveiled": 2.2, "unveil": 2.0,
+    "earn": 1.8, "earns": 2.0, "earned": 2.0, "earning": 1.8, "earnings": 2.2,
+    "investors": 1.5, "investor": 1.5, "investment": 1.8, "invests": 1.8, "invested": 1.8,
+    "scale": 1.5, "scaling": 1.8, "scaled": 1.8, "advances": 2.0, "advance": 1.8, "advanced": 1.8,
+    "exceeds": 2.4, "exceeded": 2.4, "inflows": 2.2, "inflow": 2.0,
+    "up": 1.5, "boost": 2.2, "boosts": 2.2, "boosted": 2.2, "boosting": 2.2,
+    "top": 1.5, "uptrend": 2.2, "upturn": 2.0, "deliverable": 1.5, "revenue": 1.8,
+    "hike": 1.8, "hikes": 1.8, "hiked": 1.8, "multimillion": 2.5,
+
+    # Bearish / Decline / Negative Financial Keywords
+    "fell": -2.4, "falls": -2.4, "fall": -2.0, "falling": -2.2,
+    "plunges": -3.0, "plunged": -3.0, "plunge": -2.8, "plunging": -2.8,
+    "drop": -2.0, "drops": -2.0, "dropped": -2.0, "dropping": -2.0,
+    "loss": -2.5, "losses": -2.5, "lost": -2.2, "losing": -2.0,
+    "slump": -2.8, "slumped": -2.8, "slumps": -2.8, "slumping": -2.8,
+    "downgrade": -2.8, "downgraded": -2.8, "downgrades": -2.8,
+    "underperform": -2.8, "underperformed": -2.8,
+    "miss": -2.2, "misses": -2.2, "missed": -2.2, "missing": -2.0,
+    "bearish": -2.8, "fraud": -3.8, "default": -3.8, "defaults": -3.8, "defaulted": -3.8,
+    "crash": -3.5, "crashes": -3.5, "crashed": -3.5, "crashing": -3.5,
+    "probe": -2.5, "probed": -2.5, "investigation": -2.5, "investigated": -2.5,
+    "penalty": -2.5, "penalties": -2.5, "penalized": -2.5,
+    "fine": -2.0, "fined": -2.2, "fines": -2.0,
+    "ban": -3.0, "banned": -3.0, "banning": -3.0, "bans": -3.0,
+    "scam": -4.0, "debt": -1.8, "debts": -1.8,
+    "layoff": -2.8, "layoffs": -2.8, "laid": -2.5,
+    "concern": -1.5, "concerns": -1.8, "concerned": -1.5,
+    "risk": -1.2, "risks": -1.5, "risky": -1.5,
+    "warning": -2.0, "warns": -2.2, "warned": -2.2, "warn": -2.0,
+    "decline": -2.0, "declines": -2.0, "declined": -2.0, "declining": -2.0,
+    "lower": -1.5, "lowest": -2.0, "low": -1.2,
+    "weak": -1.8, "weakness": -1.8, "weaker": -2.0, "weakest": -2.2,
+    "pressure": -1.5, "pressures": -1.5, "pressured": -1.5,
+    "tumbles": -2.5, "tumbled": -2.5, "tumble": -2.2, "tumbling": -2.5,
+    "reduce": -1.8, "reduces": -2.0, "reduced": -2.0, "reducing": -1.8, "reduction": -1.8,
+    "sale": -1.2, "sell": -1.5, "selling": -1.5, "sold": -1.5, "sells": -1.5,
+    "cut": -2.0, "cuts": -2.0, "cutting": -2.0,
+    "outflows": -2.2, "outflow": -2.0, "down": -1.5, "downtrend": -2.2, "downturn": -2.0,
+    "dip": -1.2, "dips": -1.2, "dipped": -1.2,
+}
+
+def _calculate_news_sentiment(text: str) -> dict:
+    """
+    Keyword-based financial sentiment scorer. Works with or without NLTK/VADER.
+    Returns {"label": "Bullish"|"Bearish"|"Neutral", "sentiment_score": float -1..1}
+    """
+    if not text:
+        return {"label": "Neutral", "sentiment_score": 0.0}
+
+    # Try VADER first if available
+    analyzer = _get_vader_analyzer()
+    if analyzer:
+        try:
+            scores = analyzer.polarity_scores(text)
+            compound = round(scores["compound"], 2)
+            label = "Bullish" if compound >= 0.05 else ("Bearish" if compound <= -0.05 else "Neutral")
+            return {"label": label, "sentiment_score": compound}
+        except Exception:
+            pass
+
+    # Pure-Python keyword fallback with negation detection
+    import re as _re
+    _NEG_WORDS  = {'not', 'no', 'never', 'without', 'lack', 'lacking', 'fails', 'failed', 'neither', 'nor'}
+    _NEG_VERBS  = {'decline', 'declined', 'declines', 'fall', 'falls', 'fell', 'falling',
+                   'drop', 'drops', 'dropped', 'slump', 'slumped', 'plunge', 'plunged',
+                   'miss', 'misses', 'missed', 'warn', 'warned', 'concern', 'concerns',
+                   'tumble', 'tumbled', 'crash', 'crashed', 'weak', 'weakness', 'loss', 'losses',
+                   'reduce', 'reduced', 'cut', 'cuts'}
+    words = _re.sub(r'[^\w\s]', ' ', text.lower()).split()
+    total = 0.0
+    for i, w in enumerate(words):
+        weight = _FINANCIAL_LEXICON.get(w, 0.0)
+        if weight == 0.0:
+            continue
+        # Window of ±4 words around this keyword
+        window = set(words[max(0, i - 4):i] + words[i + 1:min(len(words), i + 5)])
+        if weight > 0 and (window & _NEG_WORDS or window & _NEG_VERBS):
+            weight = -weight * 0.6   # flip positive → negative with dampening
+        total += weight
+
+    if words:
+        total = total / max(len(words) ** 0.5, 1)
+    compound = round(max(-1.0, min(1.0, total / 3.0)), 2)
+    label = "Bullish" if compound >= 0.04 else ("Bearish" if compound <= -0.04 else "Neutral")
+    return {"label": label, "sentiment_score": compound}
+
+
+_news_search_cache: dict = {}   # key → {data, ts}
+_NEWS_SEARCH_TTL = 300          # 5-minute cache
+
+# Domains that publish high-quality Indian financial news
+_FINANCE_SOURCES = {
+    "economictimes", "moneycontrol", "livemint", "businessstandard",
+    "ndtvprofit", "cnbctv18", "thehindu", "timesofindia", "financialexpress",
+    "business-standard", "thehindubusinessline", "zeebiz", "bloombergquint",
+    "reuters", "bloomberg", "marketsmojo", "tickertape",
+}
+
+def _is_nav_or_homepage(title: str, link: str) -> bool:
+    """Return True if this looks like a navigation or homepage entry (not an article)."""
+    import re as _re
+    # Exclude entries with no title or extremely short titles (homepage tags)
+    if not title or len(title) < 15:
+        return True
+    nav_patterns = [
+        r'^ScanX\s*[-–]',
+        r'^Latest (Market|Global|Business) News\s*[-–]',
+        r'^Stock Screener',
+        r'^Share Market Live',
+    ]
+    for p in nav_patterns:
+        if _re.search(p, title, _re.IGNORECASE):
+            return True
+    return False
+
+@app.get("/api/news/search/{query}")
+async def news_search(query: str, limit: int = 20):
+    """
+    Fetch real Indian stock market news exclusively from scanx.trade via Google News RSS.
+    For market queries: searches Nifty/Sensex/NSE market news on scanx.trade.
+    For ticker queries: searches scanx.trade for the ticker and company name.
+    Results are cached 5 minutes.
+    """
+    import feedparser
+    import re as _re
+    from urllib.parse import quote_plus
+
+    q_clean = query.strip()
+    cache_key = f"{q_clean.lower()}:{limit}"
+    cached = _news_search_cache.get(cache_key)
+    if cached and (time.time() - cached["ts"]) < _NEWS_SEARCH_TTL:
+        return cached["data"]
+
+    base_url = "https://news.google.com/rss/search"
+    is_market = q_clean.lower() in ("market", "nse", "bse", "nifty", "sensex", "all")
+
+    if is_market:
+        rss_queries = [
+            "site:scanx.trade (market OR Nifty OR Sensex OR shares OR stock)",
+            "site:scanx.trade",
+        ]
+    else:
+        meta_name = (STOCK_META.get(q_clean.upper()) or {}).get("name", "")
+        # Clean company name
+        cname = meta_name
+        for s in [r'\s+Limited$', r'\s+Ltd\.?$', r'\s+Corporation$', r'\s+Corp\.?$', r'\s+Private$', r'\s+Pvt\.?$']:
+            cname = _re.sub(s, '', cname, flags=_re.IGNORECASE) if cname else ""
+        cname = cname.strip() if cname else ""
+
+        if cname and cname.upper() != q_clean.upper():
+            rss_queries = [
+                f'site:scanx.trade ({q_clean.upper()} OR "{cname}")',
+                f'site:scanx.trade {q_clean.upper()}',
+                f'site:scanx.trade "{cname}"',
+                "site:scanx.trade",
+            ]
+        else:
+            rss_queries = [
+                f'site:scanx.trade {q_clean.upper()}',
+                f'site:scanx.trade {q_clean}',
+                "site:scanx.trade",
+            ]
+
+    seen_urls: set = set()
+    articles: list = []
+
+    def _is_nav_or_quote(t: str) -> bool:
+        if not t or len(t) < 15:
+            return True
+        nav_patterns = [
+            r'^(ScanX|Scanx)\s*[-–]',
+            r'^Latest (Market|Global|Business) News\s*[-–]',
+            r'Stock Screener',
+            r'Share Market Live',
+            r'Heatmap',
+            r'Market Valuation',
+            r'Financial Summary',
+            r'Share Price Today\b',
+            r'^Mutual Funds',
+            r'^Bulk/Block Deals',
+            r'Custom Stock Screener',
+            r'Sensex Stocks$',
+            r'Nifty Bank Stocks$',
+        ]
+        for p in nav_patterns:
+            if _re.search(p, t, _re.IGNORECASE):
+                return True
+        return False
+
+    def _parse_rss_queries():
+        import requests as _req
+        _arts = []
+        _seen = set()
+        for rq in rss_queries:
+            try:
+                rss_url = f"{base_url}?q={quote_plus(rq)}&hl=en-IN&gl=IN&ceid=IN:en"
+                _r = _req.get(rss_url, timeout=8,
+                              headers={"User-Agent": "Mozilla/5.0 (compatible; StockApp/1.0)"})
+                feed = feedparser.parse(_r.text)
+                for entry in feed.entries:
+                    title = (getattr(entry, "title", "") or "").strip()
+                    link  = (getattr(entry, "link",  "") or "").strip()
+                    pub   = getattr(entry, "published", "") or ""
+                    desc  = getattr(entry, "description", "") or ""
+                    source_elem = getattr(entry, "source", {})
+                    source_title = (source_elem.get("title", "") if isinstance(source_elem, dict) else str(getattr(entry, "source", ""))).lower()
+
+                    if not title or len(title) < 15 or link in _seen:
+                        continue
+                    if _is_nav_or_quote(title):
+                        continue
+
+                    # STRICT FILTER: Only accept articles originating from scanx.trade
+                    if "scanx.trade" not in link.lower() and "scanx" not in source_title and "scanx.trade" not in rq:
+                        continue
+
+                    _seen.add(link)
+                    clean_title = _re.sub(r'\s*[-–|]\s*scanx\.trade\s*$', '', title, flags=_re.IGNORECASE).strip()
+                    clean_title = _re.sub(r'\s*[-–|]\s*[\w\s\.]+$', '', clean_title).strip() or clean_title
+                    clean_excerpt = _re.sub(r'<[^>]+>', '', desc)[:280]
+                    sentiment_obj = _calculate_news_sentiment(f"{clean_title}. {clean_excerpt}")
+                    _arts.append({
+                        "title":        clean_title,
+                        "excerpt":      clean_excerpt,
+                        "url":          link,
+                        "source":       "ScanX",
+                        "published_at": pub,
+                        "ticker":       "MARKET" if is_market else q_clean.upper(),
+                        "sentiment":    sentiment_obj,
+                    })
+            except Exception as e:
+                print(f"[News Search] query='{rq}': {e}")
+            if len(_arts) >= limit:
+                break
+        return _arts[:limit]
+
+    # Run the blocking feedparser calls in a thread so we don't block the event loop
+    articles = await asyncio.to_thread(_parse_rss_queries)
+    _news_search_cache[cache_key] = {"data": articles, "ts": time.time()}
+    return articles
+
+
+# --------------- Proxy to News Sentiment service (port 8003) ---------------
+NEWS_SENTIMENT_BASE = "http://127.0.0.1:8003"
+
+@app.get("/api/scanx/news/full/all")
+async def proxy_scanx_news_all(limit: int = 20):
+    """Proxy: forward general ScanX news request to the News Sentiment service.
+    The News Sentiment app mounts scanx_news router under /api, so path is /api/scanx/...
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{NEWS_SENTIMENT_BASE}/api/scanx/news/full/all",
+                params={"limit": limit}
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        print(f"[Proxy /api/scanx/news/full/all] Error reaching News Sentiment service: {e}")
+        return []
+
+
+@app.get("/api/scanx/news/full/{ticker}")
+async def proxy_scanx_news_ticker(ticker: str, limit: int = 20):
+    """Proxy: forward ticker-specific ScanX news request to the News Sentiment service."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                f"{NEWS_SENTIMENT_BASE}/api/scanx/news/full/{ticker.upper()}",
+                params={"limit": limit}
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        print(f"[Proxy /api/scanx/news/full/{ticker}] Error reaching News Sentiment service: {e}")
+        return []
+
+@app.get("/api/scanx/news/fast/{ticker}")
+async def proxy_scanx_news_fast_ticker(ticker: str, limit: int = 20):
+    """Proxy: forward fast ticker-specific ScanX news request to the News Sentiment service."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # We don't use upper() here to preserve lowercase if it matters for the RSS query
+            resp = await client.get(
+                f"{NEWS_SENTIMENT_BASE}/api/scanx/news/fast/{ticker}",
+                params={"limit": limit}
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        print(f"[Proxy /api/scanx/news/fast/{ticker}] Error reaching News Sentiment service: {e}")
+        return []
+# ---------------------------------------------------------------------------
+
 @app.get("/api/scanx/news/market-sentiment")
 async def proxy_market_sentiment(db: Session = Depends(get_db)):
     try:
-        # Generate sentiment from actual market data
+        # Generate sentiment from actual live market data
+        try:
+            live = await fetch_batch_live_data(['NIFTY', 'SENSEX', 'BANKNIFTY'])
+            live_scores = []
+            for t in ['NIFTY', 'SENSEX', 'BANKNIFTY']:
+                p = live.get(t, {})
+                cp = _safe_float(p.get('current_price') or p.get('current'))
+                op = _safe_float(p.get('open') or 0)
+                prev = _safe_float(p.get('prev_close')) or op
+                if cp and prev and prev > 0:
+                    live_scores.append(((cp - prev) / prev) * 100)
+            
+            if live_scores:
+                avg = sum(live_scores) / len(live_scores)
+                label = "positive" if avg > 0.3 else ("negative" if avg < -0.3 else "neutral")
+                score = max(0, min(100, 50 + int(avg * 10)))
+                summary = f"Markets are {label} based on live prices (avg change {avg:+.2f}%)."
+                return {"sentiment": label, "label": label, "score": score, "summary": summary}
+        except Exception as e:
+            print(f"[Sentiment] Live fetch failed: {e}")
+
+        # Fallback to last available trading day if live data is completely down
         today = date.today()
-        indices = ['NIFTY', 'SENSEX', 'BANKNIFTY']
-        scores = []
-        for t in indices:
-            row = db.query(models.StockData).filter(
-                models.StockData.ticker == t,
-                models.StockData.date == today
-            ).first()
-            if row and row.open and row.close:
-                chg_pct = ((row.close - row.open) / row.open) * 100
-                scores.append(chg_pct)
-        if scores:
-            avg = sum(scores) / len(scores)
-            if avg > 0.3:
-                label, score = "positive", min(100, 50 + int(avg * 10))
-            elif avg < -0.3:
-                label, score = "negative", max(0, 50 + int(avg * 10))
-            else:
-                label, score = "neutral", 50
-            summary = f"Markets are {label} today with average change of {avg:+.2f}% across major indices."
-        else:
-            # Fallback to last available trading day
-            row = db.query(models.StockData).filter(
-                models.StockData.ticker == 'NIFTY'
-            ).order_by(models.StockData.date.desc()).first()
-            if row and row.open and row.close and row.date == today:
-                chg_pct = ((row.close - row.open) / row.open) * 100
+        row = db.query(models.Candle).filter(
+            models.Candle.ticker == 'NIFTY',
+            models.Candle.timeframe == '1D',
+        ).order_by(models.Candle.timestamp.desc()).limit(2).all()
+
+        if row and len(row) > 0:
+            current_day = row[0]
+            prev_close = row[1].close if len(row) > 1 else current_day.open
+            if current_day.close and prev_close and prev_close > 0:
+                chg_pct = ((current_day.close - prev_close) / prev_close) * 100
                 label = "positive" if chg_pct > 0.3 else ("negative" if chg_pct < -0.3 else "neutral")
                 score = max(0, min(100, 50 + int(chg_pct * 10)))
-                summary = f"Based on last trading day ({row.date}), market sentiment is {label}."
-            else:
-                # Fallback to live yfinance data
-                try:
-                    live = await fetch_batch_live_data(['NIFTY', 'SENSEX', 'BANKNIFTY'])
-                    live_scores = []
-                    for t in ['NIFTY', 'SENSEX', 'BANKNIFTY']:
-                        p = live.get(t, {})
-                        cp = _safe_float(p.get('current_price') or p.get('current'))
-                        op = _safe_float(p.get('open') or 0)
-                        if cp and op and op > 0:
-                            live_scores.append(((cp - op) / op) * 100)
-                    if live_scores:
-                        avg = sum(live_scores) / len(live_scores)
-                        label = "positive" if avg > 0.3 else ("negative" if avg < -0.3 else "neutral")
-                        score = max(0, min(100, 50 + int(avg * 10)))
-                        summary = f"Markets are {label} based on live prices (avg change {avg:+.2f}%)."
-                    else:
-                        label, score, summary = "neutral", 50, "Market data is being processed."
-                except Exception:
-                    label, score, summary = "neutral", 50, "Market data is being processed."
-        return {"sentiment": label, "label": label, "score": score, "summary": summary}
+                summary = f"Based on last trading day ({current_day.timestamp.date()}), market sentiment is {label}."
+                return {"sentiment": label, "label": label, "score": score, "summary": summary}
+
+        return {"sentiment": "neutral", "label": "neutral", "score": 50, "summary": "Market data is being processed."}
     except Exception as e:
         print(f"[Sentiment] Error: {e}")
         return {"sentiment": "neutral", "label": "neutral", "score": 50, "summary": "Market sentiment temporarily unavailable", "error": str(e)}
 
-
+@app.get("/api/v1/news/google-rss")
+def google_news_rss(q: str):
+    import requests
+    url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
+    try:
+        resp = requests.get(url, timeout=5)
+        return Response(content=resp.text, media_type="application/xml")
+    except Exception as e:
+        return Response(content=f"<error>{str(e)}</error>", status_code=500, media_type="application/xml")
 
 @app.get("/api/news/general")
 async def proxy_news_general(db: Session = Depends(get_db)):
@@ -1685,23 +2544,27 @@ async def proxy_news_general(db: Session = Depends(get_db)):
         return _news_general_cache
     try:
         articles = []
-        ticker_list = MOVER_TICKERS[:25]
+        ticker_list = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS))
+        ticker_list = [t for t in ticker_list if t not in ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY']][:25]
         
         with angelone_service.latest_ticks_lock:
             live_ticks = dict(angelone_service.latest_ticks)
             
         today_date = datetime.now(IST).strftime("%Y-%m-%d")
 
-        # fallback DB (fetch only latest row per ticker, using thread to avoid blocking event loop)
         def fetch_latest():
             res = {}
-            for t in ticker_list:
-                row = db.query(models.StockData).filter(models.StockData.ticker == t).order_by(models.StockData.date.desc()).first()
-                if row:
-                    res[t] = row
+            rows = db.query(models.Candle).filter(
+                models.Candle.ticker.in_(ticker_list),
+                models.Candle.timeframe == '1D',
+            ).distinct(models.Candle.ticker).order_by(
+                models.Candle.ticker, models.Candle.timestamp.desc()
+            ).all()
+            for row in rows:
+                res[row.ticker] = row
             return res
-        
-        latest_by_ticker = await asyncio.to_thread(fetch_latest)
+
+        latest_by_ticker = fetch_latest()
 
         # ── Stock-level articles with sector context ──
         stock_changes = []
@@ -1740,13 +2603,13 @@ async def proxy_news_general(db: Session = Depends(get_db)):
                     direction = "gained" if chg >= 0 else "lost"
                     stock_changes.append((t, n, sector, chg, row.close))
                     articles.append({
-                        "title": f"{n}{sector_tag} {direction} {abs(chg):.2f}% on {row.date}",
+                        "title": f"{n}{sector_tag} {direction} {abs(chg):.2f}% on {row.timestamp.date()}",
                         "summary": f"{n} closed at ₹{row.close:.2f} | High: ₹{row.high:.2f} Low: ₹{row.low:.2f} | Vol: {int(row.volume or 0):,}",
                         "sentiment": "positive" if chg >= 0 else "negative",
                         "source": "Market Data",
                         "ticker": t,
                         "url": "",
-                        "published_at": str(row.date)
+                        "published_at": str(row.timestamp.date())
                     })
 
         # ── Market summary from indices ──
@@ -1771,13 +2634,15 @@ async def proxy_news_general(db: Session = Depends(get_db)):
             else:
                 def fetch_indices():
                     indices = ['NIFTY', 'SENSEX', 'BANKNIFTY']
-                    res = {}
-                    for i in indices:
-                        r = db.query(models.StockData).filter(models.StockData.ticker == i).order_by(models.StockData.date.desc()).first()
-                        if r: res[i] = r
-                    return res
-                
-                idx_map = await asyncio.to_thread(fetch_indices)
+                    rows = db.query(models.Candle).filter(
+                        models.Candle.ticker.in_(indices),
+                        models.Candle.timeframe == '1D',
+                    ).distinct(models.Candle.ticker).order_by(
+                        models.Candle.ticker, models.Candle.timestamp.desc()
+                    ).all()
+                    return {r.ticker: r for r in rows}
+
+                idx_map = fetch_indices()
                 nifty = idx_map.get('NIFTY')
                 if nifty and nifty.close and nifty.open:
                     nifty_chg = ((nifty.close - nifty.open) / nifty.open) * 100
@@ -1789,7 +2654,7 @@ async def proxy_news_general(db: Session = Depends(get_db)):
                         "source": "Market Summary",
                         "ticker": "NIFTY",
                         "url": "",
-                        "published_at": str(nifty.date)
+                        "published_at": str(nifty.timestamp.date())
                     })
         except Exception as e:
             print(f"[News] Market summary error: {e}")
@@ -1913,7 +2778,7 @@ async def proxy_news_general(db: Session = Depends(get_db)):
         print(f"[News] Error: {e}")
         import traceback
         traceback.print_exc()
-        return {"articles": []}
+        return {"articles": [], "error": str(e), "traceback": traceback.format_exc()}
 
 
 @app.get("/api/news/ticker/{ticker}")
@@ -1952,9 +2817,10 @@ async def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
                 "published_at": today_date
             })
         else:
-            row = db.query(models.StockData).filter(
-                models.StockData.ticker == t
-            ).order_by(models.StockData.date.desc()).first()
+            row = db.query(models.Candle).filter(
+                models.Candle.ticker == t,
+                models.Candle.timeframe == '1D',
+            ).order_by(models.Candle.timestamp.desc()).first()
             if row and row.close and row.open:
                 chg = ((row.close - row.open) / row.open) * 100
                 direction = "gained" if chg >= 0 else "lost"
@@ -2015,19 +2881,16 @@ class ConnectionManager:
         async def _send(cid, ws):
             import asyncio
             try:
-                # Use a small timeout so a frozen client TCP buffer doesn't hang the loop
                 await asyncio.wait_for(ws.send_json(message), timeout=0.5)
+            except asyncio.TimeoutError:
+                return None  # slow client, skip without disconnecting
             except Exception as e:
                 print(f"[WS Dashboard] Broadcast error to {cid}: {e}")
                 return cid
         
         import asyncio
         tasks = [_send(cid, ws) for cid, ws in self.active_connections.items()]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for res in results:
-            if isinstance(res, str):
-                self.disconnect(res)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 manager = ConnectionManager()
 
@@ -2039,18 +2902,43 @@ async def dashboard_websocket(websocket: WebSocket):
     client_id = await manager.connect(websocket)
     # Send connected message so frontend subscribes
     await websocket.send_json({"type": "connected", "client_id": client_id})
+    _msg_window_start = time.time()
+    _msg_count = 0
     try:
         while True:
             data = await websocket.receive_json()
+            # RT-03: per-connection inbound message cap. Ticker validation
+            # below already blocks the garbage-string cap-exhaustion vector;
+            # this bounds how fast any one connection can send messages at
+            # all, since receive_json() itself has no rate limit.
+            now = time.time()
+            if now - _msg_window_start >= 1.0:
+                _msg_window_start = now
+                _msg_count = 0
+            _msg_count += 1
+            if _msg_count > 20:
+                continue
             msg_type = data.get("type", "")
             if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
             elif msg_type == "subscribe":
                 topics = data.get("topics", [])
+                # Validate against the known instrument set before counting anything
+                # against the subscription cap -- an unauthenticated client should
+                # not be able to exhaust it with garbage ticker strings.
+                valid_topics = [t for t in topics if angelone_service.get_token(t, "NSE") or angelone_service.get_token(t, "BSE")]
+                # Only count tickers this client isn't already tracking -- the
+                # frontend resends its whole running ticker list on every
+                # subscribe call (not just the delta), so without this diff
+                # every already-tracked ticker's view count would be
+                # re-incremented on every chart open/switch and never fully
+                # unwind on disconnect (unview_all only decrements once).
+                already_tracked = manager.user_topics.get(client_id, set())
+                new_topics = [t for t in valid_topics if t not in already_tracked]
                 if client_id in manager.user_topics:
-                    manager.user_topics[client_id].update(topics)
+                    manager.user_topics[client_id].update(valid_topics)
                 if viewed_ticker_mgr:
-                    for t in topics:
+                    for t in new_topics:
                         viewed_ticker_mgr.view(t)
             elif msg_type == "unsubscribe":
                 topics = data.get("topics", [])
@@ -2062,7 +2950,7 @@ async def dashboard_websocket(websocket: WebSocket):
                         viewed_ticker_mgr.unview(t)
             elif msg_type == "view_ticker":
                 tkr = data.get("ticker", "").strip().upper()
-                if tkr and viewed_ticker_mgr:
+                if tkr and viewed_ticker_mgr and (angelone_service.get_token(tkr, "NSE") or angelone_service.get_token(tkr, "BSE")):
                     viewed_ticker_mgr.view(tkr)
             elif msg_type == "unview_ticker":
                 tkr = data.get("ticker", "").strip().upper()
@@ -2095,7 +2983,7 @@ async def _broadcast_dashboard():
             now = datetime.now(IST)
             now_ts = time.time()
             market_open = is_market_open_now()
-            interval = 30.0 if market_open else 60.0
+            interval = 10.0 if market_open else 60.0
 
             # 1. Fetch live prices for dashboard + sector tickers not covered by AngelOne WS
             #    (AngelOne-subscribed tickers are already broadcast by _broadcast_angel_ticks)
@@ -2106,7 +2994,7 @@ async def _broadcast_dashboard():
                 angel_tickers = set()
                 for at, at_data in angel_tickers_raw.items():
                     at_ts = at_data.get("_ts", 0) if isinstance(at_data, dict) else 0
-                    if now_ts_float - at_ts < 30:
+                    if now_ts_float - at_ts < 45:
                         angel_tickers.add(at)
                 if not angel_tickers:
                     # If ALL AngelOne ticks are stale, fall back to yfinance for everything
@@ -2156,7 +3044,7 @@ async def _broadcast_dashboard():
 # ==================== WATCHLIST ENDPOINTS ====================
 
 @app.get("/api/watchlist", response_model=schemas.WatchlistResponse)
-def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
+async def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
     if current_user is None:
         return schemas.WatchlistResponse(watchlist=[], count=0)
     items = db.query(models.UserWatchlist).filter(
@@ -2188,14 +3076,77 @@ def add_to_watchlist(
 
 # ==================== FII/DII DATA ====================
 
+_fii_dii_cache = {"data": None, "ts": 0.0}
+
+
+def _fii_dii_persist(entries, source):
+    """Upsert scraped sessions so a later failed scrape can still serve real numbers."""
+    if not entries:
+        return
+    try:
+        from database import SessionLocal as _S
+        s = _S()
+        try:
+            for e in entries:
+                d = str(e.get("date") or "").strip()
+                if not d:
+                    continue
+                row = s.query(models.FiiDiiFlow).filter(models.FiiDiiFlow.date == d).first()
+                if row is None:
+                    row = models.FiiDiiFlow(date=d)
+                    s.add(row)
+                row.fii_cash_cr = _safe_float(e.get("fii_cash_cr"))
+                row.dii_cash_cr = _safe_float(e.get("dii_cash_cr"))
+                row.fii_fo_cr = _safe_float(e.get("fii_fo_cr"))
+                row.net_total_cr = _safe_float(e.get("net_total_cr"))
+                row.source = source
+            s.commit()
+        finally:
+            s.close()
+    except Exception as e:
+        print(f"[FII/DII] persist failed: {e}")
+
+
+def _fii_dii_from_db(limit=10):
+    """Last known-good sessions, newest first."""
+    try:
+        from database import SessionLocal as _S
+        s = _S()
+        try:
+            rows = (s.query(models.FiiDiiFlow)
+                      .order_by(models.FiiDiiFlow.date.desc())
+                      .limit(limit).all())
+            return [{
+                "date": r.date,
+                "fii_cash_cr": r.fii_cash_cr,
+                "dii_cash_cr": r.dii_cash_cr,
+                "fii_fo_cr": r.fii_fo_cr,
+                "net_total_cr": r.net_total_cr,
+            } for r in rows]
+        finally:
+            s.close()
+    except Exception as e:
+        print(f"[FII/DII] DB read failed: {e}")
+        return []
+
+
 @app.get("/api/fii-dii")
 async def get_fii_dii():
     """Fetch FII/DII data: tries NSE with session cookie first, then Moneycontrol scrape."""
+    global _fii_dii_cache
+    now = time.time()
+    
+    if _fii_dii_cache["data"] is not None and now - _fii_dii_cache["ts"] < 3600:
+        return _fii_dii_cache["data"]
+        
     today_str = datetime.now(IST).strftime("%d-%m-%Y")
 
     # ── Attempt 1: NSE India (requires session cookie from homepage) ──
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        # 30s, not 10s: this app does blocking yfinance work on the event loop, which
+        # starves in-flight async HTTP and made both scrapes time out (they surface as
+        # an empty exception message) even while the upstream sites were healthy.
+        async with httpx.AsyncClient(timeout=30) as client:
             client.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept-Language": "en-US,en;q=0.9",
@@ -2225,7 +3176,11 @@ async def get_fii_dii():
                         "net_total_cr": net,
                     })
                 if entries:
-                    return {"entries": entries, "source": "NSE India", "last_updated": datetime.now(IST).isoformat()}
+                    _fii_dii_persist(entries, "NSE India")
+                    res = {"entries": entries, "source": "NSE India", "last_updated": datetime.now(IST).isoformat()}
+                    _fii_dii_cache["data"] = res
+                    _fii_dii_cache["ts"] = time.time()
+                    return res
     except Exception as e:
         print(f"[FII/DII] NSE attempt failed: {e}")
 
@@ -2236,7 +3191,7 @@ async def get_fii_dii():
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": "https://www.moneycontrol.com/",
         }
-        async with httpx.AsyncClient(headers=mc_headers, timeout=10) as client:
+        async with httpx.AsyncClient(headers=mc_headers, timeout=30) as client:
             mc_resp = await client.get("https://www.moneycontrol.com/markets/fii-dii-data/")
             if mc_resp.status_code == 200:
                 import re, json as _json
@@ -2260,12 +3215,33 @@ async def get_fii_dii():
                             "net_total_cr": dii_cash + fii_cash,
                         })
                     if entries:
-                        return {"entries": entries, "source": "Moneycontrol", "last_updated": datetime.now(IST).isoformat()}
+                        _fii_dii_persist(entries, "Moneycontrol")
+                        res = {"entries": entries, "source": "Moneycontrol", "last_updated": datetime.now(IST).isoformat()}
+                        _fii_dii_cache["data"] = res
+                        _fii_dii_cache["ts"] = time.time()
+                        return res
     except Exception as e:
         print(f"[FII/DII] Moneycontrol attempt failed: {e}")
 
-    # ── Fallback: return empty with message ──
-    return {"entries": [], "source": "Unavailable", "last_updated": datetime.now(IST).isoformat(), "error": "FII/DII data temporarily unavailable. NSE blocks direct API access without browser session."}
+    # ── Both scrapes failed: serve the last sessions we successfully stored ──
+    # Previously this overwrote the cache with an empty payload, so one flaky scrape
+    # replaced perfectly good figures with "N/A" until the next successful fetch.
+    stored = _fii_dii_from_db()
+    if stored:
+        res = {
+            "entries": stored,
+            "source": "Saved (live feed unavailable)",
+            "last_updated": datetime.now(IST).isoformat(),
+            "stale": True,
+        }
+        _fii_dii_cache["data"] = res
+        _fii_dii_cache["ts"] = time.time() - 3300  # retry upstream in ~5 min
+        return res
+
+    fallback = {"entries": [], "source": "Unavailable", "last_updated": datetime.now(IST).isoformat(), "error": "FII/DII data temporarily unavailable. NSE blocks direct API access without browser session."}
+    _fii_dii_cache["data"] = fallback
+    _fii_dii_cache["ts"] = time.time() - 3540 # Cache for 60 seconds (since TTL is 3600)
+    return fallback
 
 # ==================== PORTFOLIO ENDPOINTS ====================
 
@@ -2283,18 +3259,22 @@ def get_open_positions(db: Session = Depends(get_db), current_user: models.User 
     if tickers:
         try:
             today = get_ist_now().date()
-            candles = db.query(models.CurrentDayCandle).filter(
+            intraday_candles_5min = db.query(models.CurrentDayCandle).filter(
                 models.CurrentDayCandle.ticker.in_(tickers),
                 models.CurrentDayCandle.trading_date == today
             ).all()
-            for c in candles:
+            for c in intraday_candles_5min:
                 live_prices[c.ticker] = c.current_price
         except Exception as e:
             print(f"[Portfolio] Live price fetch error: {e}")
 
+    # DB-06: one batched query for every position's TP/SL orders instead of
+    # one query per position in the loop below.
+    orders_by_position = TradingService.get_orders_for_positions(db, [pos.id for pos in positions])
+
     result = []
     for pos in positions:
-        orders = TradingService.get_position_orders(db, pos.id)
+        orders = orders_by_position.get(pos.id, {"TP": None, "SL": None})
         current_price = live_prices.get(pos.ticker, pos.entry_price)
         if pos.position_type == "LONG":
             unrealized_pnl = round((current_price - pos.entry_price) * pos.quantity, 2)
@@ -2357,16 +3337,16 @@ def get_portfolio_summary(db: Session = Depends(get_db), current_user: models.Us
     realized_pnl = sum(p[0] for p in total_realized if p[0]) if total_realized else 0
     total_positions = open_positions + closed_positions
 
-    # BUG-08 FIX: Compute actual win/loss stats from CLOSED positions instead of hardcoding zeros
+    # Win Rate calculation: PnL >= 0 counts as a Win
     pnl_rows = db.query(models.Position.realized_pnl).filter(
         models.Position.user_id == current_user.user_id,
         models.Position.status == "CLOSED",
         models.Position.realized_pnl.isnot(None)
     ).all()
-    total_wins = sum(1 for r in pnl_rows if r[0] > 0)
+    total_wins = sum(1 for r in pnl_rows if r[0] >= 0)
     total_losses = sum(1 for r in pnl_rows if r[0] < 0)
-    total_decided = total_wins + total_losses
-    win_rate = round((total_wins / total_decided) * 100, 1) if total_decided > 0 else 0.0
+    total_closed = len(pnl_rows)
+    win_rate = round((total_wins / total_closed) * 100, 1) if total_closed > 0 else 0.0
 
     # Compute unrealized P&L from open positions using live prices
     open_positions_rows = db.query(models.Position).filter(
@@ -2376,11 +3356,11 @@ def get_portfolio_summary(db: Session = Depends(get_db), current_user: models.Us
     if open_positions_rows:
         open_tickers = list(set(p.ticker for p in open_positions_rows))
         today = date.today()
-        candles = db.query(models.CurrentDayCandle).filter(
+        intraday_candles_5min = db.query(models.CurrentDayCandle).filter(
             models.CurrentDayCandle.ticker.in_(open_tickers),
             models.CurrentDayCandle.trading_date == today
         ).all()
-        live_px = {c.ticker: c.current_price for c in candles}
+        live_px = {c.ticker: c.current_price for c in intraday_candles_5min}
         for p in open_positions_rows:
             cp = live_px.get(p.ticker, p.entry_price)
             if p.position_type == "LONG":
@@ -2390,9 +3370,12 @@ def get_portfolio_summary(db: Session = Depends(get_db), current_user: models.Us
     unrealized_pnl = round(unrealized_pnl, 2)
 
     return {
-        "current_balance": balance,
-        "total_invested": invested_sum,
-        "total_realized_pnl": realized_pnl,
+        "balance": round(balance, 2),
+        "current_balance": round(balance, 2),
+        "total_invested": round(invested_sum, 2),
+        "realized_pnl": round(realized_pnl, 2),
+        "total_realized_pnl": round(realized_pnl, 2),
+        "unrealized_pnl": unrealized_pnl,
         "total_unrealized_pnl": unrealized_pnl,
         "total_positions": total_positions,
         "open_positions": open_positions,
@@ -2400,6 +3383,8 @@ def get_portfolio_summary(db: Session = Depends(get_db), current_user: models.Us
         "win_rate": win_rate,
         "total_wins": total_wins,
         "total_losses": total_losses,
+        "wins": total_wins,
+        "losses": total_losses
     }
 
 @app.post("/api/trade/close-position")
@@ -2412,7 +3397,8 @@ def close_position(req: schemas.ClosePositionRequest, db: Session = Depends(get_
     ).first()
     if pos:
         try:
-            ticker_live = angelone_service.latest_ticks.get(pos.ticker)
+            with angelone_service.latest_ticks_lock:
+                ticker_live = angelone_service.latest_ticks.get(pos.ticker)
             if ticker_live and ticker_live.get("current_price", 0) > 0:
                 market_price = ticker_live["current_price"]
                 deviation = abs(req.closing_price - market_price) / market_price
@@ -2450,14 +3436,19 @@ def set_limits(req: schemas.SetLimitsRequest, db: Session = Depends(get_db), cur
 
 @app.get("/api/top-9-history")
 def get_top_9_history(db: Session = Depends(get_db)):
-    top_tickers = db.query(models.StockMetadata.ticker, models.StockMetadata.name).order_by(models.StockMetadata.base_price.desc()).limit(9).all()
+    # Frontend's hardcoded TRACKER_TICKERS — return history for the actual displayed tickers
+    TOP9_TICKERS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'BHARTIARTL']
+    top_tickers = db.query(models.StockMetadata.ticker, models.StockMetadata.name).filter(
+        models.StockMetadata.ticker.in_(TOP9_TICKERS)
+    ).all()
     ticker_list = [t for t, n in top_tickers]
     result = {}
     if not ticker_list:
         return result
-    all_data = db.query(models.StockData).filter(
-        models.StockData.ticker.in_(ticker_list)
-    ).order_by(models.StockData.ticker, models.StockData.date.desc()).all()
+    all_data = db.query(models.Candle).filter(
+        models.Candle.ticker.in_(ticker_list),
+        models.Candle.timeframe == '1D',
+    ).order_by(models.Candle.ticker, models.Candle.timestamp.desc()).all()
     ticker_data = {}
     for r in all_data:
         if r.ticker not in ticker_data:
@@ -2487,28 +3478,39 @@ def _normalize_ticker(ticker: str) -> List[str]:
     return variants
 
 
+
 @app.get("/api/stock-data/range")
 def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db: Session = Depends(get_db)):
+    """Daily OHLCV range. Primary source: candles(1D). Fallback: yfinance → AngelOne (writes to candles).
+    Response: list of {"time": "YYYY-MM-DD", "open", "high", "low", "close", "adj_close", "volume"}."""
     db_tickers = _normalize_ticker(ticker)
     ist_now = database.get_ist_now()
     range_days = {"1M": 30, "3M": 90, "6M": 180, "1Y": 365}.get(range.upper())
-    q = db.query(models.StockData).filter(models.StockData.ticker.in_(db_tickers))
-    if range_days is not None:
-        cutoff = ist_now.date() - timedelta(days=range_days)
-        q = q.filter(models.StockData.date >= cutoff)
-    records = q.order_by(models.StockData.date.desc()).limit(500).all()
-
-    # Fallback to yfinance if insufficient data in DB
     clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
-    # Lowered from 100→50: new listings and SME stocks have fewer than 100 days of history
-    # so 100 caused unnecessary yfinance re-fetches for perfectly valid DB data.
-    MIN_DAILY_RECORDS = 50 if range.upper() == "ALL" else 20
+
+    def _query_candles_1d():
+        q = db.query(models.Candle).filter(
+            models.Candle.ticker.in_(db_tickers),
+            models.Candle.timeframe == '1D',
+        )
+        if range_days is not None:
+            cutoff = ist_now.date() - timedelta(days=range_days)
+            q = q.filter(models.Candle.timestamp >= datetime(cutoff.year, cutoff.month, cutoff.day))
+        return q.order_by(models.Candle.timestamp.desc()).limit(500).all()
+
+    records = _query_candles_1d()
+
+    resolved_exchange = _resolve_ticker_exchange(db, clean_ticker)
+    MIN_DAILY_RECORDS = 10 if range.upper() == "ALL" else 5
+
+    # Fallback to yfinance if insufficient data in candles[1D]
     if len(records) < MIN_DAILY_RECORDS and not _is_yfinance_failed(clean_ticker):
         try:
-            yf_ticker = _yfinance_ticker(clean_ticker)
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            yf_ticker = _yfinance_ticker(clean_ticker, resolved_exchange)
             period_days = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y"}.get(range.upper(), "5y")
             yf_data, yf_err = yf_downloader.download_single(
-                yf_ticker, period=period_days, interval="1d", timeout=15
+                yf_ticker, period=period_days, interval="1d", timeout=8
             )
             if yf_err is None and yf_data is not None and not yf_data.empty:
                 if isinstance(yf_data.columns, pd.MultiIndex):
@@ -2516,134 +3518,70 @@ def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db
                         yf_data = yf_data.xs(yf_ticker, axis=1, level=1)
                     else:
                         yf_data.columns = yf_data.columns.get_level_values(0)
-                records = []
-                for idx, row in yf_data.iterrows():
-                    try:
-                        dt = idx.date() if hasattr(idx, 'date') else idx
-                        rec = models.StockData(
-                            ticker=clean_ticker, date=dt,
-                            open=_safe_float(row.get('Open')),
-                            high=_safe_float(row.get('High')),
-                            low=_safe_float(row.get('Low')),
-                            close=_safe_float(row.get('Close')),
-                            adj_close=_safe_float(row.get('Adj Close', row.get('Close'))),
-                            volume=_safe_int(row.get('Volume'))
-                        )
-                        records.append(rec)
-                    except Exception:
-                        pass
                 try:
-                    for rec in records:
-                        existing = db.query(models.StockData).filter(
-                            models.StockData.ticker == rec.ticker,
-                            models.StockData.date == rec.date,
-                        ).first()
-                        if existing:
-                            existing.open = rec.open
-                            existing.high = rec.high
-                            existing.low = rec.low
-                            existing.close = rec.close
-                            existing.adj_close = rec.adj_close
-                            existing.volume = rec.volume
-                        else:
-                            db.add(rec)
+                    for idx, row in yf_data.iterrows():
+                        try:
+                            dt = idx.date() if hasattr(idx, 'date') else idx
+                            ts = datetime(dt.year, dt.month, dt.day, 0, 0, 0)
+                            db.execute(pg_insert(models.Candle).values(
+                                ticker=clean_ticker, timeframe='1D', timestamp=ts,
+                                open=_safe_float(row.get('Open')), high=_safe_float(row.get('High')),
+                                low=_safe_float(row.get('Low')), close=_safe_float(row.get('Close')),
+                                volume=_safe_int(row.get('Volume')),
+                                is_completed=True, data_source='YFINANCE', is_backfilled=True,
+                            ).on_conflict_do_nothing(constraint="uix_candle_key"))
+                        except Exception:
+                            pass
                     db.commit()
+                    records = _query_candles_1d()
                 except Exception:
                     db.rollback()
-                records = db.query(models.StockData).filter(
-                    models.StockData.ticker.in_(db_tickers)
-                ).order_by(models.StockData.date.desc()).limit(500).all()
             else:
                 _mark_yfinance_failed(clean_ticker)
         except Exception:
             _mark_yfinance_failed(clean_ticker)
 
-    # Fallback to AngelOne historical data if still insufficient (covers SME stocks yfinance doesn't have)
+    # Fallback to AngelOne if still insufficient (covers SME stocks yfinance doesn't have)
     if len(records) < MIN_DAILY_RECORDS:
         try:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
             if not historical_service.is_logged_in:
                 historical_service.login()
             if historical_service.is_logged_in:
                 from_date = ist_now.date() - timedelta(days=365*5 if range.upper() == "ALL" else range_days if range_days else 365)
                 to_date = ist_now.date()
-                angel_candles = historical_service.get_historical_candles(
+                angel_daily_candles = historical_service.get_historical_candles(
                     ticker=clean_ticker, interval='ONE_DAY',
-                    from_date=from_date, to_date=to_date, exchange='NSE'
+                    from_date=from_date, to_date=to_date, exchange=resolved_exchange
                 )
-                if angel_candles:
-                    new_recs = []
-                    for c in angel_candles:
-                        ts = c.get('timestamp')
-                        if not isinstance(ts, datetime):
-                            continue
-                        new_recs.append(models.StockData(
-                            ticker=clean_ticker, date=ts.date(),
-                            open=_safe_float(c.get('open')),
-                            high=_safe_float(c.get('high')),
-                            low=_safe_float(c.get('low')),
-                            close=_safe_float(c.get('close')),
-                            adj_close=_safe_float(c.get('close')),
-                            volume=_safe_int(c.get('volume'))
-                        ))
-                    for rec in new_recs:
-                        existing = db.query(models.StockData).filter(
-                            models.StockData.ticker == rec.ticker,
-                            models.StockData.date == rec.date,
-                        ).first()
-                        if existing:
-                            existing.open = rec.open
-                            existing.high = rec.high
-                            existing.low = rec.low
-                            existing.close = rec.close
-                            existing.adj_close = rec.adj_close
-                            existing.volume = rec.volume
-                        else:
-                            db.add(rec)
-                    db.commit()
-                    records = db.query(models.StockData).filter(
-                        models.StockData.ticker.in_(db_tickers)
-                    ).order_by(models.StockData.date.desc()).limit(500).all()
+                if angel_daily_candles:
+                    try:
+                        for c in angel_daily_candles:
+                            ts_raw = c.get('timestamp')
+                            if not isinstance(ts_raw, datetime):
+                                continue
+                            ts = datetime(ts_raw.year, ts_raw.month, ts_raw.day, 0, 0, 0)
+                            db.execute(pg_insert(models.Candle).values(
+                                ticker=clean_ticker, timeframe='1D', timestamp=ts,
+                                open=_safe_float(c.get('open')), high=_safe_float(c.get('high')),
+                                low=_safe_float(c.get('low')), close=_safe_float(c.get('close')),
+                                volume=_safe_int(c.get('volume')),
+                                is_completed=True, data_source='ANGELONE', is_backfilled=True,
+                            ).on_conflict_do_nothing(constraint="uix_candle_key"))
+                        db.commit()
+                        records = _query_candles_1d()
+                    except Exception:
+                        db.rollback()
         except Exception as e:
             print(f"[WARN] AngelOne historical fallback failed for {clean_ticker}: {e}")
 
-    # Fallback to aggregator 1D candles (from AngelOne WS ticks — works for all subscribed stocks)
-    if len(records) < MIN_DAILY_RECORDS:
-        try:
-            cutoff_date = ist_now.date() - timedelta(days=range_days if range_days else 365*5)
-            agg_candles = db.query(models.Candle).filter(
-                models.Candle.ticker.in_(db_tickers),
-                models.Candle.timeframe == '1D',
-                models.Candle.timestamp >= cutoff_date,
-            ).order_by(models.Candle.timestamp.desc()).limit(500).all()
-            if agg_candles:
-                existing_dates = {r.date for r in records}
-                new_records = []
-                for c in agg_candles:
-                    d = c.timestamp.date() if hasattr(c.timestamp, 'date') else c.timestamp
-                    if d in existing_dates:
-                        continue
-                    new_records.append(models.StockData(
-                        ticker=clean_ticker, date=d,
-                        open=_safe_float(c.open), high=_safe_float(c.high),
-                        low=_safe_float(c.low), close=_safe_float(c.close),
-                        adj_close=_safe_float(c.close), volume=_safe_int(c.volume)
-                    ))
-                if new_records:
-                    for rec in new_records:
-                        existing = db.query(models.StockData).filter(
-                            models.StockData.ticker == rec.ticker,
-                            models.StockData.date == rec.date,
-                        ).first()
-                        if not existing:
-                            db.add(rec)
-                    db.commit()
-                    records = db.query(models.StockData).filter(
-                        models.StockData.ticker.in_(db_tickers)
-                    ).order_by(models.StockData.date.desc()).limit(500).all()
-        except Exception as e:
-            print(f"[WARN] Aggregator 1D candle fallback failed for {clean_ticker}: {e}")
-
-    result = [{"time": str(r.date), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "adj_close": _safe_float(r.adj_close), "volume": _safe_int(r.volume)} for r in records]
+    # Build response using date string format (preserves existing API contract).
+    result = [
+        {"time": str(r.timestamp.date()), "open": _safe_float(r.open), "high": _safe_float(r.high),
+         "low": _safe_float(r.low), "close": _safe_float(r.close),
+         "adj_close": _safe_float(r.close), "volume": _safe_int(r.volume)}
+        for r in reversed(records)
+    ]
     today = ist_now.date()
     live = db.query(models.CurrentDayCandle).filter(
         models.CurrentDayCandle.ticker.in_(db_tickers),
@@ -2694,11 +3632,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     60s per-ticker cooldown to prevent hammering yfinance."""
     if _is_yfinance_failed(clean_ticker):
         return []
-    # Skip tickers not in known NSE symbols (delisted / invalid) — avoids 12s timeout
-    is_valid, reason = yf_downloader.validate_symbol(clean_ticker)
-    if not is_valid:
-        _mark_yfinance_failed(clean_ticker)
-        return []
+    # Validation removed to allow dynamically fetching valid symbols missing from stocks_temp.json
     now_ts = time.time()
     cache_key = (clean_ticker, interval)
     if cache_key in _yf_intraday_cache:
@@ -2718,8 +3652,8 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     from aggregator import snap_to_nse_session, fix_ohlc
 
     yf_ticker = _yfinance_ticker(clean_ticker)
-    period_map = {"1m": "7d", "5m": "5d", "15m": "1mo", "30m": "1mo", "1h": "1mo"}
-    yf_period = period_map.get(interval, "5d")
+    period_map = {"1m": "7d", "5m": "60d", "15m": "60d", "30m": "60d", "1h": "730d"}
+    yf_period = period_map.get(interval, "60d")
 
     # Acquire semaphore (separate pool for background tasks)
     sem = _yf_bg_semaphore if use_bg_semaphore else _yf_semaphore
@@ -2758,7 +3692,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
 
     # Snap yfinance timestamps to NSE session-aligned buckets
     bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
-    candles = []
+    intraday_candles_5min = []
     seen_ts = set()
     for idx, row in yf_int.iterrows():
         try:
@@ -2786,25 +3720,35 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
             if ts_key in seen_ts:
                 continue
             seen_ts.add(ts_key)
-            candles.append(_YfCandle(
+            intraday_candles_5min.append(_YfCandle(
                 ticker=clean_ticker, timeframe=interval, timestamp=snapped_dt,
                 open=o, high=h, low=l, close=c, volume=v, is_completed=True,
             ))
         except Exception:
             pass
 
-    if candles:
-        _yf_intraday_cache[cache_key] = (time.time(), candles)
+    if intraday_candles_5min:
+        _yf_intraday_cache[cache_key] = (time.time(), intraday_candles_5min)
 
-    return candles
+    return intraday_candles_5min
 
 
 
 # ── Use unified Candle model for all intraday queries ──────────────────
 from aggregator import (
     snap_to_nse_session, is_trading_day, is_market_hour,
-    ist_now_naive, fix_ohlc, validate_ohlc, candle_aggregator, TIMEFRAME_BUCKETS
+    ist_now_naive, fix_ohlc, validate_ohlc, candle_aggregator,
 )
+from event_bus import event_bus
+from exchange_calendar import nse_calendar
+from recovery_service import RecoveryService
+from live_timeframe_manager import live_timeframe_manager
+from candle_cache import candle_cache
+from chart_service import ChartService
+from resampler import CandleResampler
+from retention_service import RetentionService
+from monitor import monitor
+from validation_service import ValidationService
 
 
 def _intraday_cutoff(interval: str):
@@ -2814,191 +3758,189 @@ def _intraday_cutoff(interval: str):
     """
     ist_now = database.get_ist_now()
     # 1m: 7 days covers a full trading week + weekend gap
-    # 5m: 10 days, 15m/30m: 45/90 days, 1h: 120 days
-    days_back = {"1m": 7, "5m": 10, "15m": 45, "30m": 90, "1h": 120}.get(interval, 10)
+    # 5m: 65 days covers 2 months of data on first load
+    # 15m/30m: 45/90 days, 1h: 120 days
+    days_back = {"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120}.get(interval, 10)
     return ist_now - timedelta(days=days_back)
 
 
 @app.get("/api/stock-data/intraday")
 def get_stock_data_intraday(ticker: str = Query(...), interval: str = Query("5m"), after: int = Query(None), db: Session = Depends(get_db)):
-    db_tickers = _normalize_ticker(ticker)
-    clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
-    cutoff_dt = _epoch_to_ist_dt(after) if after is not None else _intraday_cutoff(interval)
+    """Legacy intraday endpoint redirected to ChartService."""
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    if _chart_service is None:
+        return []
+    
+    start_ts = after
+    if start_ts is None:
+        start_ts = _ts_to_epoch(_intraday_cutoff(interval))
+        
+    # Pass 'after' as 'start' timestamp
+    result = _chart_service.get_chart(clean, interval, start=start_ts, limit=5000)
+    
+    # The frontend expects an array of candle objects for this endpoint
+    if isinstance(result, dict) and "candles" in result:
+        return result["candles"]
+    elif isinstance(result, list):
+        return result
+    return []
 
-    # ── Query unified Candle table ────────────────────────────────────
-    # All timeframes including 30m/1h are now stored in the Candle table
-    # (the aggregator builds them from completed 1m candles).
-    candles = db.query(models.Candle).filter(
+
+def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tickers: list, db) -> list:
+    """
+    Build 1W/1M candles from ALL available 1D data (DB + yfinance gap-fill) then merge with
+    any stored 1W/1M candles, keeping stored bars where they already exist.
+
+    This gives maximum historical coverage: if the DB holds 10 years of daily data,
+    the chart shows 10 years of weekly/monthly bars even when stored_candles only goes back 4 years.
+
+    Returns the merged + sorted candle list. Never writes to the DB — read-only path.
+    """
+    from resampler import CandleResampler
+    import pandas as pd
+
+    today_ist = get_ist_now().date()
+
+    # Always fetch ALL 1D candles from DB — not just the gap — so we can resample the full history.
+    db_1d = db.query(models.Candle).filter(
         models.Candle.ticker.in_(db_tickers),
-        models.Candle.timeframe == interval,
-        models.Candle.timestamp >= cutoff_dt,
-        models.Candle.is_completed == True,
-    ).order_by(models.Candle.timestamp.asc()).limit(3000).all()
+        models.Candle.timeframe == "1D",
+    ).order_by(models.Candle.timestamp.asc()).all()
 
-    # Only fetch from yfinance if:
-    # 1. DB has fewer candles than expected AND
-    # 2. Ticker is not known to have failed yfinance before AND
-    # 3. Ticker is a known index OR has been seen on yfinance before (has DB history)
-    # This prevents 3-5s yfinance timeouts for obscure/delisted tickers.
-    min_needed = 10 if interval == "1m" else 50
-    need_fetch = len(candles) < min_needed
-    if not need_fetch and candles:
-        latest_ts = candles[-1].timestamp
-        staleness_threshold = get_ist_now() - timedelta(days=3)
-        if latest_ts < staleness_threshold:
-            need_fetch = True
-    if need_fetch:
-        # Fallback to AngelOne historical intraday (same source as WS ticks — OHLC matches AngelOne platform)
-        # Added 1m and 30m mappings.
-        angel_interval_map = {
-            "1m": "ONE_MINUTE",
-            "5m": "FIVE_MINUTE",
-            "15m": "FIFTEEN_MINUTE",
-            "30m": "THIRTY_MINUTE",
-            "1h": "ONE_HOUR",
-        }
-        angel_interval = angel_interval_map.get(interval)
-        if angel_interval:
-            try:
-                if not historical_service.is_logged_in:
-                    historical_service.login()
-                if historical_service.is_logged_in:
-                    from_date = cutoff_dt.date() if hasattr(cutoff_dt, 'date') else cutoff_dt
-                    to_date = get_ist_now().date()
-                    angel_candles = historical_service.get_historical_candles(
-                        ticker=clean_ticker, interval=angel_interval,
-                        from_date=from_date, to_date=to_date, exchange='NSE'
-                    )
-                    if angel_candles:
-                        from aggregator import snap_to_nse_session
-                        bucket_min = {"5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
-                        new_recs = []
-                        seen_ts = set()
-                        for c in angel_candles:
-                            ts = c.get('timestamp')
-                            if not isinstance(ts, datetime):
-                                continue
-                            epoch = int(ts.timestamp())
-                            snapped_epoch = snap_to_nse_session(epoch, bucket_min)
-                            snapped_dt = _epoch_to_ist_dt(snapped_epoch)
-                            ts_key = snapped_dt.strftime("%Y%m%d%H%M")
-                            if ts_key in seen_ts:
-                                continue
-                            seen_ts.add(ts_key)
-                            new_recs.append(models.Candle(
-                                ticker=clean_ticker, timeframe=interval, timestamp=snapped_dt,
-                                open=_safe_float(c.get('open')),
-                                high=_safe_float(c.get('high')),
-                                low=_safe_float(c.get('low')),
-                                close=_safe_float(c.get('close')),
-                                volume=_safe_int(c.get('volume')),
-                                is_completed=True
-                            ))
-                        if new_recs:
-                            for rec in new_recs:
-                                existing = db.query(models.Candle).filter(
-                                    models.Candle.ticker == rec.ticker,
-                                    models.Candle.timeframe == rec.timeframe,
-                                    models.Candle.timestamp == rec.timestamp,
-                                ).first()
-                                if existing:
-                                    existing.open = rec.open; existing.high = rec.high
-                                    existing.low = rec.low; existing.close = rec.close
-                                    existing.volume = rec.volume
-                                else:
-                                    db.add(rec)
-                            db.commit()
-                            candles = db.query(models.Candle).filter(
-                                models.Candle.ticker.in_(db_tickers),
-                                models.Candle.timeframe == interval,
-                                models.Candle.timestamp >= cutoff_dt,
-                                models.Candle.is_completed == True,
-                            ).order_by(models.Candle.timestamp.asc()).limit(3000).all()
-            except Exception as e:
-                print(f"[WARN] AngelOne intraday fallback failed for {clean_ticker}: {e}")
+    daily_dicts = []
+    for r in db_1d:
+        ts = r.timestamp if isinstance(r.timestamp, datetime) else datetime.combine(r.timestamp, datetime.min.time())
+        daily_dicts.append({"timestamp": ts, "open": _safe_float(r.open), "high": _safe_float(r.high),
+                             "low": _safe_float(r.low), "close": _safe_float(r.close), "volume": _safe_int(r.volume)})
 
-    # ── Merge with live forming candle from aggregator ────────────────
-    result = [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in candles]
+    # Check if the 1D data covers up to ~today; fetch from yfinance only if there is a recent gap.
+    db_covers_to = daily_dicts[-1]["timestamp"].date() if daily_dicts else None
+    need_yf = db_covers_to is None or (today_ist - db_covers_to).days > 7
 
-    from main import candle_aggregator
-    live = candle_aggregator.get_current(clean_ticker)
+    if need_yf:
+        try:
+            yf_sym = _yfinance_ticker(clean)
+            # Fetch from a week before the last 1D in DB (or max history if no 1D at all)
+            fetch_from = (db_covers_to - timedelta(days=7)).strftime('%Y-%m-%d') if db_covers_to else None
+            acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
+            if acquired:
+                try:
+                    if fetch_from:
+                        df = yf.download(yf_sym, start=fetch_from, interval='1d',
+                                         progress=False, auto_adjust=True, timeout=15)
+                    else:
+                        df = yf.download(yf_sym, period='max', interval='1d',
+                                         progress=False, auto_adjust=True, timeout=15)
+                finally:
+                    _yf_semaphore.release()
 
-    if live and interval in live:
-        lc = live[interval]
-        if result and lc["time"] == result[-1]["time"]:
-            result[-1] = lc
-        elif lc["time"] > (result[-1]["time"] if result else 0):
-            result.append(lc)
+                if df is not None and not df.empty:
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
+                    yf_seen = {d["timestamp"].date() for d in daily_dicts}
+                    for idx, row in df.iterrows():
+                        ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
+                        ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+                        o = float(row.get('Open', 0) or 0)
+                        h = float(row.get('High', 0) or 0)
+                        l = float(row.get('Low', 0) or 0)
+                        c = float(row.get('Close', 0) or 0)
+                        v = int(row.get('Volume', 0) or 0)
+                        if o > 0 and c > 0 and ts.date() not in yf_seen:
+                            daily_dicts.append({"timestamp": ts, "open": o, "high": max(o, h, c),
+                                                "low": min(o, l, c), "close": c, "volume": v})
+                            yf_seen.add(ts.date())
+        except Exception as e:
+            print(f"[GapFill] yfinance error for {clean}: {e}")
 
-    return result
+    if not daily_dicts:
+        return stored_candles
+
+    daily_dicts.sort(key=lambda d: d["timestamp"])
+
+    try:
+        resampled = CandleResampler.resample_5m_to(daily_dicts, target_tf)
+    except Exception as e:
+        print(f"[GapFill] Resample error {clean} {target_tf}: {e}")
+        return stored_candles
+
+    stored_times = {c["time"] for c in stored_candles}
+    added = 0
+    for c in resampled:
+        ts = c.get("timestamp")
+        if isinstance(ts, datetime):
+            # Match _ts_to_epoch: treat naive datetime as IST
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
+            ts_epoch = int(ts.replace(tzinfo=IST).timestamp())
+        else:
+            ts_epoch = int(ts) if ts else 0
+        if ts_epoch > 0 and ts_epoch not in stored_times:
+            stored_candles.append({
+                "time": ts_epoch,
+                "open": float(c.get("open", 0)),
+                "high": float(c.get("high", 0)),
+                "low": float(c.get("low", 0)),
+                "close": float(c.get("close", 0)),
+                "volume": int(c.get("volume", 0)),
+            })
+            stored_times.add(ts_epoch)
+            added += 1
+
+    if added:
+        stored_candles.sort(key=lambda c: c["time"])
+        print(f"[GapFill] {clean} {target_tf}: +{added} resampled candles from full 1D history")
+
+    return stored_candles
 
 
 @app.get("/api/stock-data/weekly")
-def get_weekly_candles(ticker: str = Query(...), db: Session = Depends(get_db)):
+def get_weekly_intraday_candles_5min(ticker: str = Query(...), db: Session = Depends(get_db)):
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     db_tickers = _normalize_ticker(ticker)
-    # Prefer aggregated candles from the unified pipeline
-    agg = db.query(models.Candle).filter(
+    # 1. Stored 1W candles (the historical base)
+    stored_rows = db.query(models.Candle).filter(
         models.Candle.ticker.in_(db_tickers),
         models.Candle.timeframe == "1W",
-        models.Candle.is_completed == True,
     ).order_by(models.Candle.timestamp.asc()).all()
-    if agg:
-        return [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in agg]
-
-    # Fallback: compute from StockData
-    import datetime as _dt
-    from collections import defaultdict
-    records = db.query(models.StockData).filter(models.StockData.ticker.in_(db_tickers)).order_by(models.StockData.date.asc()).all()
-    if not records:
-        return []
-    weeks = defaultdict(list)
-    for r in records:
-        iso = r.date.isocalendar()
-        weeks[(iso[0], iso[1])].append(r)
-    result = []
-    for week_key in sorted(weeks.keys()):
-        rows = sorted(weeks[week_key], key=lambda x: x.date)
-        monday = _dt.date.fromisocalendar(week_key[0], week_key[1], 1)
-        time_epoch = int(_dt.datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc).timestamp())
-        highs = [_safe_float(r.high) for r in rows]
-        lows  = [_safe_float(r.low) for r in rows if _safe_float(r.low) > 0]
-        result.append({"time": time_epoch, "open": _safe_float(rows[0].open), "high": max(highs) if highs else 0, "low": min(lows) if lows else 0, "close": _safe_float(rows[-1].close), "volume": sum(_safe_int(r.volume) for r in rows)})
-    return result
+    stored = [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open),
+               "high": _safe_float(r.high), "low": _safe_float(r.low),
+               "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in stored_rows]
+    # 2. Fill gap to today via 1D resample (uses DB 1D first, then yfinance for remainder)
+    return _resample_gap_fill(clean, "1W", stored, db_tickers, db)
 
 
 @app.get("/api/stock-data/monthly")
-def get_monthly_candles(ticker: str = Query(...), db: Session = Depends(get_db)):
-    """Monthly OHLCV candles. Tries Candle table first, falls back to StockData."""
+def get_monthly_intraday_candles_5min(ticker: str = Query(...), db: Session = Depends(get_db)):
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     db_tickers = _normalize_ticker(ticker)
-    agg = db.query(models.Candle).filter(
+    # 1. Stored 1M candles (the historical base)
+    stored_rows = db.query(models.Candle).filter(
         models.Candle.ticker.in_(db_tickers),
         models.Candle.timeframe == "1M",
-        models.Candle.is_completed == True,
     ).order_by(models.Candle.timestamp.asc()).all()
-    if agg:
-        return [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in agg]
-
-    import datetime as _dt
-    from collections import defaultdict
-    records = db.query(models.StockData).filter(models.StockData.ticker.in_(db_tickers)).order_by(models.StockData.date.asc()).all()
-    if not records:
-        return []
-    months = defaultdict(list)
-    for r in records:
-        months[(r.date.year, r.date.month)].append(r)
-    result = []
-    for month_key in sorted(months.keys()):
-        rows = sorted(months[month_key], key=lambda x: x.date)
-        first_day = rows[0].date
-        time_epoch = int(_dt.datetime(first_day.year, first_day.month, first_day.day, tzinfo=timezone.utc).timestamp())
-        highs = [_safe_float(r.high) for r in rows]
-        lows  = [_safe_float(r.low) for r in rows if _safe_float(r.low) > 0]
-        result.append({"time": time_epoch, "open": _safe_float(rows[0].open), "high": max(highs) if highs else 0, "low": min(lows) if lows else 0, "close": _safe_float(rows[-1].close), "volume": sum(_safe_int(r.volume) for r in rows)})
-    return result
+    stored = [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open),
+               "high": _safe_float(r.high), "low": _safe_float(r.low),
+               "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in stored_rows]
+    # 2. Fill gap to today via 1D resample (uses DB 1D first, then yfinance for remainder)
+    return _resample_gap_fill(clean, "1M", stored, db_tickers, db)
 
 
-# Candle save endpoint removed — aggregator writes candles directly via batch_flush_candles.
-# Keeping any user-writable candle endpoint is a security risk (fake candles on all charts).
+# Candle save endpoint removed — aggregator writes intraday_candles_5min directly via batch_flush_intraday_candles_5min.
+# Keeping any user-writable candle endpoint is a security risk (fake intraday_candles_5min on all charts).
+
+# ==================== NEW CHART SERVICE ENDPOINT ====================
+
+@app.get("/api/stock-data/chart")
+def get_chart_service(ticker: str = Query(...), timeframe: str = Query("5m"),
+                      start: int = Query(None), end: int = Query(None),
+                      limit: int = Query(5000, ge=1, le=50000)):
+    """Seamless chart endpoint using ChartService.
+    Merges live + cached + stored + resampled data into one continuous response."""
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    if _chart_service is None:
+        return {"intraday_candles_5min": [], "metadata": {"error": "ChartService not initialized"}}
+    return _chart_service.get_chart(clean, timeframe, start, end, limit)
 
 
 # ==================== PAGINATED / CACHE-OPTIMIZED ENDPOINTS ====================
@@ -3007,69 +3949,208 @@ def get_monthly_candles(ticker: str = Query(...), db: Session = Depends(get_db))
 def get_latest_candle(ticker: str = Query(...), interval: str = Query("5m"), db: Session = Depends(get_db)):
     """Return the latest completed candle for WS reconnect candle recovery."""
     db_tickers = _normalize_ticker(ticker)
-    record = db.query(models.Candle).filter(
-        models.Candle.ticker.in_(db_tickers),
-        models.Candle.timeframe == interval,
-        models.Candle.is_completed == True,
-    ).order_by(models.Candle.timestamp.desc()).first()
-    if record:
-        return {"time": _ts_to_epoch(record.timestamp), "open": _safe_float(record.open), "high": _safe_float(record.high), "low": _safe_float(record.low), "close": _safe_float(record.close), "volume": _safe_int(record.volume)}
+    
+    if interval in ["1m", "5m", "15m", "30m", "1h"]:
+        record = db.query(models.Candle).filter(
+            models.Candle.ticker.in_(db_tickers),
+            models.Candle.timeframe == interval
+        ).order_by(models.Candle.timestamp.desc()).first()
+        if record:
+            return {"time": _ts_to_epoch(record.timestamp), "open": _safe_float(record.open), "high": _safe_float(record.high), "low": _safe_float(record.low), "close": _safe_float(record.close), "volume": _safe_int(record.volume)}
+    elif interval in ["1d", "1D"]:
+        record = db.query(models.Candle).filter(
+            models.Candle.ticker.in_(db_tickers),
+            models.Candle.timeframe == '1D',
+        ).order_by(models.Candle.timestamp.desc()).first()
+        if record:
+            return {"time": _ts_to_epoch(record.timestamp), "open": _safe_float(record.open), "high": _safe_float(record.high), "low": _safe_float(record.low), "close": _safe_float(record.close), "volume": _safe_int(record.volume)}
     return {}
 
 
 @app.get("/api/stock-data/intraday/paginated")
-def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(200, ge=1, le=1000), db: Session = Depends(get_db)):
-    """Paginated intraday candles."""
+def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
+    """Paginated intraday intraday_candles_5min. Auto-triggers gap fill on first page load (before=None)."""
     db_tickers = _normalize_ticker(ticker)
-    if interval not in models.TIMEFRAMES:
+    
+    if interval not in ("1m", "5m", "15m", "30m", "1h"):
         return JSONResponse(status_code=400, content={"error": f"Unsupported interval: {interval}"})
-    q = db.query(models.Candle).filter(
-        models.Candle.ticker.in_(db_tickers),
-        models.Candle.timeframe == interval,
-        models.Candle.is_completed == True,
-    )
+        
+    model = models.Candle
+    q_base = db.query(model).filter(model.ticker.in_(db_tickers), model.timeframe == interval)
+
+    now_epoch = _ts_to_epoch(database.get_ist_now())
+    is_latest_request = before is None or before >= (now_epoch - 300)
+
+    # === REGISTER VIEWER for live higher-timeframe candle building ===
+    if is_latest_request and interval in ("15m", "30m", "1h"):
+        clean_t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+        live_timeframe_manager.add_viewer(clean_t, interval)
+
+    # Now execute the main query
+    q = q_base
     if before is not None:
-        q = q.filter(models.Candle.timestamp < _epoch_to_ist_dt(before))
+        q = q.filter(model.timestamp < _epoch_to_ist_dt(before))
     if after is not None:
-        q = q.filter(models.Candle.timestamp > _epoch_to_ist_dt(after))
-    records = q.order_by(models.Candle.timestamp.desc()).limit(limit + 1).all()
+        q = q.filter(model.timestamp > _epoch_to_ist_dt(after))
+    
+    records = q.order_by(model.timestamp.desc()).limit(limit + 1).all()
+
+    # === AUTO GAP FILL (Synchronous on first page load) ===
+    # Check for gaps inside the fetched data (handles cases where a few recent live candles hide a massive historical gap)
+    if is_latest_request:
+        try:
+            now = database.get_ist_now()
+            ist_time = now.time()
+            market_open = ist_time >= __import__('datetime').time(9, 15)
+            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+            
+            clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+            
+            if not records:
+                # No data exists at all for this timeframe, schedule background backfill (14 days)
+                last_stored_dt = now - __import__('datetime').timedelta(days=14)
+                print(f"[GapFill] BG trigger for {clean_ticker} {interval}: completely empty DB")
+                if background_tasks is not None:
+                    background_tasks.add_task(perform_on_demand_backfill, clean_ticker, interval, last_stored_dt, now)
+                else:
+                    perform_on_demand_backfill(clean_ticker, interval, last_stored_dt, now)
+            else:
+                # 1. Check tip gap
+                tip_gap_minutes = (now - records[0].timestamp).total_seconds() / 60
+                has_tip_gap = (tip_gap_minutes > (bucket_min * 2) and market_open) or (tip_gap_minutes > 375)
+
+                # 2. Check internal gaps
+                oldest_gap_start = None
+                for i in range(len(records) - 1):
+                    # records are ordered newest to oldest
+                    t_new = records[i].timestamp
+                    t_old = records[i+1].timestamp
+                    internal_gap = (t_new - t_old).total_seconds() / 60
+                    same_day = t_new.date() == t_old.date()
+                    # If gap is larger than 1 trading day (375 mins), we found a missing day/session
+                    # If on the same day and gap is larger than interval * 2, we missed an intraday candle
+                    if internal_gap > 375 or (same_day and internal_gap > bucket_min * 1.5):
+                        oldest_gap_start = t_old
+                        # Keep looping to find the absolute oldest gap in the fetched records so we fill them all at once
+
+                if has_tip_gap or oldest_gap_start:
+                    fill_start = oldest_gap_start if oldest_gap_start else records[0].timestamp
+                    print(f"[GapFill] BG trigger for {clean_ticker} {interval}: filling from {fill_start}")
+                    if background_tasks is not None:
+                        background_tasks.add_task(perform_on_demand_backfill, clean_ticker, interval, fill_start, now)
+                    else:
+                        perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
+        except Exception as _gf_err:
+            print(f"[GapFill] Error checking gap: {_gf_err}")
+
     has_more = len(records) > limit
     if has_more:
         records = records[:limit]
     data = [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in records]
     data.reverse()
 
-    if before is None:
-        from main import candle_aggregator
-        live = candle_aggregator.get_current(ticker.strip().upper().replace('.NS', '').replace('.BO', ''))
-        if live and interval in live:
-            lc = live[interval]
-            if data and lc["time"] == data[-1]["time"]:
-                data[-1] = lc
-            elif lc["time"] > (data[-1]["time"] if data else 0):
-                data.append(lc)
+    # === ON-THE-FLY RESAMPLING FALLBACK ===
+    if is_latest_request and interval in ("15m", "30m", "1h"):
+        now = database.get_ist_now()
+        last_dt = records[0].timestamp if records else (now - __import__('datetime').timedelta(days=14))
+        tip_gap_minutes = (now - last_dt).total_seconds() / 60
+        bucket_min = {"15m": 15, "30m": 30, "1h": 60}.get(interval, 15)
+        
+        # If there's still a noticeable gap after attempted backfills, resample from 5m on the fly
+        if tip_gap_minutes > bucket_min * 2:
+            try:
+                from resampler import CandleResampler
+                clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+                five_min_rows = db.query(models.Candle).filter(
+                    models.Candle.ticker.in_(db_tickers),
+                    models.Candle.timeframe == "5m",
+                    models.Candle.timestamp > last_dt
+                ).order_by(models.Candle.timestamp.asc()).all()
+                
+                if five_min_rows:
+                    five_min_dicts = [{
+                        "timestamp": r.timestamp,
+                        "open": float(r.open), "high": float(r.high),
+                        "low": float(r.low), "close": float(r.close),
+                        "volume": int(r.volume)
+                    } for r in five_min_rows]
+                    resampled = CandleResampler.resample_5m_to(five_min_dicts, interval)
+                    
+                    if resampled:
+                        for r in resampled:
+                            ts = r.get("timestamp")
+                            if isinstance(ts, str):
+                                ts = datetime.fromisoformat(ts)
+                            data.append({
+                                "time": _ts_to_epoch(ts),
+                                "open": _safe_float(r["open"]),
+                                "high": _safe_float(r["high"]),
+                                "low": _safe_float(r["low"]),
+                                "close": _safe_float(r["close"]),
+                                "volume": _safe_int(r["volume"])
+                            })
+                        print(f"[GapFill] On-the-fly appended {len(resampled)} {interval} candles for {clean_ticker}")
+            except Exception as e:
+                print(f"[GapFill] On-the-fly resample error: {e}")
+
+    live = None
+    clean_ticker_live = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    if is_latest_request:
+        if interval == "5m":
+            # 5m live candle from candle_aggregator directly
+            live = candle_aggregator.get_current(clean_ticker_live)
+            if live and interval in live:
+                lc = live[interval]
+                if data and lc["time"] == data[-1]["time"]:
+                    data[-1] = lc
+                elif lc["time"] > (data[-1]["time"] if data else 0):
+                    data.append(lc)
+        elif interval in ("15m", "30m", "1h"):
+            # Higher-TF live forming candle from LiveTimeframeManager
+            snapshot = live_timeframe_manager.get_current(clean_ticker_live, interval)
+            if snapshot:
+                forming = snapshot.get("forming")
+                completed = snapshot.get("completed", [])
+                ts_set = {c["time"] for c in data}
+                for c in completed:
+                    if c.get("time") not in ts_set:
+                        data.append(c)
+                if forming and forming.get("time") not in ts_set:
+                    data.append(forming)
+                data.sort(key=lambda c: c.get("time", 0))
 
     return {"data": data, "has_more": has_more}
 
 
 @app.get("/api/stock-data/range/paginated")
-def get_range_paginated(ticker: str = Query(...), range: str = Query("ALL"), before: str = Query(None), after: str = Query(None), limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
-    """Paginated daily candles."""
+def get_range_paginated(ticker: str = Query(...), range: str = Query("ALL"), before: str = Query(None), after: str = Query(None), limit: int = Query(1500, ge=1, le=50000), db: Session = Depends(get_db)):
+    """Paginated daily OHLCV. Reads from candles(1D) — the SSOT for daily chart data.
+    Response format is preserved: time=YYYY-MM-DD string (toTimeNum handles both formats)."""
     db_tickers = _normalize_ticker(ticker)
-    q = db.query(models.StockData).filter(models.StockData.ticker.in_(db_tickers))
+    q = db.query(models.Candle).filter(
+        models.Candle.ticker.in_(db_tickers),
+        models.Candle.timeframe == '1D',
+    )
     if before is not None:
-        q = q.filter(models.StockData.date < before)
+        # before is a date string "YYYY-MM-DD"; candles.timestamp is midnight naive datetime
+        before_dt = datetime.strptime(before, "%Y-%m-%d")
+        q = q.filter(models.Candle.timestamp < before_dt)
     if after is not None:
-        q = q.filter(models.StockData.date > after)
+        after_dt = datetime.strptime(after, "%Y-%m-%d")
+        q = q.filter(models.Candle.timestamp > after_dt)
     range_days = {"1M": 30, "3M": 90, "6M": 180, "1Y": 365}.get(range.upper())
     if range_days is not None and before is None and after is None:
         cutoff = database.get_ist_now().date() - timedelta(days=range_days)
-        q = q.filter(models.StockData.date >= cutoff)
-    records = q.order_by(models.StockData.date.desc()).limit(limit + 1).all()
+        cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day)
+        q = q.filter(models.Candle.timestamp >= cutoff_dt)
+    records = q.order_by(models.Candle.timestamp.desc()).limit(limit + 1).all()
     has_more = len(records) > limit
     if has_more:
         records = records[:limit]
-    data = [{"time": str(r.date), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "adj_close": _safe_float(r.adj_close), "volume": _safe_int(r.volume)} for r in records]
+    # Return date string for time (same format as before; toTimeNum handles it as UTC midnight)
+    data = [{"time": str(r.timestamp.date()), "open": _safe_float(r.open), "high": _safe_float(r.high),
+             "low": _safe_float(r.low), "close": _safe_float(r.close),
+             "adj_close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in records]
     data.reverse()
     return {"data": data, "has_more": has_more}
 
@@ -3079,16 +4160,16 @@ def get_intraday_since(ticker: str = Query(...), interval: str = Query("5m"), si
     """Return all intraday candles since a given timestamp (used for WS reconnect recovery)."""
     if since is None:
         return []
-    db_tickers = _normalize_ticker(ticker)
-    if interval not in models.TIMEFRAMES:
-        interval = "5m"
-    records = db.query(models.Candle).filter(
-        models.Candle.ticker.in_(db_tickers),
-        models.Candle.timeframe == interval,
-        models.Candle.is_completed == True,
-        models.Candle.timestamp > _epoch_to_ist_dt(since)
-    ).order_by(models.Candle.timestamp.asc()).limit(5000).all()
-    return [{"time": _ts_to_epoch(r.timestamp), "open": _safe_float(r.open), "high": _safe_float(r.high), "low": _safe_float(r.low), "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in records]
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    if _chart_service is None:
+        return []
+    
+    result = _chart_service.get_chart(clean, interval, start=since, limit=5000)
+    if isinstance(result, dict) and "candles" in result:
+        return result["candles"]
+    elif isinstance(result, list):
+        return result
+    return []
 
 
 @app.post("/api/holidays/refresh")
@@ -3121,6 +4202,13 @@ def refresh_holidays(db: Session = Depends(get_db), current_user: models.User = 
                     NSE_HOLIDAYS.clear()
                     NSE_HOLIDAYS.update(new_holidays)
                 candle_aggregator.set_holidays(NSE_HOLIDAYS)
+                # Decision 4: nse_calendar (used by execution_engine/trade_service/
+                # price_provider/retention_service for real trading decisions) had
+                # its own, never-populated holiday set — verified by grep, nothing
+                # called load_holidays() anywhere. NSE_HOLIDAYS is now the single
+                # source feeding both consumers, closing that desync.
+                nse_calendar.load_holidays(NSE_HOLIDAYS)
+                candle_aggregator.set_special_sessions(nse_calendar.special_sessions_as_bounds())
             return {"ok": True, "holidays_added": holidays_added, "total": len(NSE_HOLIDAYS)}
         return {"ok": False, "error": f"NSE API returned {resp.status_code}"}
     except Exception as e:
@@ -3161,20 +4249,20 @@ def backfill_symbol(ticker: str, db: Session = Depends(get_db), current_user: mo
     return {"ok": True, "ticker": clean, "message": "Backfill started in background"}
 
 
-@app.post("/api/validate-candles/{ticker}")
-def validate_candles(ticker: str, timeframe: str = Query("1D"), db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    """Validate all candles for a ticker against yfinance for reconciliation."""
+@app.post("/api/validate-intraday_candles_5min/{ticker}")
+def validate_intraday_candles_5min(ticker: str, timeframe: str = Query("1D"), db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    """Validate all intraday_candles_5min for a ticker against yfinance for reconciliation."""
     from aggregator import fix_ohlc, validate_ohlc
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     from models import Candle
 
-    candles = db.query(Candle).filter(
+    intraday_candles_5min = db.query(Candle).filter(
         Candle.ticker == clean,
         Candle.timeframe == timeframe,
         Candle.is_completed == True,
     ).order_by(Candle.timestamp.asc()).limit(1000).all()
 
-    if not candles:
+    if not intraday_candles_5min:
         return {"ok": True, "ticker": clean, "checked": 0, "mismatches": [], "message": "No data to validate"}
 
     # Fetch yfinance data for comparison
@@ -3186,7 +4274,7 @@ def validate_candles(ticker: str, timeframe: str = Query("1D"), db: Session = De
 
     mismatches = []
     invalid_ohlc = 0
-    for c in candles:
+    for c in intraday_candles_5min:
         valid, err = validate_ohlc(c.open, c.high, c.low, c.close)
         if not valid:
             invalid_ohlc += 1
@@ -3200,7 +4288,7 @@ def validate_candles(ticker: str, timeframe: str = Query("1D"), db: Session = De
         "ok": True,
         "ticker": clean,
         "timeframe": timeframe,
-        "checked": len(candles),
+        "checked": len(intraday_candles_5min),
         "invalid_ohlc": invalid_ohlc,
         "mismatches": mismatches[:50],
     }
@@ -3353,81 +4441,200 @@ def _compute_rsi(closes, period=14):
     return round(rsi, 1)
 
 @app.get("/api/screener")
-async def get_screener(db: Session = Depends(get_db)):
-    """Return live screener data with real prices, changes, volume, RSI, volume ratio, and PE."""
+async def get_screener(search: Optional[str] = None, db: Session = Depends(get_db)):
+    """Return screener data. Works both during market hours and after close.
+
+    Priority for price data:
+      1. AngelOne WS live ticks  (during market hours)
+      2. yfinance batch fetch    (market hours fallback)
+      3. StockData last close    (after market / weekend / no live data)
+
+    Ticker universe: ALL stocks in stock_metadata (not just premium).
+    If MOVER_TICKERS is empty (no premium flag set), fall back to all stocks.
+    """
     try:
-        stocks = MOVER_TICKERS[:200]
-        prices = await fetch_batch_live_data(stocks)
-        from models import Candle
+        # ── 1. Build ticker universe ────────────────────────────────────────
+        # Use MOVER_TICKERS if populated, otherwise load ALL tickers from DB
+        if search:
+            search_clean = search.strip().upper()
+            from sqlalchemy import or_
+            rows = db.query(models.StockMetadata.ticker).filter(
+                or_(
+                    models.StockMetadata.ticker.ilike(f"%{search_clean}%"),
+                    models.StockMetadata.name.ilike(f"%{search_clean}%")
+                )
+            ).limit(100).all()
+            stocks = [r[0] for r in rows]
+        elif MOVER_TICKERS:
+            stocks = MOVER_TICKERS[:200]
+        else:
+            try:
+                from sqlalchemy import text as _sa_txt
+                # Query stocks that actually have candles data in our DB first
+                rows = db.execute(_sa_txt(
+                    "SELECT ticker FROM stock_metadata "
+                    "WHERE ticker IN (SELECT DISTINCT ticker FROM candles WHERE timeframe = '1D') "
+                    "ORDER BY ticker LIMIT 200"
+                )).fetchall()
+                stocks = [r[0] for r in rows]
+                
+                # Fallback to general stock_metadata if candles table has too few tickers
+                if len(stocks) < 20:
+                    rows_fallback = db.execute(_sa_txt("SELECT ticker FROM stock_metadata ORDER BY ticker LIMIT 200")).fetchall()
+                    stocks = list(set(stocks + [r[0] for r in rows_fallback]))
+            except Exception:
+                stocks = []
+
+        if not stocks or len(stocks) < 10:
+            fallback = ['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN',
+                        'BHARTIARTL','ITC','WIPRO','LT','HINDUNILVR','MARUTI',
+                        'DRREDDY','HCLTECH','AXISBANK','BAJFINANCE','KOTAKBANK',
+                        'TITAN','ASIANPAINT','NTPC','SUNPHARMA','ULTRACEMCO',
+                        'ONGC','POWERGRID','M&M','TATAMOTORS','TATASTEEL','JSWSTEEL',
+                        'ADANIPORTS','GRASIM']
+            for fb in fallback:
+                if fb not in stocks:
+                    stocks.append(fb)
+
+        # ── 2. Serve cached data if fresh (< 5 min) and NOT performing a search ──
+        if not search:
+            now_ts = time.time()
+            with _screener_cache_lock:
+                cached = _screener_cache.get("data")
+                cached_ts = _screener_cache.get("ts", 0.0)
+            if cached and (now_ts - cached_ts) < 300:
+                return cached
+
+        # ── 3. Fetch live prices (pass market_open=True so yfinance tries) ──
+        market_open = is_market_open_now()
+        prices = await fetch_batch_live_data(stocks, market_open=market_open)
+
+        # ── 4. Fetch historical data from DB for RSI + avg volume ────────────
         from datetime import timedelta
-        today = datetime.now(IST).date()
-        avg_vol_cache = {}
-        rsi_cache = {}
+
+        avg_vol_cache: dict = {}   # ticker → (avg_volume, closes_list)
+        last_candle_cache: dict = {}  # ticker → last candles(1D) row (fallback price)
 
         def _fetch_screener_db_data():
-            cutoff = datetime.now(IST) - timedelta(days=60)
-            all_candles = db.query(Candle).filter(
-                Candle.ticker.in_(stocks),
-                Candle.timeframe == "1D",
-                Candle.timestamp >= cutoff,
-                Candle.is_completed == True
-            ).order_by(Candle.timestamp.desc()).all()
-            
-            grouped = {}
-            for c in all_candles:
-                if c.ticker not in grouped:
-                    grouped[c.ticker] = []
-                if len(grouped[c.ticker]) < 21:
-                    grouped[c.ticker].append(c)
-                    
+            # 4a. Daily historical data for RSI + volume ratio — from candles(1D)
+            cutoff = datetime.now(IST).date() - timedelta(days=60)
+            cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day)
+            all_historical = db.query(models.Candle).filter(
+                models.Candle.ticker.in_(stocks),
+                models.Candle.timeframe == '1D',
+                models.Candle.timestamp >= cutoff_dt,
+            ).order_by(models.Candle.timestamp.desc()).all()
+
+            grouped: dict = {}
+            for row in all_historical:
+                if row.ticker not in grouped:
+                    grouped[row.ticker] = []
+                if len(grouped[row.ticker]) < 21:
+                    grouped[row.ticker].append(row)
+
             for t, c_list in grouped.items():
                 c_list.reverse()
-                closes = [c.close for c in c_list if c.close > 0]
+                closes = [c.close for c in c_list if c.close and c.close > 0]
                 volumes = [c.volume for c in c_list if c.volume and c.volume > 0]
-                avg_v = None
-                if len(volumes) >= 5:
-                    avg_v = sum(volumes[:-1]) / (len(volumes) - 1)
+                avg_v = sum(volumes[:-1]) / (len(volumes) - 1) if len(volumes) >= 5 else None
                 avg_vol_cache[t] = (avg_v, closes)
+
+            # 4b. Last candle for any ticker with no live price
+            tickers_missing = [t for t in stocks if not prices.get(t, {}).get("current_price")]
+            if tickers_missing:
+                for t in tickers_missing:
+                    if t in grouped and len(grouped[t]) > 0:
+                        last_candle_cache[t] = grouped[t][-1]  # most recent after reverse()
+
 
         await asyncio.to_thread(_fetch_screener_db_data)
 
+        # ── 5. Build result rows ─────────────────────────────────────────────
         result = []
         for ticker in stocks:
             p = prices.get(ticker, {})
             cp = _safe_float(p.get("current_price") or p.get("current"))
+
+            # Fallback: use last historical close from candles(1D)
+            using_historical = False
             if cp == 0:
-                continue
+                sd = last_candle_cache.get(ticker)
+                if sd and sd.close and sd.close > 0:
+                    cp = float(sd.close)
+                    using_historical = True
+                    # Reconstruct change from open/prev_close in candle row
+                    prev_c = float(sd.close)   # candles has no adj_close; use close
+                    open_p = float(sd.open or sd.close)
+                    # Use prior day close if available from candles
+                    _, closes_hist = avg_vol_cache.get(ticker, (None, []))
+                    if len(closes_hist) >= 2:
+                        prev_c = closes_hist[-2]
+                    p = {
+                        "current_price": cp,
+                        "prev_close": prev_c,
+                        "open": open_p,
+                        "volume": _safe_int(sd.volume),
+                    }
+                else:
+                    continue  # truly no data at all
+
             prev_close = _safe_float(p.get("prev_close"))
-            open_p = _safe_float(p.get("open"))
-            change = cp - (prev_close if prev_close else open_p if open_p else cp)
-            change_pct = (change / prev_close * 100) if prev_close and prev_close != 0 else 0
-            vol = _safe_int(p.get("volume"))
-            meta = STOCK_META.get(ticker, {})
-            name = meta.get("name", ticker)
-            logo = _safe_logo(meta.get("logo", ""))
+            open_p     = _safe_float(p.get("open"))
+            change     = round(cp - (prev_close if prev_close else open_p if open_p else cp), 2)
+            change_pct = round((change / prev_close * 100), 2) if prev_close and prev_close != 0 else 0.0
+            vol        = _safe_int(p.get("volume"))
+
+            meta   = STOCK_META.get(ticker, {})
+            name   = meta.get("name", ticker)
+            logo   = _safe_logo(meta.get("logo", ""))
             sector = _SECTOR_MAP.get(ticker, "Unknown")
 
             avg_v, closes = avg_vol_cache.get(ticker, (None, []))
-            avg_vol = avg_v if avg_v is not None else vol
-            
-            vol_ratio = round(vol / avg_vol, 2) if avg_vol > 0 else 1.0
+            avg_vol = avg_v if avg_v is not None else (vol if vol > 0 else 0)
+
+            vol_ratio = round(vol / avg_vol, 2) if avg_vol > 0 and vol > 0 else 1.0
             rsi = _compute_rsi(closes) if len(closes) >= 15 else None
 
             result.append({
-                "ticker": ticker, "name": name, "logo": logo, "sector": sector,
-                "price": round(cp, 2), "change": round(change, 2),
-                "change_pct": round(change_pct, 2),
-                "volume": vol, "avg_volume": round(avg_vol, 1),
-                "vol_ratio": vol_ratio, "rsi": rsi
+                "ticker":      ticker,
+                "name":        name,
+                "logo":        logo,
+                "sector":      sector,
+                "price":       round(cp, 2),
+                "change":      change,
+                "change_pct":  change_pct,
+                "volume":      vol,
+                "avg_volume":  round(avg_vol, 1) if avg_vol else 0,
+                "vol_ratio":   vol_ratio,
+                "rsi":         rsi,
+                "source":      "historical" if using_historical else p.get("source", "live"),
             })
+
+        # Sort by absolute % change descending
         result.sort(key=lambda x: abs(x["change_pct"]), reverse=True)
+
+        print(f"[Screener] Returning {len(result)} stocks "
+              f"({sum(1 for r in result if r['source']=='historical')} from StockData fallback)")
+
         with _screener_cache_lock:
             _screener_cache["data"] = result
-            _screener_cache["ts"] = time.time()
+            _screener_cache["ts"]   = time.time()
         return result
+
     except Exception as e:
-        print(f"[Screener] Error: {e}")
-        return []
+        import traceback
+        err_str = f"[Screener] Error: {e}\n{traceback.format_exc()}"
+        print(err_str)
+        try:
+            with open("screener_error.log", "w") as f:
+                f.write(err_str)
+        except Exception:
+            pass
+        # Return stale cache rather than empty on error
+        with _screener_cache_lock:
+            stale = _screener_cache.get("data")
+        return stale or []
+
 
 
 @app.get("/api/time")
@@ -3444,8 +4651,6 @@ from fastapi.staticfiles import StaticFiles
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
-
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 def _startup_backfill(tickers: list, now: datetime):
     """Background pre-warm yfinance cache for tickers (intraday not persisted to DB).
@@ -3490,9 +4695,9 @@ def _on_angel_tick(ticker: str, data: dict):
                 "_source": "angel_ws",
                 "_ts": time.time(),
             }
-            if tick_open: _angel_tick_buffer[ticker]["open"] = tick_open
-            if tick_high: _angel_tick_buffer[ticker]["high"] = tick_high
-            if tick_low:  _angel_tick_buffer[ticker]["low"]  = tick_low
+            if tick_open is not None and tick_open > 0: _angel_tick_buffer[ticker]["open"] = tick_open
+            if tick_high is not None and tick_high > 0: _angel_tick_buffer[ticker]["high"] = tick_high
+            if tick_low is not None and tick_low > 0:  _angel_tick_buffer[ticker]["low"]  = tick_low
 
         # ── Feed tick into aggregator for candle formation ──────────────
         # Pass the broker timestamp (if available) for stale-tick detection
@@ -3509,7 +4714,7 @@ def _on_angel_tick(ticker: str, data: dict):
 
 async def _broadcast_angel_ticks():
     """Fast loop: flushes AngelOne WS tick buffer to dashboard clients every ~200ms.
-    Uses a low-latency adaptive sleep: 50ms when ticks flow, 1s when idle.
+    Uses a low-latency adaptive sleep: 200ms when ticks flow, 1s when idle.
     Instantly wakes when new ticks arrive (next loop iteration)."""
     while True:
         try:
@@ -3524,9 +4729,9 @@ async def _broadcast_angel_ticks():
                     "data": batch,
                     "ts": datetime.now(IST).isoformat()
                 })
-                await asyncio.sleep(0.05)  # 50ms while ticks flow
+                await asyncio.sleep(0.1)  # 100ms while ticks flow (was 200ms)
             else:
-                await asyncio.sleep(0.5)   # 500ms when idle (fast wake)
+                await asyncio.sleep(1.0)   # 1s when idle (was 500ms)
         except Exception as e:
             print(f"[AngelTick] Broadcast error: {e}")
             await asyncio.sleep(1.0)
@@ -3535,7 +4740,6 @@ async def _broadcast_angel_ticks():
 async def startup():
     """Load NSE holidays + start dashboard broadcast loops + subscribe AngelOne WS."""
     global viewed_ticker_mgr
-    viewed_ticker_mgr = ViewedTickerManager(angelone_service)
     viewed_ticker_mgr = ViewedTickerManager(angelone_service, max_subscriptions=2000)
     threading.Thread(target=viewed_ticker_mgr._process_pending, daemon=True).start()
 
@@ -3666,6 +4870,27 @@ async def startup():
     finally:
         if db_migrate2: db_migrate2.close()
 
+    # ── Migration v007: performance indexes ──
+    try:
+        from database import SessionLocal as SessIdx
+        sess_idx = SessIdx()
+        index_sql = [
+            "CREATE INDEX IF NOT EXISTS ix_candle_ticker_tf_ts ON candles (ticker, timeframe, timestamp DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_currentdaycandle_ticker_date ON current_day_candle (ticker, trading_date DESC)",
+            "CREATE INDEX IF NOT EXISTS ix_metadata_is_premium ON stock_metadata (is_premium) WHERE is_premium = TRUE",
+            "CREATE INDEX IF NOT EXISTS ix_stock_data_ticker_date_desc ON stock_data (ticker, date DESC)",
+        ]
+        for stmt in index_sql:
+            try:
+                sess_idx.execute(sa_text(stmt))
+            except Exception as idx_e:
+                print(f"[Startup] Index error: {idx_e}")
+        sess_idx.commit()
+        sess_idx.close()
+        print("[Startup] Performance indexes created/verified (v007)")
+    except Exception as e:
+        print(f"[Startup] Migration v007 error: {e}")
+
     # ── Refresh MOVER_TICKERS from DB (premium stocks + indices) ──
     try:
         from database import SessionLocal as Sess2
@@ -3691,7 +4916,7 @@ async def startup():
     # hardcoded tokens returns None from get_token(), making every historical
     # fallback silently skip them → "No chart data" for those stocks.
     try:
-        loaded = angelone_service.load_instruments()
+        loaded = await asyncio.to_thread(angelone_service.load_instruments)
         if loaded:
             print(f"[Startup] AngelOne instruments loaded — token lookup enabled for all NSE stocks (incl. SME)")
         else:
@@ -3726,22 +4951,75 @@ async def startup():
             NSE_HOLIDAYS.update(new_set)
         # Share holidays with the aggregator
         candle_aggregator.set_holidays(NSE_HOLIDAYS)
+        # Decision 4: nse_calendar is the calendar consulted by execution_engine,
+        # trade_service, price_provider, and retention_service for real trading
+        # decisions (order execution, AMO queueing) — it was never fed holidays
+        # (verified: no load_holidays() call existed anywhere in the app), so on
+        # an actual market holiday those consumers would have seen the market as
+        # open. NSE_HOLIDAYS is now the single source for both it and the
+        # aggregator. Also forward any special/shortened sessions registered on
+        # nse_calendar so the aggregator honors them instead of silently
+        # rejecting every tick outside the standard 09:15-15:30 window.
+        nse_calendar.load_holidays(NSE_HOLIDAYS)
+        candle_aggregator.set_special_sessions(nse_calendar.special_sessions_as_bounds())
         print(f"[Startup] Loaded {len(NSE_HOLIDAYS)} NSE holidays")
+
+        # CAL-01: if table is empty (fresh install or never refreshed),
+        # fetch the authoritative list from NSE so the calendar is never
+        # blank.  Runs synchronously — startup completes before requests
+        # are served, so a brief blocking fetch is acceptable here.
+        if len(NSE_HOLIDAYS) < 10:
+            print("[Startup] Holidays table has < 10 entries — auto-fetching from NSE...")
+            try:
+                import requests as _req
+                _resp = _req.get(
+                    "https://www.nseindia.com/api/holiday-master?type=trading",
+                    timeout=10,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                if _resp.status_code == 200:
+                    _data = _resp.json()
+                    _added = 0
+                    for _entry in _data.get("FO", []):
+                        _d_str = _entry.get("tradingDate")
+                        if _d_str:
+                            try:
+                                _d = datetime.strptime(_d_str, "%d-%b-%Y").date()
+                            except ValueError:
+                                _d = datetime.strptime(_d_str, "%Y-%m-%d").date()
+                            _exists = db.query(models.Holiday).filter(
+                                models.Holiday.date == _d
+                            ).first()
+                            if not _exists:
+                                db.add(models.Holiday(
+                                    date=_d,
+                                    description=_entry.get("description", "NSE Holiday"),
+                                ))
+                                _added += 1
+                    if _added:
+                        db.commit()
+                        _new_h = {h[0] for h in db.query(models.Holiday.date).all()}
+                        with _holidays_lock:
+                            NSE_HOLIDAYS.clear()
+                            NSE_HOLIDAYS.update(_new_h)
+                        candle_aggregator.set_holidays(NSE_HOLIDAYS)
+                        nse_calendar.load_holidays(NSE_HOLIDAYS)
+                        candle_aggregator.set_special_sessions(nse_calendar.special_sessions_as_bounds())
+                    print(f"[Startup] Auto-seeded {_added} holidays ({len(NSE_HOLIDAYS)} total)")
+                else:
+                    print(f"[Startup] NSE holiday fetch returned HTTP {_resp.status_code}")
+            except Exception as _e:
+                print(f"[Startup] Holiday auto-fetch failed (non-fatal): {_e}")
+
         db.close()
     except Exception as e:
         print(f"[Startup] Could not load holidays: {e}")
 
-    # ── Crash recovery: reload last known candle state from DB ──────────
-    db = None
-    try:
-        from database import SessionLocal
-        db = SessionLocal()
-        candle_aggregator.recover_from_db(db)
-        print(f"[Startup] Aggregator crash recovery complete")
-    except Exception as e:
-        print(f"[Startup] Aggregator recovery error: {e}")
-    finally:
-        if db: db.close()
+    # ── Crash recovery: lazy (per-ticker, on first view) ───────────────
+    # RecoveryService handles REST-based recovery on demand.
+    # No bulk recovery at startup — recovers only viewed tickers.
+    init_recovery_service()
+    print(f"[Startup] Lazy recovery ready (recovers tickers on first view)")
 
     # ── Backfill: fetch recent intraday data for active tickers on startup ──
     db = None
@@ -3783,6 +5061,22 @@ async def startup():
     except Exception as e:
         print(f"[Startup] Failure cache pre-population error: {e}")
 
+    # Pre-populate all-stocks cache so first request doesn't hit DB
+    try:
+        from database import SessionLocal as _CacheSession
+        _cache_db = _CacheSession()
+        stocks = _cache_db.query(models.StockMetadata).all()
+        _all_stocks_cache = [
+            {"ticker": s.ticker, "name": s.name, "logo": _safe_logo(s.logo),
+             "exchange": s.exchange, "basePrice": s.base_price}
+            for s in stocks
+        ]
+        _all_stocks_cache_ts = time.time()
+        _cache_db.close()
+        print(f"[Startup] Pre-populated all-stocks cache with {len(_all_stocks_cache)} stocks")
+    except Exception as e:
+        print(f"[Startup] Could not pre-populate all-stocks cache: {e}")
+
     # Wire AngelOne real-time ticks to dashboard broadcast
     angelone_service.on_tick_callback = _on_angel_tick
 
@@ -3799,28 +5093,54 @@ async def startup():
         # Run login in thread to avoid blocking the event loop (1-3s HTTP call)
         login_ok = await asyncio.to_thread(angelone_service.login)
         if login_ok:
-            # Subscribe ALL tickers to AngelOne WS for candle building
-            all_ws = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS + ALL_WS_TICKERS))
-            angelone_service.subscribe_tickers(all_ws)
-            print(f"[Startup] Subscribed {len(all_ws)} tickers to AngelOne WS")
+            # Subscribe only the essential tickers at startup (indices + dashboard + movers).
+            # ALL_WS_TICKERS (~3000+) is intentionally excluded: sending thousands of tokens
+            # in one burst causes AngelOne to drop/reject the connection, which triggers the
+            # reconnect storm. All other tickers are subscribed on-demand via
+            # ViewedTickerManager when a user opens their page; gap recovery then backfills
+            # any missed candles so the chart is complete.
+            startup_ws = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS))
+            # RT-08: subscribe_tickers() blocks for up to 15s waiting for the
+            # WS handshake -- run off the event loop so startup doesn't stall.
+            await asyncio.to_thread(angelone_service.subscribe_tickers, startup_ws)
+            print(f"[Startup] Subscribed {len(startup_ws)} core tickers to AngelOne WS (on-demand for others)")
 
             # Start the multi-threaded REST poller for active tickers (not all 5575)
-            active_tickers = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS))
+            # Include dashboard, movers, sector indices, and the top 2 stocks of each sector
+            sector_rep = []
+            for s, tkrs in _sector_tickers.items():
+                sector_rep.extend(tkrs[:2])
+            
+            active_tickers = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS + SECTOR_TICKERS + sector_rep))
             poller = PricePoller(angelone_service, tickers=active_tickers)
             poller_task = asyncio.create_task(poller.start())
             poller_task.add_done_callback(_log_task_error)
             print(f"[Startup] Multi-threaded price poller started for {len(active_tickers)} tickers")
+
+            # ── Start CriticalIndexPoller ─ dedicated thread for NIFTY/SENSEX/BANKNIFTY/FINNIFTY ──
+            # This thread polls only the 6 major indices every 1 second so they are NEVER stale.
+            # It runs independently of the bulk PricePoller to avoid any delay from stock polling.
+            critical_poller = CriticalIndexPoller(
+                angelone_service,
+                on_price_update=_on_angel_tick  # same callback → broadcast to dashboard WS
+            )
+            critical_poller.start()
+            app.state.critical_poller = critical_poller
+            print(f"[Startup] CriticalIndexPoller started — major indices now update every 1s")
 
             # Expose poller for stats endpoint
             app.state.price_poller = poller
     except Exception as e:
         print(f"[Startup] AngelOne WS/poller setup failed: {e}")
 
-    # Start WS reconnection loop (checks every 2s, doesn't block startup)
+    # Start WS reconnection loop (checks every 15s normally, 30s when reconnecting)
     async def _ws_watchdog():
         _ws_was_ok = True
         while True:
-            await asyncio.sleep(2)
+            # When a reconnect is already in-flight, back off so we don't
+            # hammer AngelOne with overlapping connection attempts.
+            reconnecting = getattr(angelone_service, '_ws_reconnecting', False)
+            await asyncio.sleep(30 if reconnecting else 15)
             try:
                 ws_ok = angelone_service.ensure_ws_connected()
                 if ws_ok and not _ws_was_ok:
@@ -3835,17 +5155,17 @@ async def startup():
                         print(f"[Watchdog] Replaying {len(stale_list)} stale tickers (since last WS tick)...")
                         def _replay_worker(tkr):
                             try:
-                                last_ts = _last_angel_ts_per_ticker.get(tkr, 0)
-                                yf_c = _fetch_yfinance_intraday(None, tkr, "1m", use_bg_semaphore=True)
-                                if yf_c:
-                                    missed = [c for c in yf_c if c.timestamp.timestamp() > last_ts]
-                                    for c in missed:
-                                        candle_aggregator.replay_1m_candle(
-                                            tkr, c.timestamp,
-                                            c.open, c.high, c.low, c.close, c.volume
-                                        )
-                                    if missed:
-                                        _monitoring["ws_replay_count"] += 1
+                                if _recovery_service is not None:
+                                    # RT-05: a reconnect-detected stale ticker is a
+                                    # fresh signal that recovery is needed right now,
+                                    # even if this ticker was already recovered
+                                    # earlier in the process lifetime (e.g. a second
+                                    # WS drop the same day) -- re-arm it first so
+                                    # recover_ticker()'s own one-shot guard doesn't
+                                    # silently no-op.
+                                    _recovery_service.mark_needs_recovery(tkr)
+                                    _recovery_service.recover_ticker(tkr, candle_aggregator)
+                                    _monitoring["ws_replay_count"] += 1
                             except Exception:
                                 pass
                         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
@@ -3879,6 +5199,17 @@ async def startup():
     bc1.add_done_callback(_log_task_error)
     bc2.add_done_callback(_log_task_error)
 
+    # Movers snapshot: build once now, then keep it warm on a timer so
+    # /api/market-movers never has to scan the whole tick cache in the request path.
+    async def _movers_refresh_loop():
+        await refresh_movers_snapshot()
+        print("[Movers] Initial snapshot built")
+        while True:
+            await asyncio.sleep(_MOVERS_REFRESH_SEC)
+            await refresh_movers_snapshot()
+    movers_task = asyncio.create_task(_movers_refresh_loop())
+    movers_task.add_done_callback(_log_task_error)
+
     # Periodic aggregator health monitor (every 5 min)
     async def _aggregator_health_monitor():
         while True:
@@ -3911,6 +5242,19 @@ async def startup():
             await asyncio.sleep(2.0)
     bridge = asyncio.create_task(_poller_aggregator_bridge())
     bridge.add_done_callback(_log_task_error)
+
+    # Periodic subscription consistency audit (every 60s) - ADR-011
+    # Repairs missing subscriptions immediately (subscribe-only).
+    async def _subscription_audit():
+        while True:
+            await asyncio.sleep(60)
+            try:
+                if viewed_ticker_mgr:
+                    viewed_ticker_mgr.audit_and_repair()
+            except Exception as e:
+                print(f"[SubscriptionAudit] Error: {e}")
+    audit_task = asyncio.create_task(_subscription_audit())
+    audit_task.add_done_callback(_log_task_error)
 
     # Periodic sync of yfinance inactive symbols to DB (every 5 minutes)
     async def _yfinance_inactive_sync():
@@ -3977,19 +5321,14 @@ async def startup():
             db_sync = SessionLocal()
             try:
                 rows = db_sync.execute(
-                    sa_text("""
-                        SELECT DISTINCT ticker FROM stock_metadata
-                        WHERE ticker IN (
-                            SELECT DISTINCT ticker FROM candles WHERE timeframe='1D'
-                        )
-                    """)
+                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D'")
                 ).fetchall()
                 watched = {r[0] for r in rows}
                 today = sync_now.date()
 
-                # Check which watched tickers already have today's candle
+                # Check which watched tickers already have today's candle in candles(1D)
                 existing = db_sync.execute(
-                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D' AND DATE(timestamp)=:d"),
+                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D' AND timestamp::date=:d"),
                     {"d": today}
                 ).fetchall()
                 have_today = {r[0] for r in existing}
@@ -4046,9 +5385,7 @@ async def startup():
                                             local_db.execute(sa_text("""
                                                 INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close, volume, is_completed, data_source, is_backfilled)
                                                 VALUES (:t, '1D', :ts, :o, :h, :l, :c, :v, true, 'YFINANCE', false)
-                                                ON CONFLICT (ticker, timeframe, timestamp) DO UPDATE SET
-                                                    high=GREATEST(candles.high, EXCLUDED.high), low=LEAST(candles.low, EXCLUDED.low),
-                                                    open=EXCLUDED.open, close=EXCLUDED.close, volume=EXCLUDED.volume
+                                                ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
                                             """), {"t": tkr, "ts": ts_naive, "o": o_val, "h": h_val, "l": l_val, "c": c_val, "v": v_val})
                                             local_db.commit()
                                             o += 1
@@ -4065,7 +5402,7 @@ async def startup():
                     finally:
                         local_db.close()
                     return o, f
-                ok, fail = await loop.run_in_executor(None, _run_sync, missing, today)
+                ok, fail = await loop.run_in_executor(_bg_executor, _run_sync, missing, today)
                 print(f"[DailySync] Done: {ok} added, {fail} skipped/failed")
             except Exception as e:
                 print(f"[DailySync] Error: {e}")
@@ -4073,6 +5410,77 @@ async def startup():
                 db_sync.close()
     daily_sync = asyncio.create_task(_daily_market_close_sync())
     daily_sync.add_done_callback(_log_task_error)
+
+    # ── Rolling retention compression: compress aged 1D → 1W and 1W → 1M ──────
+    # Runs nightly at 19:30 IST (after daily sync at 18:30).
+    # As 1D data crosses the 2yr boundary it gets aggregated into 1W candles.
+    # As 1W data crosses the 5yr boundary it gets aggregated into 1M candles.
+    # ON CONFLICT DO NOTHING makes this idempotent — safe to run repeatedly.
+    async def _retention_compress():
+        from sqlalchemy import text as _sa_text
+        from datetime import date as _date
+        while True:
+            _now = database.get_ist_now()
+            _next = _now.replace(hour=19, minute=30, second=0, microsecond=0)
+            if _now >= _next:
+                _next += timedelta(days=1)
+            await asyncio.sleep((_next - _now).total_seconds())
+
+            _today = database.get_ist_now().date()
+            _2yr = _date(_today.year - 2, _today.month, _today.day)
+            _5yr = _date(_today.year - 5, _today.month, _today.day)
+            try:
+                _db = SessionLocal()
+                try:
+                    # 1D → 1W: candles older than 2yr
+                    r1w = _db.execute(_sa_text("""
+                        INSERT INTO candles
+                            (ticker, timeframe, timestamp, open, high, low, close, volume,
+                             is_completed, is_backfilled, data_source)
+                        SELECT ticker, '1W',
+                               DATE_TRUNC('week', timestamp)::timestamp,
+                               (ARRAY_AGG(open  ORDER BY timestamp ASC))[1],
+                               MAX(high), MIN(low),
+                               (ARRAY_AGG(close ORDER BY timestamp DESC))[1],
+                               SUM(volume)::bigint,
+                               TRUE, TRUE, 'SD_AGG'
+                        FROM candles
+                        WHERE timeframe = '1D'
+                          AND timestamp::date < :cutoff2
+                          AND open > 0
+                        GROUP BY ticker, DATE_TRUNC('week', timestamp)
+                        ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+                    """), {"cutoff2": _2yr})
+                    _db.commit()
+                    # 1W → 1M: weekly candles older than 5yr
+                    r1m = _db.execute(_sa_text("""
+                        INSERT INTO candles
+                            (ticker, timeframe, timestamp, open, high, low, close, volume,
+                             is_completed, is_backfilled, data_source)
+                        SELECT ticker, '1M',
+                               DATE_TRUNC('month', timestamp)::timestamp,
+                               (ARRAY_AGG(open  ORDER BY timestamp ASC))[1],
+                               MAX(high), MIN(low),
+                               (ARRAY_AGG(close ORDER BY timestamp DESC))[1],
+                               SUM(volume)::bigint,
+                               TRUE, TRUE, 'SD_AGG'
+                        FROM candles
+                        WHERE timeframe = '1W'
+                          AND timestamp::date < :cutoff5
+                          AND open > 0
+                        GROUP BY ticker, DATE_TRUNC('month', timestamp)
+                        ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+                    """), {"cutoff5": _5yr})
+                    _db.commit()
+                    if r1w.rowcount or r1m.rowcount:
+                        print(f"[RetentionCompress] +{r1w.rowcount} 1W, +{r1m.rowcount} 1M candles compressed")
+                finally:
+                    _db.close()
+            except Exception as _e:
+                print(f"[RetentionCompress] Error: {_e}")
+
+    retention_task = asyncio.create_task(_retention_compress())
+    retention_task.add_done_callback(_log_task_error)
 
     # ── Pre-warm yfinance cache at market open ──
     async def _yfinance_prewarm():
@@ -4124,7 +5532,7 @@ async def startup():
             db_pw = SessionLocal()
             try:
                 rows = db_pw.execute(
-                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D'")
+                    sa_text("SELECT DISTINCT ticker FROM stock_metadata WHERE is_active = TRUE AND exchange = 'NSE'")
                 ).fetchall()
                 watched_tickers = sorted({r[0] for r in rows})
 
@@ -4139,7 +5547,7 @@ async def startup():
                 def _run_prewarm():
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                         pool.map(_pw_worker, watched_tickers)
-                await loop.run_in_executor(None, _run_prewarm)
+                await loop.run_in_executor(_bg_executor, _run_prewarm)
                 last_run_date = sync_now.date()
                 print(f"[PreWarm] Completed for {len(watched_tickers)} tickers")
             except Exception as e:
@@ -4161,143 +5569,78 @@ async def startup():
                 cutoff = database.get_ist_now() - timedelta(days=45)
                 rows = db_fc.execute(sa_text(
                     "SELECT DISTINCT ticker FROM stock_metadata WHERE ticker NOT IN "
-                    "(SELECT DISTINCT ticker FROM candles WHERE timestamp >= :cutoff)",
+                    "(SELECT DISTINCT ticker FROM candles WHERE timeframe='5m' AND timestamp >= :cutoff)",
                 ), {"cutoff": cutoff}).fetchall()
                 stale = [r[0] for r in rows]
                 for t in stale:
                     yf_downloader._mark_failed(t, YFErrorClass.NOT_FOUND)
                 if stale:
-                    print(f"[Startup] Pre-marked {len(stale)} tickers as inactive (no candles in 45 days)")
+                    print(f"[Startup] Pre-marked {len(stale)} tickers as inactive (no unified 5m candles in 45 days)")
             finally:
                 db_fc.close()
         except Exception as e:
             print(f"[Startup] Failure cache pre-population error: {e}")
     asyncio.create_task(_prepopulate_failure_cache())
 
-    # ── Nightly retention cleanup (02:00 IST) ──
-    async def _nightly_retention_cleanup():
-        """At ~02:00 IST, delete expired candles:
-        - Intraday (1m/5m/15m/30m/1h) older than 30 days
-        - Daily (1D) older than 365 days
-        - Weekly/Monthly (1W/1M) older than 730 days (2 years)
-        """
+    # ── Retention scheduler: run-once per NSE trading day, market-closed only ──
+    def _retention_due_today() -> bool:
+        """True when today is an NSE trading day AND today's retention cycle
+        has not yet completed (fewer than all configured policy tiers —
+        currently 6, spanning both the intraday and daily+ chains —
+        terminal today). Tier count is read from the live policy below,
+        not hardcoded, so this stays correct as rules are added/removed."""
         from database import SessionLocal
         from sqlalchemy import text as sa_text
+        from exchange_calendar import nse_calendar
+        from config import load_retention_policy
+
+        today_ist = get_ist_now().date()       # NSE calendar decision
+        if not nse_calendar.is_trading_day(today_ist):  # weekends/holidays -> never due
+            return False
+
+        today_local = database.get_ist_now().date()     # same basis as job start_time (engine uses datetime.now())
+        tiers = [f"{r['source_tf']}_to_{r['target_tf']}"
+                 for r in load_retention_policy()["retention_policy"]]
+        with SessionLocal() as db:
+            done = db.execute(
+                sa_text("SELECT COUNT(*) FROM retention_jobs "
+                        "WHERE start_time::date = :d AND status IN ('COMPLETED','SKIPPED') "
+                        "AND job_type IN :tiers"),
+                {"d": today_local, "tiers": tuple(tiers)},
+            ).scalar()
+        return (done or 0) < len(tiers)
+
+    async def _retention_scheduler():
+        """Poll loop: run the cycle ONCE per trading day, only while NSE closed.
+        Idempotent across restarts (job journal in retention_jobs)."""
         while True:
-            now_ist = database.get_ist_now()
-            next_run = now_ist.replace(hour=2, minute=0, second=0, microsecond=0)
-            if now_ist >= next_run:
-                next_run += timedelta(days=1)
-            delay = (next_run - now_ist).total_seconds()
-            print(f"[Retention] Next cleanup at {next_run.time()} IST (in {delay/3600:.1f}h)")
-            await asyncio.sleep(delay)
-
-            print(f"[Retention] Starting nightly retention cleanup...")
-            db_ret = SessionLocal()
+            await asyncio.sleep(60)          # cheap poll (one lightweight query when idle)
             try:
-                before = time.time()
+                from aggregator import is_market_hour
                 now = database.get_ist_now()
-
-                # Identify premium tickers via the is_premium flag in stock_metadata
-                premium_rows = db_ret.execute(
-                    sa_text("SELECT ticker FROM stock_metadata WHERE is_premium = TRUE")
-                ).fetchall()
-                premium = {r[0] for r in premium_rows}
-
-                # Standard retention for premium tickers
-                premium_retention = {
-                    "1m": 7, "5m": 30, "15m": 60,
-                    "30m": 90, "1h": 90, "1D": 365,
-                    "1W": 730, "1M": 730,
-                }
-                # Standard tickers (non-premium): intraday kept 1 day only
-                standard_intraday_retention = {
-                    "1m": 1, "5m": 1, "15m": 1,
-                    "30m": 1, "1h": 1,
-                }
-
-                # Delete for premium tickers (tiered)
-                for tf, days in premium_retention.items():
-                    cutoff = now - timedelta(days=days)
-                    premium_list = list(premium)
-                    if not premium_list:
-                        continue
-                    # Chunk to avoid SQL param limits
-                    for i in range(0, len(premium_list), 500):
-                        chunk = premium_list[i:i+500]
-                        placeholders = ",".join(f":p{j}" for j in range(len(chunk)))
-                        params = {f"p{j}": t for j, t in enumerate(chunk)}
-                        params["cut"] = cutoff
-                        params["tf"] = tf
-                        result = db_ret.execute(
-                            sa_text(
-                                f"DELETE FROM candles WHERE timeframe=:tf AND ticker IN ({placeholders}) AND timestamp < :cut"
-                            ),
-                            params
-                        )
-                        if result.rowcount:
-                            print(f"[Retention] Deleted {result.rowcount} {tf} candles (premium, older than {days}d)")
-
-                # Delete for standard tickers (non-premium) — intraday (1m-1h) kept 1 day
-                standard_list = db_ret.execute(
-                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe IN ('1m','5m','15m','30m','1h')")
-                ).fetchall()
-                standard = {r[0] for r in standard_list} - premium
-                for tf, days in standard_intraday_retention.items():
-                    cutoff = now - timedelta(days=days)
-                    std_list = list(standard)
-                    if not std_list:
-                        continue
-                    for i in range(0, len(std_list), 500):
-                        chunk = std_list[i:i+500]
-                        placeholders = ",".join(f":p{j}" for j in range(len(chunk)))
-                        params = {f"p{j}": t for j, t in enumerate(chunk)}
-                        params["cut"] = cutoff
-                        params["tf"] = tf
-                        result = db_ret.execute(
-                            sa_text(
-                                f"DELETE FROM candles WHERE timeframe=:tf AND ticker IN ({placeholders}) AND timestamp < :cut"
-                            ),
-                            params
-                        )
-                        if result.rowcount:
-                            print(f"[Retention] Deleted {result.rowcount} {tf} candles (standard, older than {days}d)")
-
-                # Daily+ for non-premium tickers (premium already handled above with their own retention)
-                for tf, days in [("1D", 365), ("1W", 730), ("1M", 730)]:
-                    cutoff = now - timedelta(days=days)
-                    if premium:
-                        ph = ",".join(f":pp{j}" for j in range(len(premium)))
-                        p_params = {f"pp{j}": t for j, t in enumerate(premium)}
-                        p_params["tf"] = tf
-                        p_params["cut"] = cutoff
-                        result = db_ret.execute(
-                            sa_text(f"DELETE FROM candles WHERE timeframe=:tf AND timestamp < :cut AND ticker NOT IN ({ph})"),
-                            p_params
-                        )
-                    else:
-                        result = db_ret.execute(
-                            sa_text("DELETE FROM candles WHERE timeframe=:tf AND timestamp < :cut"),
-                            {"tf": tf, "cut": cutoff}
-                        )
-                    if result.rowcount:
-                        print(f"[Retention] Deleted {result.rowcount} {tf} candles (non-premium, older than {days}d)")
-
-                db_ret.commit()
-                elapsed = time.time() - before
-                print(f"[Retention] Cleanup complete in {elapsed:.1f}s (premium={len(premium)}, standard={len(standard)})")
+                if is_market_hour(now):
+                    continue                 # never run while market open / close grace
+                if not _retention_due_today():
+                    continue                 # not a trading day, or already done today
+                if _retention_service is not None:
+                    print(f"[Retention] Due at {now.isoformat()} IST -> running cycle")
+                    # DB-04: run_cycle() does real DB work (downsampling
+                    # across every configured tier) and was blocking the
+                    # shared event loop for its full duration -- market is
+                    # closed while this runs, but users still browse
+                    # portfolio/history pages then, and they'd all stall.
+                    await asyncio.to_thread(_retention_service.run_cycle)
+                else:
+                    print("[Retention] Service not initialized, skipping")
             except Exception as e:
-                db_ret.rollback()
-                print(f"[Retention] Error: {e}")
-            finally:
-                db_ret.close()
+                print(f"[Retention] Scheduler check failed: {e}")
 
-    retention_task = asyncio.create_task(_nightly_retention_cleanup())
+    retention_task = asyncio.create_task(_retention_scheduler())
     retention_task.add_done_callback(_log_task_error)
 
-    # ── Daily pre-fill: ensure ALL 5,543 tickers have daily candles ──
+    # ── Daily pre-fill: ensure ALL 5,543 tickers have daily intraday_candles_5min ──
     async def _daily_prefill_all():
-        """Run once on startup, then daily at 19:00 IST. Fetches 1D candles
+        """Run once on startup, then daily at 19:00 IST. Fetches 1D intraday_candles_5min
         from yfinance for all tickers that don't have today's candle yet.
         This eliminates yfinance dependency for daily history charts."""
         from database import SessionLocal
@@ -4321,7 +5664,7 @@ async def startup():
                 await asyncio.sleep(3600)
                 continue
 
-            print(f"[DailyPreFill] Checking all tickers for daily candles...")
+            print(f"[DailyPreFill] Checking all tickers for daily intraday_candles_5min...")
             db_df = SessionLocal()
             try:
                 before = time.time()
@@ -4329,12 +5672,18 @@ async def startup():
                 all_tickers = [r[0] for r in db_df.execute(
                     sa_text("SELECT ticker FROM stock_metadata")
                 ).fetchall()]
-                # Get tickers that already have today's candle
-                have_today = {r[0] for r in db_df.execute(
-                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D' AND DATE(timestamp)=:d"),
-                    {"d": today}
+                # Find tickers that have enough recent 1D coverage (>=15 distinct dates in last 30 days).
+                # Anything below that threshold is treated as missing and gets a 3-month backfill.
+                threshold_30 = today - timedelta(days=30)
+                have_recent = {r[0] for r in db_df.execute(
+                    sa_text("""
+                        SELECT ticker FROM candles
+                        WHERE timeframe='1D' AND timestamp::date >= :t
+                        GROUP BY ticker HAVING COUNT(DISTINCT timestamp::date) >= 15
+                    """),
+                    {"t": threshold_30}
                 ).fetchall()}
-                missing = [t for t in all_tickers if t not in have_today]
+                missing = [t for t in all_tickers if t not in have_recent]
                 if not missing:
                     print(f"[DailyPreFill] All {len(all_tickers)} tickers already have today's daily candle")
                     last_run_date = today
@@ -4356,53 +5705,59 @@ async def startup():
                 if skipped_failed:
                     print(f"[DailyPreFill] Skipped {skipped_failed} known-failed tickers, fetching {len(missing)}...")
                 else:
-                    print(f"[DailyPreFill] Fetching daily candles for {len(missing)} tickers...")
+                    print(f"[DailyPreFill] Fetching daily intraday_candles_5min for {len(missing)} tickers...")
                 if not missing:
                     last_run_date = today
                     continue
                 import concurrent.futures, yfinance as yf, pandas as pd
                 def _fetch_daily(tkr):
-                    local_db = SessionLocal()
+                    # Fetch 3 months so any gap (e.g. backend offline for days/weeks)
+                    # is backfilled in one shot, not just today's candle.
+                    local_db = None
                     try:
-                        df = _yf_bg_download(_yfinance_ticker(tkr), period="5d", interval="1d", timeout=8)
-                        if df is not None and not df.empty:
-                            if isinstance(df.columns, pd.MultiIndex):
-                                df.columns = df.columns.get_level_values(0)
-                            last_row = df.iloc[-1]
-                            ts = last_row.name
-                            if hasattr(ts, 'to_pydatetime'):
-                                ts = ts.to_pydatetime()
-                            ts_naive = ts.replace(tzinfo=None) if ts.tzinfo else ts
-                            if ts_naive.date() == today:
-                                o = float(last_row.get('Open', 0) or 0)
-                                h = float(last_row.get('High', 0) or 0)
-                                l = float(last_row.get('Low', 0) or 0)
-                                c = float(last_row.get('Close', 0) or 0)
-                                v = int(last_row.get('Volume', 0) or 0)
-                                if o > 0 and h > 0 and l > 0 and c > 0:
-                                    h = max(o, h, c); l = min(o, l, c)
-                                    local_db.execute(sa_text("""
-                                        INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close, volume, is_completed, data_source, is_backfilled)
-                                        VALUES (:t, '1D', :ts, :o, :h, :l, :c, :v, true, 'YFINANCE', false)
-                                        ON CONFLICT (ticker, timeframe, timestamp) DO UPDATE SET
-                                            high=GREATEST(candles.high, EXCLUDED.high), low=LEAST(candles.low, EXCLUDED.low),
-                                            open=EXCLUDED.open, close=EXCLUDED.close, volume=EXCLUDED.volume
-                                    """), {"t": tkr, "ts": ts_naive, "o": o, "h": h, "l": l, "c": c, "v": v})
-                                    local_db.commit()
-                                    return True
-                        else:
+                        df = _yf_bg_download(_yfinance_ticker(tkr), period="1y", interval="1d", timeout=12)
+                        if df is None or df.empty:
                             _mark_yfinance_failed(tkr)
+                            return False
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = df.columns.get_level_values(0)
+                        rows = []
+                        for idx, row in df.iterrows():
+                            ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
+                            ts_naive = ts.replace(tzinfo=None) if (hasattr(ts, 'tzinfo') and ts.tzinfo) else ts
+                            o = float(row.get('Open', 0) or 0)
+                            h = float(row.get('High', 0) or 0)
+                            l = float(row.get('Low', 0) or 0)
+                            c = float(row.get('Close', 0) or 0)
+                            v = int(row.get('Volume', 0) or 0)
+                            if o > 0 and h > 0 and l > 0 and c > 0:
+                                rows.append({"t": tkr, "ts": ts_naive,
+                                             "o": o, "h": max(o, h, c), "l": min(o, l, c),
+                                             "c": c, "v": v})
+                        if rows:
+                            local_db = SessionLocal()
+                            for p in rows:
+                                local_db.execute(sa_text("""
+                                    INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close, volume, is_completed, data_source, is_backfilled)
+                                    VALUES (:t, '1D', :ts, :o, :h, :l, :c, :v, true, 'YFINANCE', false)
+                                    ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+                                """), p)
+                            local_db.commit()
+                            return True
+                        return False
                     except Exception:
                         _mark_yfinance_failed(tkr)
-                        local_db.rollback()
+                        if local_db is not None:
+                            local_db.rollback()
+                        return False
                     finally:
-                        local_db.close()
-                    return False
+                        if local_db is not None:
+                            local_db.close()
                 loop = asyncio.get_event_loop()
                 def _run_prefill():
                     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
                         return list(pool.map(_fetch_daily, missing))
-                results = await loop.run_in_executor(None, _run_prefill)
+                results = await loop.run_in_executor(_bg_executor, _run_prefill)
                 ok = sum(1 for r in results if r)
                 fail = len(missing) - ok
                 last_run_date = today
@@ -4415,13 +5770,213 @@ async def startup():
     prefill_task = asyncio.create_task(_daily_prefill_all())
     prefill_task.add_done_callback(_log_task_error)
 
+    # ── 5m intraday prefill: fill missed candles once per market close ──────────
+    # Runs at/after 16:30 IST each NSE trading day (1 hour after close grace).
+    # Idempotent via ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING so a
+    # restart mid-run safely re-runs without duplicating any existing row.
+    async def _intraday_prefill_scheduler():
+        while True:
+            await asyncio.sleep(60)
+            try:
+                from aggregator import is_market_hour
+                from intraday_prefill import prefill_due_today, run_prefill_session
+                now = database.get_ist_now()
+                if is_market_hour(now):
+                    continue  # never run during market hours or close grace
+                # Wait until 16:30 IST before the first daily run
+                if now.hour < 16 or (now.hour == 16 and now.minute < 30):
+                    continue
+                if not prefill_due_today():
+                    continue
+                session_date = now.date()
+                print(f"[IntradayPrefill] Due at {now.isoformat()} -> running {session_date}")
+                await asyncio.to_thread(run_prefill_session, session_date)
+            except Exception as _e:
+                print(f"[IntradayPrefill] Scheduler error: {_e}")
+
+    intraday_prefill_task = asyncio.create_task(_intraday_prefill_scheduler())
+    intraday_prefill_task.add_done_callback(_log_task_error)
+
+    # ── Startup recovery pipeline (runs once per boot, fully in background) ──────
+    # Step 1 — Phantom cleanup:   delete any 15:30 IST candles (snap bug artifact)
+    # Step 2 — Historical backfill: fill the Jul 6 → (today-7d) gap if >100 tickers
+    #           are still missing 5m data (skips automatically once complete)
+    # Step 3 — 7-day catchup:     fill any trading days missed during recent downtime
+    async def _intraday_prefill_catchup():
+        await asyncio.sleep(30)   # let AngelOne login and instrument load settle
+        try:
+            from intraday_prefill import (
+                cleanup_phantom_slot_candles,
+                needs_historical_backfill,
+                run_historical_backfill,
+                catchup_missed_sessions,
+            )
+            # Step 1: fast — delete phantom 15:30 candles (idempotent)
+            await asyncio.to_thread(cleanup_phantom_slot_candles)
+            # Step 2: heavy — fill the Jul-Aug ingestion gap (skips if already done)
+            if await asyncio.to_thread(needs_historical_backfill):
+                await asyncio.to_thread(run_historical_backfill)
+            # Step 3: fill any days missed during recent downtime (last 7 trading days)
+            await asyncio.to_thread(catchup_missed_sessions, 7)
+        except Exception as _e:
+            print(f"[IntradayPrefill] Startup recovery error: {_e}")
+
+    catchup_task = asyncio.create_task(_intraday_prefill_catchup())
+    catchup_task.add_done_callback(_log_task_error)
+
+    # ── 1W / 1M tier backfill ─────────────────────────────────────────────────
+    # Runs 90s after boot (after the 5m prefill starts).
+    # Phase 1 (SQL aggregation from stock_data) is fast and always runs.
+    # Phase 2 (AngelOne fetch for tickers still missing coverage) only runs
+    # when needs_1w_backfill() / needs_1m_backfill() return True — skips
+    # automatically once coverage is complete.
+    async def _weekly_monthly_backfill():
+        await asyncio.sleep(90)
+        try:
+            from backfill_weekly_monthly import run_startup_backfill
+            await asyncio.to_thread(run_startup_backfill)
+        except Exception as _e:
+            print(f"[1W/1M Backfill] Startup error: {_e}")
+
+    wm_task = asyncio.create_task(_weekly_monthly_backfill())
+    wm_task.add_done_callback(_log_task_error)
+
+    # ── TP/SL Execution Engine ─────────────────────────────────────────────────
+    # Polls all PENDING orders every 2 s during market hours (09:15–15:30 IST)
+    # and closes positions when TP or SL trigger prices are hit.
+    # Must start AFTER all other startup tasks so AngelOne WS + aggregator are live.
+    from execution_engine import start_execution_engine
+    engine_task = asyncio.create_task(start_execution_engine())
+    engine_task.add_done_callback(_log_task_error)
+    print("[Startup] TP/SL Execution Engine wired — monitoring PENDING orders every 2s")
+
 @app.on_event("shutdown")
 async def shutdown_flush():
-    """Flush all forming candles to DB on graceful shutdown."""
-    print("[Shutdown] Flushing forming candles...")
+    """Flush all forming intraday_candles_5min to DB on graceful shutdown."""
+    print("[Shutdown] Flushing forming intraday_candles_5min...")
     candle_aggregator.flush_all_forming()
     print("[Shutdown] Flush complete")
 
 import atexit
 atexit.register(lambda: candle_aggregator.flush_all_forming())
+
+# ==================== NEW SERVICE INITIALIZATION ====================
+
+_recovery_service = None
+_retention_service = None
+_chart_service = None
+_validation_service = None
+
+
+def init_recovery_service():
+    global _recovery_service, _chart_service, _retention_service, _validation_service
+    from database import SessionLocal
+    _recovery_service = RecoveryService(
+        db_session_factory=SessionLocal,
+        historical_service=historical_service,
+        yf_downloader=yf_downloader,
+    )
+    _retention_service = RetentionService(
+        db_session_factory=SessionLocal,
+        resample_svc=CandleResampler,
+    )
+    _chart_service = ChartService(
+        live_mgr=live_timeframe_manager,
+        cache=candle_cache,
+        resample_svc=CandleResampler,
+        db_session_factory=SessionLocal,
+        candle_aggregator=candle_aggregator,
+    )
+    _validation_service = ValidationService(
+        db_session_factory=SessionLocal,
+        resample_svc=CandleResampler,
+        exchange_calendar=nse_calendar,
+    )
+    candle_cache._live_mgr = live_timeframe_manager
+
+    monitor.register("aggregator", lambda: monitor.get_aggregator_health(candle_aggregator))
+    monitor.register("recovery", lambda: monitor.get_recovery_health(_recovery_service))
+    monitor.register("timeframe_manager", lambda: monitor.get_timeframe_manager_health(live_timeframe_manager))
+    monitor.register("cache", lambda: monitor.get_cache_health(candle_cache))
+    monitor.register("retention", lambda: monitor.get_retention_health(_retention_service))
+    monitor.register("event_bus", lambda: monitor.get_event_bus_health())
+    monitor.register("exchange_calendar", lambda: {"status": "healthy"})
+
+
+# ==================== MONITORING ENDPOINT ====================
+
+@app.get("/api/monitoring/candle-system")
+def get_candle_system_health():
+    """Health status for all candle system components."""
+    return monitor.get_health()
+
+
+# ==================== VALIDATION ENDPOINT ====================
+
+@app.get("/api/validation/run")
+def run_validation(ticker: str = Query(...), timeframe: str = Query("5m"),
+                   db: Session = Depends(get_db)):
+    """Run all validation checks for a given ticker/timeframe."""
+    from models import Candle
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    intraday_candles_5min = db.query(Candle).filter(
+        Candle.ticker == clean,
+        Candle.timeframe == timeframe,
+        Candle.is_completed == True,
+    ).order_by(Candle.timestamp.desc()).limit(500).all()
+    candle_dicts = [{
+        "timestamp": c.timestamp,
+        "open": c.open, "high": c.high, "low": c.low,
+        "close": c.close, "volume": c.volume,
+        "time": int(c.timestamp.timestamp()) if hasattr(c.timestamp, 'timestamp') else 0,
+    } for c in intraday_candles_5min]
+    results = _validation_service.run_all(candle_dicts, timeframe)
+    return _validation_service.generate_report(results)
+
+
+# ==================== WIRE EVENT BUS + RECOVERY HOOK ====================
+
+@app.on_event("startup")
+async def wire_event_bus_and_recovery():
+    loop = asyncio.get_event_loop()
+    event_bus.set_loop(loop)
+
+    if viewed_ticker_mgr is not None:
+        original_view = viewed_ticker_mgr.view
+
+        def patched_view(ticker: str):
+            original_view(ticker)
+            if _recovery_service is not None and _recovery_service.needs_recovery(ticker):
+                threading.Thread(
+                    target=_recovery_service.recover_ticker,
+                    args=(ticker, candle_aggregator),
+                    daemon=True,
+                ).start()
+
+        viewed_ticker_mgr.view = patched_view
+        print("[Recovery] Patched ViewedTickerManager.view with lazy recovery")
+
+# ── Warm the market-news cache at startup so dashboard loads news instantly ──
+@app.on_event("startup")
+async def warmup_market_news_cache():
+    async def _warm():
+        await asyncio.sleep(4)  # let other startup tasks settle first
+        try:
+            await news_search("market", limit=20)
+            print("[Startup] Market news cache warmed.")
+        except Exception as e:
+            print(f"[Startup] News warmup failed (non-fatal): {e}")
+    asyncio.create_task(_warm())
+
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.endswith((".html", ".js", ".css")) or path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 

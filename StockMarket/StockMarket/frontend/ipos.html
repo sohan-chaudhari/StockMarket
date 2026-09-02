@@ -1,11 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IPOs - LEVERAGE</title>
-    <link rel="stylesheet" href="index.css">
-    <link rel="stylesheet" href="nav.css">
+    <link rel="stylesheet" href="tokens.css?v=2">
+    <link rel="stylesheet" href="index.css?v=82">
+    <link rel="stylesheet" href="nav.css?v=12">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { background: #0A0A0B; color: #fff; font-family: 'Inter', sans-serif; }
@@ -17,7 +19,7 @@
         .ipo-table td { padding: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.04); color: #fff; }
         .ipo-table tr:hover { background: rgba(255,255,255,0.02); }
         .badge { font-size: 0.7rem; padding: 2px 10px; border-radius: 12px; font-weight: 600; }
-        .badge-open { background: rgba(0,230,118,0.15); color: #00E676; }
+        .badge-open { background: rgba(8, 153, 129,0.15); color: #089981; }
         .badge-closed { background: rgba(255,255,255,0.08); color: #a1a1aa; }
         .badge-upcoming { background: rgba(74,144,226,0.15); color: #4A90E2; }
         .tabs { display: flex; gap: 4px; background: #1a1a1a; border-radius: 8px; padding: 3px; margin-bottom: 1.25rem; }
@@ -25,6 +27,7 @@
         .tab.active { background: #333; color: #fff; }
     </style>
     <script src="page-cache.js"></script>
+    <script src="ws.js"></script>
 </head>
 <body>
     <div id="nav-root"></div>
@@ -43,15 +46,15 @@
     </main>
     <script>
         var allIPOs = [
-            {company:'NextGen AI Solutions',band:'₹245-258',open:'15 Jul 2025',close:'17 Jul 2025',lot:'60',status:'open'},
-            {company:'Green Energy Corp',band:'₹180-190',open:'22 Jul 2025',close:'24 Jul 2025',lot:'75',status:'open'},
-            {company:'Fintech India Ltd',band:'₹320-340',open:'10 Aug 2025',close:'12 Aug 2025',lot:'45',status:'upcoming'},
-            {company:'HealthTech Innovations',band:'₹280-295',open:'18 Aug 2025',close:'20 Aug 2025',lot:'50',status:'upcoming'},
-            {company:'Space Ventures Ltd',band:'₹450-475',open:'5 Sep 2025',close:'8 Sep 2025',lot:'30',status:'upcoming'},
-            {company:'CyberSec Solutions',band:'₹195-205',open:'28 Jun 2025',close:'30 Jun 2025',lot:'70',status:'listed'},
-            {company:'EV Motors India',band:'₹150-160',open:'15 Jun 2025',close:'17 Jun 2025',lot:'90',status:'listed'},
-            {company:'CloudNine Tech',band:'₹400-425',open:'5 Jun 2025',close:'7 Jun 2025',lot:'35',status:'listed'},
-            {company:'BioPharma Research',band:'₹210-225',open:'20 May 2025',close:'22 May 2025',lot:'65',status:'listed'},
+            {company:'NextGen AI Solutions',band:'&#8377;245-258',open:'15 Jul 2025',close:'17 Jul 2025',lot:'60',status:'open'},
+            {company:'Green Energy Corp',band:'&#8377;180-190',open:'22 Jul 2025',close:'24 Jul 2025',lot:'75',status:'open'},
+            {company:'Fintech India Ltd',band:'&#8377;320-340',open:'10 Aug 2025',close:'12 Aug 2025',lot:'45',status:'upcoming'},
+            {company:'HealthTech Innovations',band:'&#8377;280-295',open:'18 Aug 2025',close:'20 Aug 2025',lot:'50',status:'upcoming'},
+            {company:'Space Ventures Ltd',band:'&#8377;450-475',open:'5 Sep 2025',close:'8 Sep 2025',lot:'30',status:'upcoming'},
+            {company:'CyberSec Solutions',band:'&#8377;195-205',open:'28 Jun 2025',close:'30 Jun 2025',lot:'70',status:'listed'},
+            {company:'EV Motors India',band:'&#8377;150-160',open:'15 Jun 2025',close:'17 Jun 2025',lot:'90',status:'listed'},
+            {company:'CloudNine Tech',band:'&#8377;400-425',open:'5 Jun 2025',close:'7 Jun 2025',lot:'35',status:'listed'},
+            {company:'BioPharma Research',band:'&#8377;210-225',open:'20 May 2025',close:'22 May 2025',lot:'65',status:'listed'},
         ];
 
         function switchTab(tab,btn){
@@ -71,6 +74,7 @@
         }
         switchTab('open',document.querySelector('.tab'));
     </script>
-    <script src="nav.js?v=3"></script>
+    <script src="nav.js?v=8"></script>
 </body>
 </html>
+

@@ -5,7 +5,6 @@ Centralized service for fetching live stock prices from Angel One API
 
 import os
 import asyncio
-import pandas as pd
 import requests
 from typing import Optional, Dict
 from SmartApi import SmartConnect
@@ -61,7 +60,12 @@ class AngelOneService:
         self.totp_token = os.getenv("ANGELONE_TOTP_TOKEN")
         
         self.smart_api = None
+        # instruments_df permanently set to None — instrument data is now held in
+        # _sym_idx and _instruments_rows (plain dicts, no pandas DataFrame).
         self.instruments_df = None
+        self._instruments_loaded = False        # True once load_instruments() succeeds
+        self._sym_idx: dict = {}               # (symbol.upper(), exch_seg) -> list[row_dict]
+        self._instruments_rows: list = []      # minimal rows for partial/name match
         self.is_logged_in = False
         self._initialized = True
         
@@ -70,13 +74,29 @@ class AngelOneService:
         self.feed_token = None
         self.latest_ticks = {} # Format: { "TOKEN_ID": {"ltp": 1500.25, "time": timestamp, "ticker": "RELIANCE.NS"} }
         self.latest_ticks_lock = threading.Lock()
+        # Decision 3 (duplicate-tick volume dedup): Angel One's Mode-2/Quote WS
+        # payload carries no unique per-trade ID (only token, ltp, exchange
+        # timestamp, day OHLC, day volume, last-traded quantity) — confirmed by
+        # reading _handle_ws_tick's field extraction below. In the absence of a
+        # true trade ID, a composite (exchange_ts, price, qty) fingerprint is
+        # the safest available dedup key: a WS reconnect replaying the last
+        # trade reproduces this exact tuple, while two genuinely different
+        # trades sharing it in the same second is comparatively rare and, if it
+        # ever happens, drops one real trade's volume rather than double
+        # counting a replayed one — a smaller error than the current gap.
+        # Lives on the singleton instance (not the socket), so it survives a
+        # WS reconnect intact instead of resetting exactly when it's needed.
+        self._last_tick_fingerprint: Dict[str, tuple] = {}
+        self._duplicate_tick_count = 0
         self.subscribed_tokens = set()
+        self.token_lock = threading.Lock()
         self.subscription_times = {} # ticker -> timestamp
         self.token_to_ticker_map = {}
         self.token_to_exch_type_map = {} # token -> exchangeType
         self.on_tick_callback = None # Callback for unthrottled broadcasts
         self.ws_thread = None
         self._last_login_time = 0.0
+        self._ws_reconnecting = False  # guard: prevents overlapping reconnect calls
         
         print("[AngelOne] Service initialized (credentials loaded from environment)")
     
@@ -139,7 +159,18 @@ class AngelOneService:
             feed_token = self.feed_token
             api_key = self.api_key
             jwt_token = self.jwt_token
-            
+
+            # RT-07: close the previous socket before replacing self.sws --
+            # otherwise a re-login (e.g. the 12h proactive refresh) leaves the
+            # old socket's connect() loop running forever in its own thread
+            # with nothing referencing it, doubling live connection usage.
+            old_sws = getattr(self, 'sws', None)
+            if old_sws:
+                try:
+                    old_sws.close()
+                except Exception:
+                    pass
+
             # SmartWebSocketV2(jwtToken, api_key, client_code, feed_token)
             self.sws = SmartWebSocketV2(jwt_token, api_key, client_code, feed_token)
             self.sws.ROOT_URI = 'wss://smartapisocket.angelone.in/smart-stream'
@@ -153,20 +184,26 @@ class AngelOneService:
             def on_open(wsapp):
                 print("[AngelOne WS] Connection Opened Successfully")
                 self.ws_connected = True
-                # Resubscribe to existing tokens if reconnecting
-                if self.subscribed_tokens:
-                    self._send_subscription(list(self.subscribed_tokens))
-                    
+                self._ws_reconnecting = False  # allow future reconnects
+                self.last_ws_connect_time = time.time()
+                # Resubscribe to existing tokens if reconnecting (snapshot under token_lock)
+                with self.token_lock:
+                    tokens_snapshot = list(self.subscribed_tokens)
+                if tokens_snapshot:
+                    self._send_subscription(tokens_snapshot)
+
             def on_error(wsapp, error):
                 print(f"[!] [AngelOne WS] Error: {error}")
                 self.ws_connected = False
+                self._ws_reconnecting = False  # allow watchdog to retry
                 # WS auth failure does NOT affect REST API — separate concern
                 if "401" in str(error) or "Unauthorized" in str(error):
                     print("[AngelOne WS] Unauthorized — will retry WS connection later")
-                
+
             def on_close(wsapp, close_status_code, close_msg):
                 print(f"[AngelOne WS] Connection Closed: {close_status_code} - {close_msg}")
                 self.ws_connected = False
+                self._ws_reconnecting = False  # allow watchdog to retry
                 
             self.sws.on_open = on_open
             self.sws.on_data = on_data
@@ -192,12 +229,14 @@ class AngelOneService:
         Proactively re-logs in if session is older than 12 hours to avoid token expiry."""
         if not self.is_logged_in or not self.smart_api or not self.jwt_token:
             print("[AngelOne] Session invalid or tokens missing. Attempting re-login...")
-            return self.login()
+            # RT-08: login() does blocking network I/O -- run off the event
+            # loop so it doesn't stall every concurrent request/broadcast.
+            return await asyncio.to_thread(self.login)
 
         # Proactive re-login: AngelOne tokens typically expire after 24h
         if time.time() - self._last_login_time > 43200:  # 12 hours
             print("[AngelOne] Session approaching expiry, re-logging...")
-            return self.login()
+            return await asyncio.to_thread(self.login)
 
         # WS reconnection is handled separately by ensure_ws_connected
         return True
@@ -208,7 +247,9 @@ class AngelOneService:
             return False
 
         # --- Silent Drop Detection ---
-        if self.ws_connected and self.subscribed_tokens:
+        with self.token_lock:
+            has_sub_tokens = bool(self.subscribed_tokens)
+        if self.ws_connected and has_sub_tokens:
             import time
             now = time.time()
             last_tick = 0
@@ -217,10 +258,10 @@ class AngelOneService:
                     ts = t_data.get("_ts", 0)
                     if ts > last_tick:
                         last_tick = ts
-            # If we received ticks previously, but none in the last 60s -> assume dead
-            # BUT wait 60s after connecting before deciding it's a silent drop
+            # If we received ticks previously, but none in the last 20s -> assume dead
+            # BUT wait 30s after connecting before deciding it's a silent drop
             connect_age = now - getattr(self, 'last_ws_connect_time', now)
-            if last_tick > 0 and (now - last_tick) > 60 and connect_age > 60:
+            if last_tick > 0 and (now - last_tick) > 20 and connect_age > 30:
                 print(f"[AngelOne WS] Silent drop detected (no ticks for {int(now - last_tick)}s). Reconnecting...")
                 self.ws_connected = False
                 try:
@@ -232,14 +273,28 @@ class AngelOneService:
 
         if self.ws_connected:
             return True
+        # Guard: if a reconnect attempt is already in-flight, don't spawn another.
+        # on_open/on_close/on_error each clear this flag so the next watchdog tick
+        # can retry after the current attempt settles.
+        if self._ws_reconnecting:
+            return False
         try:
+            self._ws_reconnecting = True
             print("[AngelOne WS] Reconnecting WebSocket...")
             self._init_websocket()
-            # on_open callback will auto-resubscribe once connected
+            # ws_connected stays False until on_open fires; flag cleared there too
             return True
         except Exception as e:
             print(f"[!] [AngelOne WS] Reconnection error: {e}")
+            self._ws_reconnecting = False
             return False
+
+    def get_dedup_stats(self) -> dict:
+        """Observability for Decision 3 — how often the fingerprint guard fires."""
+        return {
+            "duplicate_ticks_rejected": self._duplicate_tick_count,
+            "tickers_tracked": len(self._last_tick_fingerprint),
+        }
 
     def _handle_ws_tick(self, msg):
         """
@@ -286,6 +341,22 @@ class AngelOneService:
                     daily_volume = int(msg.get('volume_trade_for_the_day') or 0)
                     tick_volume = int(msg.get('last_traded_quantity') or 0)
 
+                    # Decision 3: reject an exact replay of the last tick for this
+                    # ticker (same exchange timestamp + price + quantity) before it
+                    # ever reaches the aggregator, so a WS reconnect resubscribe
+                    # snapshot can't double-count that trade's volume. See the
+                    # fingerprint field's docstring in __init__ for why this
+                    # composite key was chosen over a true trade ID.
+                    fingerprint = (exch_ts, price, tick_volume)
+                    is_duplicate = self._last_tick_fingerprint.get(ticker) == fingerprint
+                    self._last_tick_fingerprint[ticker] = fingerprint
+                    if is_duplicate:
+                        self._duplicate_tick_count += 1
+                        with self.latest_ticks_lock:
+                            if ticker in self.latest_ticks:
+                                self.latest_ticks[ticker]["_received_ts"] = time.time()
+                        return
+
                     with self.latest_ticks_lock:
                         self.latest_ticks[ticker] = {
                             "current_price": price,
@@ -298,6 +369,7 @@ class AngelOneService:
                             "time": datetime.now(),
                             "token": token,
                             "_ts": exch_ts,
+                            "_received_ts": time.time(),  # server receive time (for stale detection)
                             "_source": "angel_ws",
                         }
                     
@@ -323,51 +395,55 @@ class AngelOneService:
             print(f"[AngelWS] Tick handler error for token {token}: {e}")
             
     def _send_subscription(self, token_list):
-        """Send correlation payload to WS"""
+        """Send correlation payload to WS. Batches into chunks of 200 tokens to avoid
+        overwhelming AngelOne's socket (oversized payloads cause silent drops / rejections)."""
         if not self.sws: return
-        try:
-            # Mode 3 = Full (Open, High, Low, Close, LTP, Volume)
-            correlation_id = "stream_1"
-            action = 1 # 1 = subscribe
-            mode = 3   # 3 for FULL
-            
-            exch_groups = {}
-            for tk in token_list:
-                exch_type = self.token_to_exch_type_map.get(tk, 1)
-                if exch_type not in exch_groups:
-                    exch_groups[exch_type] = []
-                exch_groups[exch_type].append(tk)
-                
-            token_list_formatted = []
-            for exch_type, tks in exch_groups.items():
-                token_list_formatted.append({"exchangeType": exch_type, "tokens": tks})
-                
-            self.sws.subscribe(correlation_id, mode, token_list_formatted)
-            print(f"[AngelOne WS] Subscribed to {len(token_list)} tokens across {len(exch_groups)} exchanges")
-        except Exception as e:
-            print(f"[!] [AngelOne WS] Subscription Error: {e}")
+        BATCH_SIZE = 200
+        correlation_id = "stream_1"
+        action = 1  # subscribe
+        mode = 2    # Quote mode (Indices do not support mode 3 SnapQuote)
+        total_sent = 0
+        for batch_start in range(0, len(token_list), BATCH_SIZE):
+            batch = token_list[batch_start:batch_start + BATCH_SIZE]
+            try:
+                exch_groups = {}
+                for tk in batch:
+                    exch_type = self.token_to_exch_type_map.get(tk, 1)
+                    exch_groups.setdefault(exch_type, []).append(tk)
+                token_list_formatted = [{"exchangeType": e, "tokens": tks} for e, tks in exch_groups.items()]
+                self.sws.subscribe(correlation_id, mode, token_list_formatted)
+                total_sent += len(batch)
+                if batch_start + BATCH_SIZE < len(token_list):
+                    time.sleep(0.15)  # brief pause between batches
+            except Exception as e:
+                print(f"[!] [AngelOne WS] Subscription Error (batch {batch_start//BATCH_SIZE + 1}): {e}")
+        if total_sent:
+            print(f"[AngelOne WS] Subscribed {total_sent} tokens in {(len(token_list) + BATCH_SIZE - 1) // BATCH_SIZE} batch(es)")
 
     def subscribe_tickers(self, tickers: list):
         """
         Takes a list of string tickers, resolves their tokens, and subscribes.
         Implements the 'Wait-for-Handshake' Pattern (Anti-Race Condition).
+        Uses token_lock to protect self.subscribed_tokens mutations.
         """
         import time
         new_tokens = []
-        for t in tickers:
-            token_info = self.get_token(t)
-            if token_info:
-                exch = token_info.get('exchange', 'NSE')
-                exch_type = 1 if exch == 'NSE' else (3 if exch == 'BSE' else 1)
-                tk = str(token_info['token'])
-                
-                self.token_to_ticker_map[tk] = t
-                self.token_to_exch_type_map[tk] = exch_type
-                
-                if tk not in self.subscribed_tokens:
-                    new_tokens.append(tk)
-                    self.subscribed_tokens.add(tk)
-                    self.subscription_times[t] = time.time()
+        with self.token_lock:
+            for t in tickers:
+                token_info = self.get_token(t)
+                if token_info:
+                    exch = token_info.get('exchange', 'NSE')
+                    exch_type = 1 if exch == 'NSE' else (3 if exch == 'BSE' else 1)
+                    tk = str(token_info['token'])
+                    
+                    self.token_to_ticker_map[tk] = t
+                    self.token_to_exch_type_map[tk] = exch_type
+                    
+                    if tk not in self.subscribed_tokens:
+                        new_tokens.append(tk)
+                        self.subscribed_tokens.add(tk)
+                        self.subscription_times[t] = time.time()
+            all_subscribed = list(self.subscribed_tokens)
                     
         if new_tokens and self.sws:
             # Wait for Handshake Pattern — allow up to 15s for WS to connect
@@ -379,19 +455,22 @@ class AngelOneService:
                 retry_count += 1
             
             if getattr(self, 'ws_connected', False):
-                self._send_subscription(list(self.subscribed_tokens))
+                self._send_subscription(all_subscribed)
             else:
                 print("[!] [AngelOne WS] Handshake timeout. Subscription will occur on_open.")
     
     def unsubscribe_tickers(self, tickers: list):
-        """Unsubscribe tickers from AngelOne WebSocket."""
+        """Unsubscribe tickers from AngelOne WebSocket.
+        Protects token mutations under token_lock without holding lock during broker API calls."""
         tokens_to_remove = []
-        for t in tickers:
-            token_info = self.get_token(t)
-            if token_info:
-                tk = str(token_info['token'])
-                if tk in self.subscribed_tokens:
-                    tokens_to_remove.append(tk)
+        with self.token_lock:
+            for t in tickers:
+                token_info = self.get_token(t)
+                if token_info:
+                    tk = str(token_info['token'])
+                    if tk in self.subscribed_tokens:
+                        tokens_to_remove.append(tk)
+                        self.subscribed_tokens.discard(tk)
 
         if tokens_to_remove and self.sws and getattr(self, 'ws_connected', False):
             exch_groups = {}
@@ -401,8 +480,6 @@ class AngelOneService:
             token_list = [{"exchangeType": et, "tokens": tks} for et, tks in exch_groups.items()]
             try:
                 self.sws.unsubscribe("stream_1", 3, token_list)
-                for tk in tokens_to_remove:
-                    self.subscribed_tokens.discard(tk)
                 print(f"[AngelOne WS] Unsubscribed {len(tokens_to_remove)} tokens")
             except Exception as e:
                 print(f"[!] [AngelOne WS] Unsubscribe error: {e}")
@@ -410,10 +487,36 @@ class AngelOneService:
     def _cache_path(self) -> str:
         return os.path.join(str(backend_dir), INSTRUMENTS_CACHE_FILE)
 
+    def _build_instrument_index(self, instruments_data: list) -> None:
+        """
+        Build two fast lookup structures from the raw instrument JSON.
+        Stores only 4 fields per instrument (token, symbol, name, exch_seg).
+        Does NOT create a pandas DataFrame — the list is discarded after indexing.
+        """
+        sym_idx: dict = {}
+        rows: list = []
+        for item in instruments_data:
+            token = str(item.get("token", "")).strip()
+            symbol = str(item.get("symbol", "")).strip()
+            name = str(item.get("name", "")).strip()
+            exch_seg = str(item.get("exch_seg", "")).strip()
+            if not token or not symbol or not exch_seg:
+                continue
+            row = {"token": token, "symbol": symbol, "name": name, "exch_seg": exch_seg}
+            rows.append(row)
+            # Primary key: exact symbol + exchange (case-normalised for lookup speed)
+            key = (symbol.upper(), exch_seg)
+            sym_idx.setdefault(key, []).append(row)
+        self._sym_idx = sym_idx
+        self._instruments_rows = rows
+        self._instruments_loaded = True
+        # instruments_df intentionally stays None — never populated again
+
     def load_instruments(self) -> bool:
         """
         Load instrument list from local cache or download from Angel One.
         Falls back to hardcoded tokens (~2400 stocks) if download fails.
+        Builds a fast dict index — no pandas DataFrame is created.
         """
         cache_path = self._cache_path()
 
@@ -422,9 +525,10 @@ class AngelOneService:
             try:
                 with open(cache_path, "r", encoding="utf-8") as f:
                     instruments_data = json.load(f)
-                self.instruments_df = pd.DataFrame(instruments_data)
-                nse_count = len(self.instruments_df[self.instruments_df['exch_seg'] == 'NSE'])
-                print(f"[OK] [AngelOne] Loaded {len(self.instruments_df)} instruments from cache ({nse_count} NSE)")
+                self._build_instrument_index(instruments_data)
+                del instruments_data   # release the raw list immediately
+                nse_count = sum(1 for r in self._instruments_rows if r["exch_seg"] == "NSE")
+                print(f"[OK] [AngelOne] Loaded {len(self._instruments_rows)} instruments from cache ({nse_count} NSE)")
                 return True
             except Exception as e:
                 print(f"[!] [AngelOne] Cache load failed: {e}")
@@ -440,9 +544,8 @@ class AngelOneService:
                 raise IOError(f"HTTP {response.status_code}")
 
             instruments_data = response.json()
-            self.instruments_df = pd.DataFrame(instruments_data)
 
-            # Save to local cache
+            # Save to local cache before indexing so we always have the full data on disk
             try:
                 with open(cache_path, "w", encoding="utf-8") as f:
                     json.dump(instruments_data, f)
@@ -450,8 +553,10 @@ class AngelOneService:
             except Exception as ce:
                 print(f"[!] [AngelOne] Could not write cache: {ce}")
 
-            nse_count = len(self.instruments_df[self.instruments_df['exch_seg'] == 'NSE'])
-            print(f"[OK] [AngelOne] Downloaded {len(self.instruments_df)} instruments ({nse_count} NSE)")
+            self._build_instrument_index(instruments_data)
+            del instruments_data   # release the raw list immediately
+            nse_count = sum(1 for r in self._instruments_rows if r["exch_seg"] == "NSE")
+            print(f"[OK] [AngelOne] Downloaded {len(self._instruments_rows)} instruments ({nse_count} NSE)")
             return True
 
         except Exception as e:
@@ -477,8 +582,8 @@ class AngelOneService:
           1. Ticker normalization (fix misspellings, strip suffixes)
           2. Known index tokens (hardcoded)
           3. Hardcoded tokens (~2400 stocks, works without download)
-          4. instruments_df (downloaded + cached instrument list)
-          5. Partial/name match in instruments_df
+          4. _sym_idx exact/EQ lookup (dict, O(1))
+          5. Partial/name match in _instruments_rows (linear scan, rare)
         """
         ticker = self._normalize_ticker(ticker)
         
@@ -503,43 +608,37 @@ class AngelOneService:
             return token_data
         
         # 3. If instruments not loaded, hardcoded is all we have
-        if self.instruments_df is None:
+        if not self._instruments_loaded:
             return None
-        
-        # 4. Search in instruments_df
+
+        # 4. Search in _sym_idx / _instruments_rows (no pandas needed)
         idx_mappings = {"NIFTY": "NIFTY 50", "NIFTY50": "NIFTY 50", "BANKNIFTY": "NIFTY BANK",
                         "SENSEX": "SENSEX", "FINNIFTY": "NIFTY FIN SERVICE"}
         search = idx_mappings.get(ticker, ticker)
-        
-        # Exact symbol match
-        matches = self.instruments_df[
-            (self.instruments_df["symbol"] == search) &
-            (self.instruments_df["exch_seg"] == exchange)
-        ]
-        # Try with -EQ suffix
-        if matches.empty and exchange == "NSE":
-            matches = self.instruments_df[
-                (self.instruments_df["symbol"] == f"{search}-EQ") &
-                (self.instruments_df["exch_seg"] == exchange)
-            ]
-        # Partial match
-        if matches.empty:
-            matches = self.instruments_df[
-                self.instruments_df["symbol"].str.contains(search, case=False, na=False) &
-                (self.instruments_df["exch_seg"] == exchange)
-            ]
-        # Name match
-        if matches.empty:
-            matches = self.instruments_df[
-                self.instruments_df["name"].str.contains(search, case=False, na=False) &
-                (self.instruments_df["exch_seg"] == exchange)
-            ]
-        
-        if matches.empty:
+
+        # 4a. Exact symbol match (O(1) dict lookup)
+        matches = self._sym_idx.get((search.upper(), exchange), [])
+
+        # 4b. Try with -EQ suffix (O(1) dict lookup)
+        if not matches and exchange == "NSE":
+            matches = self._sym_idx.get((f"{search.upper()}-EQ", exchange), [])
+
+        # 4c. Partial symbol match (linear scan — rare fallback path)
+        if not matches:
+            sl = search.lower()
+            matches = [r for r in self._instruments_rows
+                       if sl in r["symbol"].lower() and r["exch_seg"] == exchange]
+
+        # 4d. Name match (linear scan — rarest fallback path)
+        if not matches:
+            matches = [r for r in self._instruments_rows
+                       if sl in r["name"].lower() and r["exch_seg"] == exchange]
+
+        if not matches:
             return None
-        
-        row = matches.iloc[0]
-        return {"token": str(row["token"]), "symbol": row["symbol"],
+
+        row = matches[0]
+        return {"token": row["token"], "symbol": row["symbol"],
                 "name": row["name"], "exchange": row["exch_seg"]}
     
     async def get_live_price(self, ticker: str) -> Optional[Dict]:
@@ -649,8 +748,9 @@ class AngelOneService:
         """
         import time
         # If we already have a live tick, it's ready!
-        if self.latest_ticks.get(ticker):
-            return True
+        with self.latest_ticks_lock:
+            if self.latest_ticks.get(ticker):
+                return True
             
         last_sub_time = self.subscription_times.get(ticker)
         if not last_sub_time:

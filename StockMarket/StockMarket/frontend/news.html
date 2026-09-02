@@ -2,16 +2,17 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>News - LEVERAGE</title>
     <meta name="description" content="Live Indian stock market news with AI-powered sentiment analysis. Stay updated on Nifty, Sensex, and top stocks.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="index.css">
-    <link rel="stylesheet" href="nav.css">
+    <link rel="stylesheet" href="tokens.css?v=2">
+    <link rel="stylesheet" href="index.css?v=82">
+    <link rel="stylesheet" href="nav.css?v=12">
     <style>
-        :root{--text-secondary:#a1a1aa;--accent-blue:#4A90E2;}
         .news-layout{display:grid;grid-template-columns:220px 1fr;gap:1.5rem;}
         .sidebar{display:flex;flex-direction:column;gap:0.25rem;}
         .sidebar-btn{padding:0.6rem 1rem;background:transparent;border:none;color:var(--text-secondary);text-align:left;font-size:0.85rem;font-weight:500;border-radius:8px;cursor:pointer;transition:all 0.15s;font-family:'Inter',sans-serif;}
@@ -21,7 +22,7 @@
         .featured-headline:hover{border-color:rgba(74,144,226,0.4);}
         .featured-headline h2{font-size:1.5rem;font-weight:700;margin-bottom:0.5rem;}
         .featured-headline p{color:var(--text-secondary);font-size:0.9rem;}
-        .featured-badge{display:inline-block;padding:3px 10px;background:rgba(0,230,118,0.15);color:#00E676;border-radius:20px;font-size:0.7rem;font-weight:600;margin-bottom:0.75rem;}
+        .featured-badge{display:inline-block;padding:3px 10px;background:rgba(8, 153, 129,0.15);color:#089981;border-radius:20px;font-size:0.7rem;font-weight:600;margin-bottom:0.75rem;}
         .source-badge{display:inline-block;padding:2px 8px;background:rgba(74,144,226,0.1);color:#4A90E2;border-radius:4px;font-size:0.7rem;font-weight:600;margin-left:6px;}
         .news-list{display:flex;flex-direction:column;gap:0.75rem;}
         .news-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:1.25rem;cursor:pointer;transition:all 0.2s;position:relative;}
@@ -30,8 +31,8 @@
         .news-card .title{font-size:1rem;font-weight:600;color:#fff;margin-bottom:0.35rem;padding-right:1.5rem;}
         .news-card .excerpt{font-size:0.85rem;color:var(--text-secondary);line-height:1.4;}
         .sentiment-tag{padding:2px 8px;border-radius:4px;font-size:0.7rem;font-weight:600;}
-        .sentiment-bullish{background:rgba(0,230,118,0.15);color:#00E676;}
-        .sentiment-bearish{background:rgba(255,0,85,0.15);color:#FF0055;}
+        .sentiment-bullish{background:rgba(8, 153, 129,0.15);color:#089981;}
+        .sentiment-bearish{background:rgba(242, 54, 69,0.15);color:#f23645;}
         .sentiment-neutral{background:rgba(255,255,255,0.1);color:var(--text-secondary);}
         .page-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
         .page-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:2rem;}
@@ -47,35 +48,36 @@
         @media(max-width:768px){.news-layout{grid-template-columns:1fr;}}
     </style>
     <script src="page-cache.js"></script>
+    <script src="ws.js"></script>
 </head>
 <body style="background-color: #0A0A0B;">
     <div id="nav-root"></div>
     <main class="page-content">
         <h1 class="page-title">News</h1>
-        <p class="page-subtitle">Market news with AI-powered sentiment analysis — bookmark what matters</p>
+        <p class="page-subtitle">Market news with AI-powered sentiment analysis &ndash; bookmark what matters</p>
         <div class="search-news">
             <input type="text" id="newsSearch" placeholder="Search by stock ticker or keyword..." oninput="window.newsApp.filterNews(this.value)">
             <input type="text" id="stockFilter" placeholder="Filter by ticker (e.g. RELIANCE)" style="max-width:200px;" oninput="window.newsApp.filterNews(document.getElementById('newsSearch').value)">
         </div>
         <div class="news-layout">
             <aside class="sidebar" id="newsCategories">
-                <button class="sidebar-btn active" id="catBtn-latest" onclick="window.newsApp.switchCategory('latest',this)">📰 Latest</button>
-                <button class="sidebar-btn" id="catBtn-bullish" onclick="window.newsApp.switchCategory('bullish',this)">📈 Bullish</button>
-                <button class="sidebar-btn" id="catBtn-bearish" onclick="window.newsApp.switchCategory('bearish',this)">📉 Bearish</button>
-                <button class="sidebar-btn" id="catBtn-earnings" onclick="window.newsApp.switchCategory('earnings',this)">💰 Earnings</button>
-                <button class="sidebar-btn" id="catBtn-ipo" onclick="window.newsApp.switchCategory('ipo',this)">🏢 IPO</button>
-                <button class="sidebar-btn" id="catBtn-economy" onclick="window.newsApp.switchCategory('economy',this)">📊 Economy</button>
-                <button class="sidebar-btn" id="catBtn-bookmarked" onclick="window.newsApp.showBookmarked(this)" style="margin-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);padding-top:0.75rem;">🔖 Bookmarks <span id="bookmarkCount" style="font-size:0.75rem;color:var(--text-secondary);margin-left:4px;">(0)</span></button>
+                <button class="sidebar-btn active" id="catBtn-latest" onclick="window.newsApp.switchCategory('latest',this)">&#128240; Latest</button>
+                <button class="sidebar-btn" id="catBtn-bullish" onclick="window.newsApp.switchCategory('bullish',this)">&#128200; Bullish</button>
+                <button class="sidebar-btn" id="catBtn-bearish" onclick="window.newsApp.switchCategory('bearish',this)">&#128201; Bearish</button>
+                <button class="sidebar-btn" id="catBtn-earnings" onclick="window.newsApp.switchCategory('earnings',this)">&#128176; Earnings</button>
+                <button class="sidebar-btn" id="catBtn-ipo" onclick="window.newsApp.switchCategory('ipo',this)">&#127970; IPO</button>
+                <button class="sidebar-btn" id="catBtn-economy" onclick="window.newsApp.switchCategory('economy',this)">&#128202; Economy</button>
+                <button class="sidebar-btn" id="catBtn-bookmarked" onclick="window.newsApp.showBookmarked(this)" style="margin-top:0.5rem;border-top:1px solid rgba(255,255,255,0.06);padding-top:0.75rem;">&#128278; Bookmarks <span id="bookmarkCount" style="font-size:0.75rem;color:var(--text-secondary);margin-left:4px;">(0)</span></button>
             </aside>
             <div>
                 <div class="featured-headline" id="featuredHeadline">
-                    <span class="featured-badge">🔴 LIVE</span>
-                    <h2 id="featuredTitle">Loading latest market news…</h2>
-                    <p id="featuredExcerpt">Fetching live data from news sources…</p>
+                    <span class="featured-badge">&#128308; LIVE</span>
+                    <h2 id="featuredTitle">Loading latest market news&hellip;</h2>
+                    <p id="featuredExcerpt">Fetching live data from news sources&hellip;</p>
                 </div>
                 <div id="newsStatus" style="display:none;background:rgba(255,193,7,0.15);border:1px solid rgba(255,193,7,0.3);color:#FFC107;padding:0.5rem 1rem;border-radius:8px;margin-bottom:0.75rem;font-size:0.85rem;text-align:center;"></div>
                 <div class="news-list" id="newsContainer">
-                    <div class="news-loading"><div class="spinner"></div> Loading live news…</div>
+                    <div class="news-loading"><div class="spinner"></div> Loading live news&hellip;</div>
                 </div>
             </div>
         </div>
@@ -83,7 +85,7 @@
 
     <script>
     // =====================================================================
-    //  News Page App — all functions exposed on window.newsApp to avoid
+    //  News Page App &ndash; all functions exposed on window.newsApp to avoid
     //  IIFE scope traps. openPageNewsDetail also exposed on window directly
     //  since it's used from dynamically generated HTML data-attributes.
     // =====================================================================
@@ -95,7 +97,7 @@
         var bookmarks = [];
         try { bookmarks = JSON.parse(localStorage.getItem('leverage_bookmarks') || '[]'); } catch(e) {}
 
-        /* ── Helpers ─────────────────────────────────────────────────── */
+        /* ---- Helpers ------------------------------------------------------------------------------------------------------ */
 
         function saveBookmarks() {
             try { localStorage.setItem('leverage_bookmarks', JSON.stringify(bookmarks)); } catch(e) {}
@@ -135,7 +137,7 @@
             return (t || '').replace(/\s*-\s*scanx\.trade\s*$/i, '').replace(/\s*\|\s*scanx\.trade\s*$/i, '').trim();
         }
 
-        /* ── Render ──────────────────────────────────────────────────── */
+        /* ---- Render -------------------------------------------------------------------------------------------------------- */
 
         function renderList(items) {
             var container = document.getElementById('newsContainer');
@@ -146,6 +148,10 @@
             // Store globally so openPageNewsDetail can access by index
             window._newsPageArticles = items;
             var html = items.slice(0, 30).map(function (n, i) {
+                var rawSent = n.sentiment;
+                var score = (rawSent && rawSent.sentiment_score != null) ? Number(rawSent.sentiment_score) : (typeof n.sentiment_score === 'number' ? n.sentiment_score : 0);
+                if (isNaN(score)) score = 0;
+                var scoreStr = ' ' + (score > 0 ? '+' : '') + score.toFixed(2);
                 var label = _normaliseSentiment(n.sentiment);
                 var sentClass = label === 'Bullish' ? 'sentiment-bullish' : (label === 'Bearish' ? 'sentiment-bearish' : 'sentiment-neutral');
                 var timeAgo = _timeAgo(n.published_at);
@@ -157,12 +163,12 @@
                     '<div class="meta">' +
                         '<span style="color:var(--accent-blue);font-weight:600;">' + _escHtml(n.ticker || 'MARKET') + '</span>' +
                         (timeAgo ? '<span>' + timeAgo + '</span>' : '') +
-                        (label ? '<span class="sentiment-tag ' + sentClass + '">' + label + '</span>' : '') +
+                        (label ? '<span class="sentiment-tag ' + sentClass + '">' + label + scoreStr + '</span>' : '') +
                         source +
                     '</div>' +
                     '<div class="title">' + _escHtml(cleanTitle) + '</div>' +
                     (n.excerpt ? '<div class="excerpt">' + _escHtml(n.excerpt) + '</div>' : '') +
-                    '<button class="bookmark-btn' + (isBookmarked ? ' saved' : '') + '" data-bm-url="' + _escHtml(url || i + '') + '" title="Bookmark">🔖</button>' +
+                    '<button class="bookmark-btn' + (isBookmarked ? ' saved' : '') + '" data-bm-url="' + _escHtml(url || i + '') + '" title="Bookmark">&#128278;</button>' +
                     '</div>';
             }).join('');
             container.innerHTML = html;
@@ -200,15 +206,15 @@
             renderList(filtered);
         }
 
-        /* ── Detail modal ─────────────────────────────────────────────── */
+        /* ---- Detail modal ---------------------------------------------------------------------------------------------- */
 
         function openPageNewsDetail(idx) {
             var items = window._newsPageArticles || [];
             var n = items[idx];
             if (!n) return;
             var label = _normaliseSentiment(n.sentiment);
-            var sentColor = label === 'Bullish' ? '#00E676' : (label === 'Bearish' ? '#FF0055' : '#a1a1aa');
-            var sentEmoji = label === 'Bullish' ? '📈' : (label === 'Bearish' ? '📉' : '🎯');
+            var sentColor = label === 'Bullish' ? '#089981' : (label === 'Bearish' ? '#f23645' : '#a1a1aa');
+            var sentEmoji = label === 'Bullish' ? '&#128200;' : (label === 'Bearish' ? '&#128201;' : '&#127919;');
             var summary = _escHtml(n.excerpt || n.summary || n.snippet || 'No additional details available.');
             var cleanTitle = _cleanTitle(n.title);
 
@@ -219,8 +225,8 @@
             var modal = document.createElement('div');
             modal.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:2rem;max-width:620px;width:90%;max-height:82vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,0.6);';
 
-            var linkUrl = n.url && n.url !== '#' ? n.url : (n.ticker ? 'stock.html?ticker=' + encodeURIComponent(n.ticker) : null);
-            var readMoreBtn = linkUrl ? '<a href="' + _escHtml(linkUrl) + '" target="_blank" rel="noopener" style="padding:0.6rem 1.5rem;background:#4A90E2;border-radius:8px;color:#fff;font-size:0.85rem;text-decoration:none;font-weight:600;">Read Full Article ↗</a>' : '';
+            var linkUrl = n.url && n.url !== '#' ? n.url : (n.ticker ? 'overview.html?ticker=' + encodeURIComponent(n.ticker) : null);
+            var readMoreBtn = linkUrl ? '<a href="' + _escHtml(linkUrl) + '" target="_blank" rel="noopener" style="padding:0.6rem 1.5rem;background:#4A90E2;border-radius:8px;color:#fff;font-size:0.85rem;text-decoration:none;font-weight:600;">Read Full Article &rarr;</a>' : '';
             var closeId = 'newsDetailClose_' + Date.now();
             modal.innerHTML =
                 '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1rem;">' +
@@ -230,7 +236,7 @@
                 '<h2 style="font-size:1.25rem;font-weight:700;color:#fff;margin-bottom:0.75rem;line-height:1.45;">' + _escHtml(cleanTitle) + '</h2>' +
                 '<div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.8rem;color:#a1a1aa;margin-bottom:1.25rem;padding-bottom:1rem;border-bottom:1px solid rgba(255,255,255,0.06);">' +
                     '<span>' + _escHtml(n.source || 'Market News') + '</span>' +
-                    '<span>•</span>' +
+                    '<span>&bull;</span>' +
                     '<span>' + (n.published_at ? new Date(n.published_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : '') + '</span>' +
                 '</div>' +
                 '<div style="font-size:0.95rem;color:#d1d1d6;line-height:1.75;">' + summary + '</div>' +
@@ -252,10 +258,10 @@
         // Expose globally (called from event delegation)
         window.openPageNewsDetail = openPageNewsDetail;
 
-        /* ── Event delegation for news cards ─────────────────────────── */
+        /* ---- Event delegation for news cards ------------------------------------------------------ */
 
         document.addEventListener('click', function (e) {
-            // News card click → open detail
+            // News card click &rarr; open detail
             var card = e.target.closest('.news-card[data-news-idx]');
             if (card && !e.target.closest('.bookmark-btn')) {
                 var idx = parseInt(card.getAttribute('data-news-idx'), 10);
@@ -276,7 +282,7 @@
             }
         });
 
-        /* ── Public API on window.newsApp ────────────────────────────── */
+        /* ---- Public API on window.newsApp ------------------------------------------------------------ */
 
         window.newsApp = {
             switchCategory: function (cat, btn) {
@@ -306,14 +312,18 @@
                     
                     var stockVal = (document.getElementById('stockFilter').value || '').trim().toUpperCase();
                     var query = stockVal || searchVal.toUpperCase();
+                    var featured = document.getElementById('featuredHeadline');
                     
                     if (!query) {
                         if (self.searchAbortController) self.searchAbortController.abort();
                         renderList(allNews);
-                        var container = document.getElementById('news-container');
+                        var container = document.getElementById('newsContainer');
                         if (container) container.style.opacity = '1';
+                        if (featured) featured.style.display = 'block';
                         return;
                     }
+                    
+                    if (featured) featured.style.display = 'none';
                     
                     if (self.searchAbortController) {
                         self.searchAbortController.abort();
@@ -322,32 +332,21 @@
                     
                     var container = document.getElementById('newsContainer');
                     if (container) {
-                        // Show a massive, obvious loading spinner right in the middle
                         container.style.opacity = '1';
-                        container.innerHTML = '<div style="padding:4rem;text-align:center;color:#4A90E2;"><div style="width:40px;height:40px;border:4px solid rgba(74,144,226,0.2);border-top-color:#4A90E2;border-radius:50%;animation:dashNewsSpinAnim 0.8s linear infinite;margin:0 auto 1rem;"></div><div style="font-size:1.2rem;font-weight:600;">Searching live news for "' + _escHtml(query) + '"...</div><div style="color:#a1a1aa;font-size:0.9rem;margin-top:10px;">Please wait while we query ScanX.</div></div>';
+                        container.innerHTML = '<div style="padding:4rem;text-align:center;color:#4A90E2;"><div style="width:40px;height:40px;border:4px solid rgba(74,144,226,0.2);border-top-color:#4A90E2;border-radius:50%;animation:dashNewsSpinAnim 0.8s linear infinite;margin:0 auto 1rem;"></div><div style="font-size:1.2rem;font-weight:600;">Searching live news for "' + _escHtml(query) + '"...</div></div>';
                     }
                     
                     try {
-                        var resp = await fetch('/api/scanx/news/fast/' + encodeURIComponent(query), {
-                            signal: self.searchAbortController.signal
-                        });
-                        
-                        if (resp.ok) {
-                            var data = await resp.json();
-                            if (Array.isArray(data) && data.length > 0) {
-                                var normalised = data.map(function(a) { return _normaliseArticle(a, 'ScanX'); });
-                                renderList(normalised);
-                            } else {
-                                if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#a1a1aa;">No news found for "' + _escHtml(query) + '".</div>';
-                            }
+                        var articles = await _searchGoogleRSS(query, self.searchAbortController.signal);
+                        if (articles.length > 0) {
+                            renderList(articles);
                         } else {
-                            console.error('Failed to fetch search results');
-                            if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#FF0055;">Failed to fetch news. Please try again.</div>';
+                            if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#a1a1aa;">No news found for "' + _escHtml(query) + '".</div>';
                         }
                     } catch(e) {
                         if (e.name !== 'AbortError') {
                             console.error('Search error:', e);
-                            if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#FF0055;">Failed to fetch news. Please check your connection.</div>';
+                            if (container) container.innerHTML = '<div style="padding:4rem;text-align:center;color:#f23645;">Failed to fetch news. Please check your connection.</div>';
                         }
                     }
                 }, 400);
@@ -361,158 +360,88 @@
             }
         };
 
-        /* ── Data loading ─────────────────────────────────────────────── */
+        /* ---- Data loading ---------------------------------------------------------------------------------------------- */
 
         function _normaliseArticle(a, defaultSource) {
+            var rawSent = a.sentiment || {};
+            var sentScore = 0.0;
+            if (typeof rawSent === 'object' && rawSent.sentiment_score != null) {
+                sentScore = Number(rawSent.sentiment_score);
+            } else if (typeof a.sentiment_score === 'number') {
+                sentScore = a.sentiment_score;
+            }
             return {
                 ticker: a.ticker || a.symbol || 'MARKET',
                 title: a.title || a.headline || '',
                 excerpt: a.excerpt || a.snippet || a.summary || '',
                 published_at: a.published_at || a.pubDate || a.published || new Date().toISOString(),
-                sentiment: { label: _normaliseSentiment(a.sentiment) },
+                sentiment: { label: _normaliseSentiment(a.sentiment), sentiment_score: isNaN(sentScore) ? 0.0 : sentScore },
                 url: a.url || a.link || '',
                 source: a.source || defaultSource || 'News'
             };
         }
 
+        async function _searchGoogleRSS(q, signal) {
+            try {
+                var resp = await fetch('/api/news/search/' + encodeURIComponent(q), { signal: signal || AbortSignal.timeout(10000) });
+                if (resp.ok) {
+                    var articles = await resp.json();
+                    return Array.isArray(articles) ? articles : [];
+                }
+            } catch(e) {
+                if (e && e.name === 'AbortError') throw e;
+            }
+            return [];
+        }
+
         async function _fetchGoogleNewsRSS() {
-            var queries = ['NSE India stock market today'];
-            var articles = [];
+            var queries = ['NSE+India+stock+market+today', 'Nifty+Sensex+today'];
+            var allArticles = [];
             for (var i = 0; i < queries.length; i++) {
                 try {
-                    // Use our own fast RSS backend endpoint instead of unreliable allorigins.win
-                    var resp = await fetch('/api/scanx/news/fast/' + encodeURIComponent(queries[i]), { signal: AbortSignal.timeout(8000) });
-                    if (!resp.ok) continue;
-                    var data = await resp.json();
-                    
-                    if (Array.isArray(data)) {
-                        data.forEach(function(a) {
-                            articles.push({
-                                ticker: 'MARKET',
-                                title: a.title || '',
-                                excerpt: a.excerpt || '',
-                                published_at: a.published_at || new Date().toISOString(),
-                                sentiment: a.sentiment || { label: 'Neutral' },
-                                url: a.url || '',
-                                source: 'Google News'
-                            });
-                        });
-                    }
+                    var results = await _searchGoogleRSS(queries[i], AbortSignal.timeout(10000));
+                    allArticles = allArticles.concat(results);
                 } catch(e) {
-                    console.warn('[News] Google RSS fetch failed for query', queries[i], e);
+                    if (e && e.name === 'AbortError') continue;
                 }
-                if (articles.length >= 10) break;
+                if (allArticles.length >= 10) break;
             }
-            return articles;
+            return allArticles;
         }
 
         async function loadNews() {
             var statusEl = document.getElementById('newsStatus');
-            var combined = [];
-            var sources = [];
+            var container = document.getElementById('newsContainer');
 
-            // Helper to fetch with timeout
-            const fetchWithTimeout = async (url, ms = 5000) => {
-                const controller = new AbortController();
-                const id = setTimeout(() => controller.abort(), ms);
-                try {
-                    const response = await fetch(url, { signal: controller.signal });
-                    clearTimeout(id);
-                    return response;
-                } catch (err) {
-                    clearTimeout(id);
-                    throw err;
-                }
-            };
+            try {
+                var signal = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(15000) : undefined;
+                var resp = await fetch('/api/news/search/market', signal ? { signal: signal } : {});
+                var data = resp.ok ? await resp.json() : [];
+                var articles = (Array.isArray(data) ? data : []).map(function(a) {
+                    return _normaliseArticle(a, 'ScanX');
+                });
 
-            // Run all fetches in parallel for speed
-            const [mainRes, scanxRes, rssRes] = await Promise.allSettled([
-                fetchWithTimeout('/api/news/general', 5000)
-                    .then(r => r.ok ? r.json() : null)
-                    .then(d => d ? (d.articles || []).map(a => _normaliseArticle(a, 'Market Data')) : []),
-                    
-                fetchWithTimeout('/api/scanx/news/full/all?limit=20', 8000) // 8s max wait for scanx
-                    .then(r => r.ok ? r.json() : null)
-                    .then(d => (Array.isArray(d) && d.length > 0) ? d.map(a => _normaliseArticle(a, 'ScanX')) : []),
-                    
-                _fetchGoogleNewsRSS() // always fetch RSS as fallback in parallel
-            ]);
+                if (articles.length > 0) {
+                    articles.sort(function(a, b) { return new Date(b.published_at || 0) - new Date(a.published_at || 0); });
+                    allNews = articles;
+                    renderNews();
+                    updateBookmarkCount();
 
-            if (mainRes.status === 'fulfilled' && mainRes.value.length) {
-                combined = combined.concat(mainRes.value);
-                sources.push('Market Data');
-            }
-            if (scanxRes.status === 'fulfilled' && scanxRes.value.length) {
-                combined = combined.concat(scanxRes.value);
-                sources.push('ScanX');
-            }
-            if (rssRes.status === 'fulfilled' && rssRes.value.length) {
-                combined = combined.concat(rssRes.value);
-                sources.push('Google News');
-            }
-
-            // ── 4. Deduplicate by normalised title ──
-            var seen = {};
-            combined = combined.filter(function (a) {
-                var key = (a.title || '').trim().toLowerCase().substring(0, 60);
-                if (!key || seen[key]) return false;
-                seen[key] = true;
-                return true;
-            });
-
-            // ── 5. Sort newest-first ──
-            combined.sort(function (a, b) {
-                return new Date(b.published_at || 0) - new Date(a.published_at || 0);
-            });
-
-            allNews = combined;
-
-            if (!allNews || allNews.length === 0) {
-                // Hard fallback sample data
-                if (statusEl) { statusEl.textContent = 'Live news sources temporarily unreachable — showing sample data. Check that the News Sentiment service (port 8003) is running.'; statusEl.style.display = 'block'; }
-                var now = new Date();
-                allNews = [
-                    {ticker:'NIFTY',title:'Nifty holds 22,500 as bulls maintain control',excerpt:'The benchmark index traded in a narrow range with positive bias.',published_at:now.toISOString(),sentiment:{label:'Bullish'},source:'Sample',url:''},
-                    {ticker:'RELIANCE',title:'Reliance Industries gains on retail biz expansion plans',excerpt:'The company announced new store openings across tier-2 cities.',published_at:new Date(now-3600000).toISOString(),sentiment:{label:'Bullish'},source:'Sample',url:''},
-                    {ticker:'HDFCBANK',title:'HDFC Bank leads banking pack, Nifty Bank up 0.8%',excerpt:'Private sector banks outperform on strong Q3 expectations.',published_at:new Date(now-7200000).toISOString(),sentiment:{label:'Bullish'},source:'Sample',url:''},
-                    {ticker:'TCS',title:'IT stocks mixed as rupee strengthens',excerpt:'TCS and Infosys saw mild profit booking after recent rally.',published_at:new Date(now-10800000).toISOString(),sentiment:{label:'Bearish'},source:'Sample',url:''},
-                    {ticker:'SBIN',title:'PSU banks under pressure on valuation concerns',excerpt:'SBI, PNB, and Canara Bank slipped 1-2%.',published_at:new Date(now-14400000).toISOString(),sentiment:{label:'Bearish'},source:'Sample',url:''},
-                ];
-                document.getElementById('featuredTitle').textContent = 'AI-Powered Market Summary: Bullish bias with selective profit booking';
-                document.getElementById('featuredExcerpt').textContent = 'Nifty outlook positive. Banking and IT lead. Pharma shows strength. Metals under pressure.';
-                document.getElementById('featuredHeadline').onclick = function() { window.open('https://www.google.com/finance', '_blank'); };
-            } else {
-                if (statusEl) {
-                    if (sources.length) {
-                        statusEl.textContent = '✅ Loaded ' + allNews.length + ' articles from: ' + sources.join(', ');
-                        statusEl.style.background = 'rgba(0,230,118,0.1)';
-                        statusEl.style.borderColor = 'rgba(0,230,118,0.3)';
-                        statusEl.style.color = '#00E676';
-                        statusEl.style.display = 'block';
-                        setTimeout(function() { statusEl.style.display = 'none'; }, 4000);
-                    } else {
-                        statusEl.style.display = 'none';
-                    }
-                }
-                // Update featured headline with first real article
-                var first = allNews[0];
-                if (first) {
+                    var first = allNews[0];
                     document.getElementById('featuredTitle').textContent = _cleanTitle(first.title);
                     document.getElementById('featuredExcerpt').textContent = first.excerpt || '';
-                    document.getElementById('featuredHeadline').onclick = first.url
-                        ? function() { window.open(first.url, '_blank'); }
-                        : function() { window.open('https://www.google.com/finance', '_blank'); };
+                    if (first.url) {
+                        document.getElementById('featuredHeadline').onclick = function() { window.open(first.url, '_blank'); };
+                    }
+                    if (statusEl) statusEl.style.display = 'none';
+                } else {
+                    throw new Error('empty');
+                }
+            } catch(e) {
+                if ((!allNews || !allNews.length) && container) {
+                    container.innerHTML = '<div style="padding:3rem;text-align:center;color:#a1a1aa;">News temporarily unavailable. Please try again shortly.</div>';
                 }
             }
-
-            // Only re-render if the user isn't currently looking at search results
-            var activeSearch = (document.getElementById('searchFilter') && document.getElementById('searchFilter').value.trim() !== '') || 
-                               (document.getElementById('stockFilter') && document.getElementById('stockFilter').value.trim() !== '');
-            
-            if (!activeSearch) {
-                renderNews();
-            }
-            updateBookmarkCount();
         }
 
         // Initial load + auto-refresh every 60 seconds
@@ -533,6 +462,7 @@
     })();
     </script>
     <script src="stocks.js"></script>
-    <script src="nav.js?v=3"></script>
+    <script src="nav.js?v=8"></script>
 </body>
 </html>
+
