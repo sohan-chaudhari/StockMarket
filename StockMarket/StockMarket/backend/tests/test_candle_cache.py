@@ -228,6 +228,87 @@ class TestDefaultTtlIST(unittest.TestCase):
         self.assertEqual(calls[0], _IST, "datetime.now() must be called with _IST, not without tz")
 
 
+class TestL2MaxEntries(unittest.TestCase):
+    """Phase 5: MAX_L2_ENTRIES hard cap + LRU eviction, alongside existing TTL."""
+
+    def setUp(self):
+        self.live_mgr = MagicMock()
+        self.live_mgr.get_current.return_value = None
+        self.cache = CandleCache(live_timeframe_manager=self.live_mgr)
+        self.cache._cleanup_thread_running = False
+
+    def test_normal_insertion(self):
+        self.cache.set("RELIANCE", "15m", [{"time": 1}])
+        self.assertEqual(self.cache.get_stats()["l2_entries"], 1)
+
+    def test_cache_hit(self):
+        data = [{"time": 1}]
+        self.cache.set("RELIANCE", "15m", data)
+        self.assertEqual(self.cache.get("RELIANCE", "15m"), data)
+
+    def test_ttl_still_expires_under_cap(self):
+        self.cache.set("RELIANCE", "15m", [{"time": 1}], ttl_sec=0)
+        self.assertIsNone(self.cache.get("RELIANCE", "15m"))
+
+    def test_max_size_enforced(self):
+        for i in range(self.cache.MAX_L2_ENTRIES + 500):
+            self.cache.set(f"T{i}", "15m", [{"time": i}])
+        self.assertLessEqual(len(self.cache._l2), self.cache.MAX_L2_ENTRIES)
+
+    def test_eviction_removes_oldest(self):
+        # Fill to exactly the cap
+        for i in range(self.cache.MAX_L2_ENTRIES):
+            self.cache.set(f"T{i}", "15m", [{"time": i}])
+        # The very first key inserted is now the LRU entry
+        oldest_key = "T0:15m:None:None"
+        self.assertIn(oldest_key, self.cache._l2)
+        # One more insert should evict it
+        self.cache.set("OVERFLOW", "15m", [{"time": 99999}])
+        self.assertNotIn(oldest_key, self.cache._l2)
+
+    def test_newest_entry_survives_overflow(self):
+        for i in range(self.cache.MAX_L2_ENTRIES + 10):
+            self.cache.set(f"T{i}", "15m", [{"time": i}])
+        last_key = f"T{self.cache.MAX_L2_ENTRIES + 9}"
+        result = self.cache.get(last_key, "15m")
+        self.assertIsNotNone(result)
+
+    def test_ttl_and_size_interact_correctly(self):
+        # Insert one long-lived entry, then overflow the cache with short-TTL entries.
+        self.cache.set("KEEPER", "15m", [{"time": 0}], ttl_sec=3600)
+        for i in range(self.cache.MAX_L2_ENTRIES):
+            self.cache.set(f"T{i}", "15m", [{"time": i}], ttl_sec=3600)
+        # KEEPER was the first insert, so it's now LRU-oldest and gets evicted
+        # by the size cap — proving size eviction operates independently of TTL.
+        self.assertIsNone(self.cache.get("KEEPER", "15m"))
+        self.assertLessEqual(len(self.cache._l2), self.cache.MAX_L2_ENTRIES)
+
+    def test_no_api_regression_after_overflow(self):
+        for i in range(self.cache.MAX_L2_ENTRIES + 100):
+            self.cache.set(f"T{i}", "15m", [{"time": i, "open": 1, "close": 2}])
+        recent_key = f"T{self.cache.MAX_L2_ENTRIES + 99}"
+        result = self.cache.get(recent_key, "15m")
+        self.assertEqual(result, [{"time": self.cache.MAX_L2_ENTRIES + 99, "open": 1, "close": 2}])
+
+    def test_lru_promotion_on_hit_protects_from_eviction(self):
+        # Fill to the cap.
+        for i in range(self.cache.MAX_L2_ENTRIES):
+            self.cache.set(f"T{i}", "15m", [{"time": i}])
+        # Touch T0 (the LRU-oldest) so it becomes MRU instead.
+        self.cache.get("T0", "15m")
+        # One more insert should now evict T1 (the new LRU-oldest), not T0.
+        self.cache.set("OVERFLOW", "15m", [{"time": 99999}])
+        self.assertIn("T0:15m:None:None", self.cache._l2)
+        self.assertNotIn("T1:15m:None:None", self.cache._l2)
+
+    def test_eviction_counter_tracked(self):
+        for i in range(self.cache.MAX_L2_ENTRIES + 50):
+            self.cache.set(f"T{i}", "15m", [{"time": i}])
+        stats = self.cache.get_stats()
+        self.assertEqual(stats["l2_evictions"], 50)
+        self.assertEqual(stats["l2_max_entries"], self.cache.MAX_L2_ENTRIES)
+
+
 class TestBackfillNonBlocking(unittest.TestCase):
     """Verify that gap-fill triggers via background_tasks.add_task (not direct call)."""
 

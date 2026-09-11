@@ -1,0 +1,98 @@
+"""Regression tests for making candles(1D) the preferred daily-history
+source in /api/stock-data/range, replacing stock_data-primary reads.
+
+Context: stock_data and candles(timeframe='1D') independently disagreed on
+overlapping dates -- most dramatically for BSE-only tickers hit by the
+exchange-hardcoding bug (see test_ticker_exchange_resolution.py), where
+stock_data held prices over 1000x the real value. candles(1D) is now the
+trusted source (correctly exchange-resolved, continuously backfilled), so
+the merge must prefer it on any date both tables have, while still using
+stock_data to fill in older history candles(1D) doesn't cover yet.
+"""
+import unittest
+from datetime import date, datetime
+
+from main import _merge_daily_candle_records
+
+
+class _SDRow:
+    """Mimics a models.StockData row."""
+    def __init__(self, d, close, open_=None, high=None, low=None, adj_close=None, volume=1000):
+        self.date = d
+        self.open = open_ if open_ is not None else close
+        self.high = high if high is not None else close
+        self.low = low if low is not None else close
+        self.close = close
+        self.adj_close = adj_close if adj_close is not None else close
+        self.volume = volume
+
+
+class _CandleRow:
+    """Mimics a models.Candle row (timeframe='1D')."""
+    def __init__(self, ts, close, open_=None, high=None, low=None, volume=1000):
+        self.timestamp = ts
+        self.open = open_ if open_ is not None else close
+        self.high = high if high is not None else close
+        self.low = low if low is not None else close
+        self.close = close
+        self.volume = volume
+
+
+class TestMergeDailyCandleRecords(unittest.TestCase):
+    def test_candles_win_on_overlapping_date(self):
+        d = date(2026, 8, 10)
+        sd_rows = [_SDRow(d, close=100.0)]
+        candle_rows = [_CandleRow(datetime(2026, 8, 10), close=99.5)]
+
+        result = _merge_daily_candle_records(sd_rows, candle_rows)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["close"], 99.5)
+
+    def test_meta_style_corruption_is_overridden_by_candles(self):
+        # Concrete regression: the actual bug found. stock_data held ~1000x
+        # the real price for a BSE-only ticker; candles(1D) had the correct
+        # value. The merge must surface the candles value.
+        d = date(2026, 8, 12)
+        sd_rows = [_SDRow(d, close=13557.65)]
+        candle_rows = [_CandleRow(datetime(2026, 8, 12), close=7.38)]
+
+        result = _merge_daily_candle_records(sd_rows, candle_rows)
+
+        self.assertEqual(result[0]["close"], 7.38)
+
+    def test_stock_data_fills_dates_candles_lacks(self):
+        old_date = date(2015, 1, 5)
+        recent_date = date(2026, 8, 10)
+        sd_rows = [_SDRow(old_date, close=50.0), _SDRow(recent_date, close=200.0)]
+        candle_rows = [_CandleRow(datetime(2026, 8, 10), close=201.0)]  # only covers the recent date
+
+        result = _merge_daily_candle_records(sd_rows, candle_rows)
+
+        self.assertEqual(len(result), 2)
+        by_time = {r["time"]: r for r in result}
+        self.assertEqual(by_time[str(old_date)]["close"], 50.0)      # stock_data-only, preserved
+        self.assertEqual(by_time[str(recent_date)]["close"], 201.0)  # candles wins
+
+    def test_candles_only_date_is_included(self):
+        d = date(2026, 8, 13)
+        result = _merge_daily_candle_records([], [_CandleRow(datetime(2026, 8, 13), close=42.0)])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["time"], str(d))
+        self.assertEqual(result[0]["close"], 42.0)
+
+    def test_result_sorted_descending_by_date(self):
+        sd_rows = [_SDRow(date(2026, 1, 1), close=1.0), _SDRow(date(2026, 3, 1), close=3.0)]
+        candle_rows = [_CandleRow(datetime(2026, 2, 1), close=2.0)]
+
+        result = _merge_daily_candle_records(sd_rows, candle_rows)
+
+        times = [r["time"] for r in result]
+        self.assertEqual(times, sorted(times, reverse=True))
+
+    def test_empty_inputs_return_empty_list(self):
+        self.assertEqual(_merge_daily_candle_records([], []), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

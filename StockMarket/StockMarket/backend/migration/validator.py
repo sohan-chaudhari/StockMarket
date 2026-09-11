@@ -9,19 +9,47 @@ from exchange_calendar import IST, nse_calendar
 from aggregator import validate_ohlc
 
 
+def _as_datetime(ts) -> datetime:
+    """Normalizes a candle's `timestamp` field to a real datetime regardless
+    of what handed it to us.
+
+    compute_checksum() is called on candle dicts from two different origins
+    that don't agree on this field's type: freshly-fetched source candles
+    carry a real `datetime` object, but a batch-downloader readback (raw SQL
+    via `_readback_candles`, not the ORM) hands back whatever the DBAPI
+    driver's default row type is for a DATETIME/TIMESTAMP column -- for
+    SQLite (used by this module's own tests) that's a plain string in
+    `str(datetime)` format ("YYYY-MM-DD HH:MM:SS", space-separated), not
+    ISO 8601's "T" separator. Bug found via test_batch_downloader_1d_
+    validation.py: the previous version called `.isoformat()` on a real
+    datetime but plain `str()` on anything else, so a value that round-
+    tripped through SQLite serialized differently ("...09 00:00:00" vs
+    "...09T00:00:00") than the exact same instant taken straight from the
+    fetch -- two representations of identical data hashed to different
+    checksums, a false-positive "mismatch" with zero actual data
+    difference. (Real production Postgres via psycopg2 already
+    auto-adapts TIMESTAMP columns back to real datetime objects even
+    through a raw textual query, so this specific false positive is
+    SQLite/test-only -- but normalizing here makes the checksum correct
+    and driver-independent regardless.) Python's `datetime.fromisoformat`
+    (3.11+) accepts both separators, so this round-trips cleanly either way.
+    """
+    return ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))
+
+
 def compute_checksum(candles: List[Dict]) -> str:
     """SHA256 of canonical sorted candle data."""
     canonical = json.dumps(
         [
             (
-                c["timestamp"].isoformat() if isinstance(c["timestamp"], datetime) else str(c["timestamp"]),
+                _as_datetime(c["timestamp"]).isoformat(),
                 float(c["open"]),
                 float(c["high"]),
                 float(c["low"]),
                 float(c["close"]),
                 int(c.get("volume", 0)),
             )
-            for c in sorted(candles, key=lambda x: x["timestamp"] if isinstance(x["timestamp"], datetime) else datetime.fromisoformat(str(x["timestamp"])))
+            for c in sorted(candles, key=lambda x: _as_datetime(x["timestamp"]))
         ],
         sort_keys=True,
         default=str,
