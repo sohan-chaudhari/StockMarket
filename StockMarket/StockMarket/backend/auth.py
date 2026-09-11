@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -20,9 +20,37 @@ load_dotenv()
 
 # Configuration
 # BUG-11 FIX: Raise RuntimeError if JWT_SECRET_KEY is missing.
+# JWT-SECRET-VALIDATION: extended so a *present* secret can still be
+# rejected -- "not empty" alone doesn't stop an operator from copying
+# .env.example verbatim (its placeholder is 40 chars, long enough to pass
+# a naive length check on its own) or from setting a trivially short value.
+# Order: missing -> whitespace -> known placeholder -> minimum length.
+# Whitespace is checked before the placeholder/length comparisons and is
+# REJECTED, not silently stripped -- trimming a security credential here
+# would mean the effective signing key silently differs from whatever an
+# operator (or a secrets manager) believes was configured.
+_JWT_SECRET_KEY_PLACEHOLDER = "change_me_to_a_random_64_char_hex_string"  # from .env.example (identical in every copy in this repo)
+_JWT_SECRET_KEY_MIN_LENGTH = 32  # no prior convention existed; this phase's own minimum, per its instructions
+
 _SECRET_KEY_RAW = os.getenv("JWT_SECRET_KEY", "")
 if not _SECRET_KEY_RAW:
     raise RuntimeError("JWT_SECRET_KEY environment variable is not set! Application cannot run in unsafe mode.")
+if _SECRET_KEY_RAW != _SECRET_KEY_RAW.strip():
+    raise RuntimeError(
+        "JWT_SECRET_KEY has leading/trailing whitespace, which would silently "
+        "change the effective signing key. Fix the value at its source rather "
+        "than relying on this check to trim it."
+    )
+if _SECRET_KEY_RAW == _JWT_SECRET_KEY_PLACEHOLDER:
+    raise RuntimeError(
+        "JWT_SECRET_KEY must not use the example placeholder from .env.example. "
+        "Generate a real secret: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+if len(_SECRET_KEY_RAW) < _JWT_SECRET_KEY_MIN_LENGTH:
+    raise RuntimeError(
+        f"JWT_SECRET_KEY must be at least {_JWT_SECRET_KEY_MIN_LENGTH} characters "
+        f"(got {len(_SECRET_KEY_RAW)})."
+    )
 SECRET_KEY = _SECRET_KEY_RAW
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
@@ -98,18 +126,30 @@ def get_password_hash(password: str) -> str:
 # ==================== JWT TOKEN ====================
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Create a JWT access token with jti for blacklisting."""
+    """Create a JWT access token with jti for blacklisting.
+
+    exp/iat MUST be true UTC (RFC 7519 NumericDate) -- this is independent of
+    the app's separate, correct convention of storing candle timestamps as
+    IST-naive. python-jose encodes a naive datetime by calling
+    utctimetuple() on it, i.e. it treats the naive value AS ALREADY UTC.
+    Passing get_ist_now() (IST wall-clock) here silently shifted every
+    token's real exp/iat by +5:30 relative to true UTC 'now' -- tokens lived
+    ~29.5h instead of the intended 24h, and a token built with a negative
+    expires_delta to simulate "already expired" didn't actually verify as
+    expired for another ~5.5 hours. Confirmed via test_auth.py.
+    """
     to_encode = data.copy()
+    now_utc = datetime.now(timezone.utc)
     if expires_delta:
-        expire = get_ist_now() + expires_delta
+        expire = now_utc + expires_delta
     else:
-        expire = get_ist_now() + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
-    
+        expire = now_utc + timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
+
     # Add jti (JWT ID) for blacklisting
     jti = secrets.token_urlsafe(32)
     to_encode.update({
-        "exp": expire, 
-        "iat": get_ist_now(),
+        "exp": expire,
+        "iat": now_utc,
         "jti": jti
     })
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)

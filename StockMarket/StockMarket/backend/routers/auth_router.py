@@ -34,7 +34,7 @@ def register(request: Request, user: schemas.UserRegister, db: Session = Depends
         raise HTTPException(status_code=400, detail=msg)
         
     hashed_pwd = auth.get_password_hash(user.password)
-    
+
     new_user = models.User(
         email=user.email,
         password_hash=hashed_pwd,
@@ -42,13 +42,19 @@ def register(request: Request, user: schemas.UserRegister, db: Session = Depends
         is_verified=False
     )
     db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    
+    # HARDEN-03: flush (not commit) -- assigns new_user.user_id via the DB
+    # sequence, which the verification token below needs as its FK, without
+    # ending the transaction. Previously this committed here AND separately
+    # after adding the verification token: if that second commit failed, a
+    # User row was left permanently persisted with no verification token
+    # (recoverable via /resend-verification, but not transactionally clean).
+    # Now both rows are one atomic unit -- either both persist or neither does.
+    db.flush()
+
     # Generate OTP & Token
     otp = auth.generate_otp()
     token_jti = auth.generate_token()
-    
+
     verification = models.VerificationToken(
         user_id=new_user.user_id,
         token_hash=token_jti,
@@ -58,7 +64,8 @@ def register(request: Request, user: schemas.UserRegister, db: Session = Depends
     )
     db.add(verification)
     db.commit()
-    
+    db.refresh(new_user)
+
     # Send email
     auth.send_verification_email(new_user.email, otp, new_user.full_name, token_jti)
     
@@ -187,7 +194,8 @@ def forgot_password(req: schemas.ForgotPasswordRequest, request: Request, db: Se
     return {"message": "If that email is registered, a reset link has been sent."}
 
 @router.post("/reset-password")
-def reset_password(req: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+@limiter.limit("5/hour")
+def reset_password(req: schemas.ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
     token_record = db.query(models.VerificationToken).filter(
         models.VerificationToken.token_hash == req.token,
         models.VerificationToken.token_type == "password_reset",

@@ -1,0 +1,59 @@
+/* ============================================
+   LEVERAGE — DESIGN TOKENS
+   Single source of truth for color, spacing, radius,
+   shadow, and type tokens. Loaded on every page.
+   Do not redefine these elsewhere — reference the vars.
+   ============================================ */
+:root {
+  /* Surfaces */
+  --bg-color: #0A0A0B;
+  --surface: rgba(20, 20, 22, 0.6);
+  --card-bg: rgba(20, 20, 22, 0.6);
+  --elevated-surface: rgba(30, 30, 33, 0.8);
+  --card-hover: rgba(30, 30, 33, 0.8);
+  --border-color: #333333;
+
+  /* Text */
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted: #83838d; /* was #52525b (~2.6:1 on --bg-color, fails WCAG AA); ~4.7:1 now */
+
+  /* Brand & semantic colors */
+  --accent-blue: #2563EB; /* Premium Brand Blue — canonical accent, do not use other blues */
+  --accent-blue-hover: #3B82F6;
+  --success: #089981; /* Cyber Green — positive market movement */
+  --danger: #f23645; /* Neon Coral — negative market movement */
+  --warning: #F59E0B;
+  --info: #38BDF8;
+
+  /* Interaction states */
+  --hover-overlay: rgba(255, 255, 255, 0.05);
+  --active-overlay: rgba(255, 255, 255, 0.1);
+  --selected-overlay: rgba(37, 99, 235, 0.15);
+  --disabled-overlay: rgba(255, 255, 255, 0.03);
+
+  /* Fonts */
+  --font-brand: 'Playfair Display', serif;
+  --font-ui: 'Inter', sans-serif;
+  --font-mono: 'Space Grotesk', monospace;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Radius scale */
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  /* Shadows / elevation */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+}

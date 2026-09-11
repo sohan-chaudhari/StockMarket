@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview - LEVERAGE</title>
+  <script src="page-cache.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="tokens.css?v=2">
+  <link rel="stylesheet" href="index.css?v=82">
+  <link rel="stylesheet" href="nav.css?v=12">
+  <link rel="stylesheet" href="responsive.css?v=4">
+  <style>
+      .overview-container {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 1.5rem;
+      }
+      .overview-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          flex-wrap: wrap;
+          gap: 1.5rem;
+          margin-bottom: 2rem;
+          padding-bottom: 1.5rem;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .overview-branding {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+      }
+      .overview-title-row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: wrap;
+      }
+      .overview-symbol {
+          font-size: 2.2rem;
+          font-weight: 800;
+          color: #fff;
+          margin: 0;
+          line-height: 1;
+      }
+      .overview-name {
+          font-size: 1rem;
+          color: var(--text-secondary);
+      }
+      .overview-price-block {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+      }
+      .overview-price-row {
+          display: flex;
+          align-items: baseline;
+          gap: 10px;
+      }
+      .overview-price {
+          font-family: 'Roboto Mono', monospace;
+          font-size: 2.2rem;
+          font-weight: 700;
+          color: #fff;
+      }
+      .overview-change {
+          font-family: 'Roboto Mono', monospace;
+          font-size: 1.2rem;
+          font-weight: 600;
+      }
+      .overview-meta-row {
+          display: flex;
+          gap: 12px;
+          color: var(--text-secondary);
+          font-size: 0.85rem;
+          flex-wrap: wrap;
+          align-items: center;
+      }
+      .overview-actions {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          flex-wrap: wrap;
+      }
+      .btn-primary {
+          background: #4A90E2;
+          color: #fff;
+          border: none;
+          padding: 10px 20px;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.15s, transform 0.1s;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.9rem;
+      }
+      .btn-primary:hover {
+          background: #357ABD;
+          transform: translateY(-1px);
+      }
+      .btn-outline {
+          background: transparent;
+          color: #d1d4dc;
+          border: 1px solid #333;
+          padding: 10px 18px;
+          border-radius: 6px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 0.9rem;
+      }
+      .btn-outline:hover {
+          border-color: #4A90E2;
+          color: #fff;
+          background: rgba(255,255,255,0.04);
+      }
+      .btn-buy {
+          background: #089981;
+          color: #0A0A0B;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 6px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s;
+          font-size: 0.9rem;
+      }
+      .btn-buy:hover {
+          opacity: 0.9;
+          transform: translateY(-1px);
+      }
+      .btn-sell {
+          background: #f23645;
+          color: #fff;
+          border: none;
+          padding: 10px 18px;
+          border-radius: 6px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s;
+          font-size: 0.9rem;
+      }
+      .btn-sell:hover {
+          opacity: 0.9;
+          transform: translateY(-1px);
+      }
+      .overview-grid {
+          display: grid;
+          grid-template-columns: 1.8fr 1.2fr;
+          gap: 1.5rem;
+          margin-bottom: 2rem;
+          align-items: start;
+      }
+      .overview-card {
+          background: #111;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          padding: 1.5rem;
+      }
+      .overview-card h3 {
+          font-size: 1.1rem;
+          font-weight: 600;
+          color: #fff;
+          margin-top: 0;
+          margin-bottom: 1.25rem;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+      }
+      .stats-grid-inner {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1.25rem;
+          margin-bottom: 1.5rem;
+      }
+      .stat-item-inner {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.04);
+          border-radius: 8px;
+          padding: 0.85rem 1rem;
+      }
+      .stat-item-inner .lbl {
+          font-size: 0.75rem;
+          color: var(--text-secondary);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+      }
+      .stat-item-inner .val {
+          font-family: 'Roboto Mono', monospace;
+          font-size: 1.15rem;
+          font-weight: 600;
+          color: #fff;
+      }
+      .stat-range-container {
+          padding-top: 1rem;
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .stat-range-label {
+          font-size: 0.8rem;
+          color: var(--text-secondary);
+          margin-bottom: 6px;
+          display: flex;
+          justify-content: space-between;
+      }
+      .stat-range-bar {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+      }
+      .stat-range-track {
+          position: relative;
+          flex: 1;
+          height: 6px;
+          border-radius: 3px;
+          background: linear-gradient(90deg, var(--danger), #52525b, var(--success));
+      }
+      .stat-range-marker {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 12px;
+          height: 12px;
+          border-radius: 50%;
+          background: #fff;
+          border: 2px solid #111;
+          transform: translate(-50%, -50%);
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+          transition: left 0.3s ease;
+      }
+      .news-sentiment-gauge-wrapper {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 1rem 0;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          margin-bottom: 1rem;
+      }
+      .news-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          max-height: 420px;
+          overflow-y: auto;
+      }
+      .news-item {
+          padding: 10px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.04);
+          border-radius: 8px;
+          font-size: 0.85rem;
+          transition: background 0.15s;
+          text-decoration: none;
+          display: block;
+      }
+      .news-item:hover {
+          background: rgba(255, 255, 255, 0.04);
+      }
+      .news-item-title {
+          font-weight: 500;
+          color: #fff;
+          margin-bottom: 4px;
+          line-height: 1.3;
+      }
+      .news-item-meta {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 0.75rem;
+          color: var(--text-secondary);
+      }
+      .sentiment-badge {
+          font-size: 0.65rem;
+          font-weight: 700;
+          padding: 2px 6px;
+          border-radius: 4px;
+          text-transform: uppercase;
+      }
+      .sent-pos { background: rgba(8, 153, 129, 0.15); color: #089981; }
+      .sent-neg { background: rgba(242, 54, 69, 0.15); color: #f23645; }
+      .sent-neu { background: rgba(255, 255, 255, 0.08); color: #b2b5be; }
+      
+      .wl-toast {
+          position: fixed;
+          bottom: 2rem;
+          right: 2rem;
+          background: #1e1e24;
+          border: 1px solid rgba(255,255,255,0.1);
+          color: #fff;
+          padding: 12px 24px;
+          border-radius: 8px;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+          z-index: 10000;
+          transform: translateY(100px);
+          opacity: 0;
+          transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      }
+      .wl-toast.show {
+          transform: translateY(0);
+          opacity: 1;
+      }
+      .wl-toast.warn { border-color: #ff9800; }
+      .wl-toast.success { border-color: #089981; }
+      
+      @media (max-width: 900px) {
+          .overview-grid { grid-template-columns: 1fr; }
+          .stats-grid-inner { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (max-width: 600px) {
+          .overview-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
+          .overview-actions { width: 100%; justify-content: flex-start; }
+          .stats-grid-inner { grid-template-columns: 1fr; }
+      }
+  </style>
+</head>
+<body style="background-color: #0A0A0B;">
+  <div id="nav-root"></div>
+  
+  <div class="overview-container">
+    <div class="overview-header">
+      <div class="overview-branding">
+        <div class="overview-title-row">
+          <h1 class="overview-symbol" id="tickerSymbol">--</h1>
+          <span class="stock-badge" id="tickerBadge">NSE</span>
+          <span class="sector-tag" id="sectorTag" style="font-size:12px;padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.08);color:#b2b5be;border:1px solid rgba(255,255,255,0.1);">Loading...</span>
+        </div>
+        <div class="overview-name" id="tickerCompanyName">--</div>
+        <div class="overview-meta-row">
+          <span id="marketStatusPill" class="status-dot closed" style="margin-right:4px;"></span>
+          <span id="marketStatusText">Market Closed</span>
+        </div>
+      </div>
+      
+      <div class="overview-price-block">
+        <div class="overview-price-row">
+          <span class="overview-price" id="headerPrice">--</span>
+          <span class="overview-change" id="headerChange">--</span>
+        </div>
+        <div style="font-size:0.75rem; color:var(--text-secondary); text-align:right;" id="liveTime">--</div>
+      </div>
+    </div>
+    
+    <div class="overview-actions" style="margin-bottom: 2rem;">
+      <button class="btn-primary" id="btnChartLink">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM9 17v-4m3 4V9m3 8v-6"/></svg>
+        Open Interactive Chart
+      </button>
+      <button class="btn-outline" id="btnWatchlistToggle" onclick="toggleWatchlist()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Add to Watchlist
+      </button>
+      <button class="btn-buy" onclick="window.location.href='portfolio.html'">Buy</button>
+      <button class="btn-sell" onclick="window.location.href='portfolio.html'">Sell</button>
+    </div>
+    
+    <div class="overview-grid">
+      <div class="overview-card">
+        <h3>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          Key Statistics
+        </h3>
+        
+        <div class="stats-grid-inner">
+          <div class="stat-item-inner"><div class="lbl">Open</div><div class="val" id="statOpen">--</div></div>
+          <div class="stat-item-inner"><div class="lbl">High</div><div class="val" id="statHigh">--</div></div>
+          <div class="stat-item-inner"><div class="lbl">Low</div><div class="val" id="statLow">--</div></div>
+          <div class="stat-item-inner"><div class="lbl">Prev Close</div><div class="val" id="statPrevClose">--</div></div>
+          <div class="stat-item-inner"><div class="lbl">Volume</div><div class="val" id="statVolume">--</div></div>
+          <div class="stat-item-inner"><div class="lbl">Mkt Cap</div><div class="val" id="statMarketCap">--</div></div>
+        </div>
+        
+        <div class="stat-range-container">
+          <div class="stat-range-label">
+            <span>Day Low</span>
+            <span>Day High</span>
+          </div>
+          <div class="stat-range-bar">
+            <span style="font-family:'Roboto Mono',monospace;font-size:0.85rem;color:var(--text-secondary);" id="statDayLow">--</span>
+            <div class="stat-range-track">
+              <div class="stat-range-marker" id="statDayRangeMarker"></div>
+            </div>
+            <span style="font-family:'Roboto Mono',monospace;font-size:0.85rem;color:var(--text-secondary);" id="statDayHigh">--</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="overview-card">
+        <h3 style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+          <span style="display:inline-flex; align-items:center; gap:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            News & Sentiment
+          </span>
+          <button id="downloadPdfBtn" onclick="downloadNewsPDF()" style="background:#4A90E2; border:none; color:#fff; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:12px; display:inline-flex; align-items:center; gap:4px; transition:opacity 0.15s;">
+            &#128196; Download PDF
+          </button>
+        </h3>
+        
+        <div class="news-sentiment-gauge-wrapper">
+          <svg width="130" height="65" viewBox="0 0 100 55" style="display:block; margin:0 auto;">
+            <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#222" stroke-width="8" stroke-linecap="round" />
+            <path d="M 10 50 A 40 40 0 0 1 90 50" id="sentimentGaugeFill" fill="none" stroke="url(#sentGradient)" stroke-width="8" stroke-linecap="round" stroke-dasharray="125.6" stroke-dashoffset="125.6" style="transition: stroke-dashoffset 0.8s ease;" />
+            <defs>
+              <linearGradient id="sentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#f23645" />
+                <stop offset="50%" stop-color="#ff9800" />
+                <stop offset="100%" stop-color="#089981" />
+              </linearGradient>
+            </defs>
+            <g id="sentimentNeedle" style="transform-origin: 50px 50px; transition: transform 0.8s ease; transform: rotate(-90deg);">
+              <polygon points="50,50 48,15 52,15" fill="#fff" />
+              <circle cx="50" cy="50" r="3" fill="#fff" />
+            </g>
+            <text x="50" y="46" id="sentimentValText" text-anchor="middle" font-size="9" font-weight="700" fill="#fff">--</text>
+          </svg>
+          <div id="sentimentLabel" style="font-size:0.75rem; font-weight:700; text-transform:uppercase; margin-top:4px; color:#52525b;">Neutral</div>
+          <div id="sentimentSource" style="font-size:0.65rem; color:var(--text-secondary); margin-top:2px;">No articles analyzed</div>
+        </div>
+        
+        <div class="news-list" id="newsListContainer">
+          <div style="color:var(--text-secondary);padding:1rem 0;text-align:center;font-size:0.85rem;">Loading ticker news...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="wlToast" class="wl-toast"></div>
+  
+  <script>
+    (function () {
+      var queryParams = new URLSearchParams(window.location.search);
+      var ticker = queryParams.get('ticker') || 'RELIANCE';
+      ticker = ticker.trim().toUpperCase().replace('.NS', '').replace('.BO', '');
+      
+      document.getElementById('tickerSymbol').textContent = ticker;
+      document.getElementById('btnChartLink').onclick = function() {
+          window.location.href = 'stock.html?ticker=' + ticker;
+      };
+      
+      var knownSectors = {
+          'RELIANCE': 'Energy', 'TCS': 'IT', 'HDFCBANK': 'Banking', 'INFY': 'IT', 'ICICIBANK': 'Banking',
+          'BHARTIARTL': 'Telecom', 'SBIN': 'Banking', 'HINDUNILVR': 'FMCG', 'ITC': 'FMCG', 'LT': 'Construction',
+          'KOTAKBANK': 'Banking', 'AXISBANK': 'Banking', 'ASIANPAINT': 'Consumer Goods', 'MARUTI': 'Auto',
+          'WIPRO': 'IT', 'TITAN': 'Consumer Goods', 'SUNPHARMA': 'Pharma', 'BAJFINANCE': 'Financial Services',
+          'TATAMOTORS': 'Auto', 'NTPC': 'Energy', 'ONGC': 'Energy', 'POWERGRID': 'Energy', 'TATASTEEL': 'Metals',
+          'COALINDIA': 'Energy', 'NIFTY': 'Index', 'BANKNIFTY': 'Index', 'SENSEX': 'Index', 'FINNIFTY': 'Index'
+      };
+      
+      var sector = knownSectors[ticker] || 'Equities';
+      document.getElementById('sectorTag').textContent = sector;
+      
+      var companyNames = {
+          'RELIANCE': 'Reliance Industries Limited', 'TCS': 'Tata Consultancy Services Limited',
+          'HDFCBANK': 'HDFC Bank Limited', 'INFY': 'Infosys Limited', 'ICICIBANK': 'ICICI Bank Limited',
+          'BHARTIARTL': 'Bharti Airtel Limited', 'SBIN': 'State Bank of India', 'HINDUNILVR': 'Hindustan Unilever Limited',
+          'ITC': 'ITC Limited', 'LT': 'Larsen & Toubro Limited', 'KOTAKBANK': 'Kotak Mahindra Bank Limited',
+          'AXISBANK': 'Axis Bank Limited', 'ASIANPAINT': 'Asian Paints Limited', 'MARUTI': 'Maruti Suzuki India Limited',
+          'WIPRO': 'Wipro Limited', 'TITAN': 'Titan Company Limited', 'SUNPHARMA': 'Sun Pharmaceutical Industries Limited',
+          'BAJFINANCE': 'Bajaj Finance Limited', 'TATAMOTORS': 'Tata Motors Limited', 'NTPC': 'NTPC Limited',
+          'ONGC': 'Oil and Natural Gas Corporation Limited', 'POWERGRID': 'Power Grid Corporation of India Limited',
+          'TATASTEEL': 'Tata Steel Limited', 'COALINDIA': 'Coal India Limited', 'NIFTY': 'NIFTY 50 Index',
+          'BANKNIFTY': 'NIFTY Bank Index', 'SENSEX': 'BSE SENSEX Index', 'FINNIFTY': 'NIFTY Financial Services Index'
+      };
+      
+      var companyName = companyNames[ticker] || ticker;
+      document.getElementById('tickerCompanyName').textContent = companyName;
+
+      // ---- Watchlist State Management ----
+      function _token() { return sessionStorage.getItem('token'); }
+      async function _fetchCsrf() {
+          try {
+              var r = await fetch('/api/csrf-token');
+              var d = await r.json();
+              return d.csrf_token || '';
+          } catch(e) { return ''; }
+      }
+      
+      function showToast(msg, type){
+          var t = document.getElementById('wlToast');
+          t.textContent = msg;
+          t.className = 'wl-toast show ' + (type||'');
+          clearTimeout(t._timer);
+          t._timer = setTimeout(function(){ t.className = 'wl-toast'; }, 2800);
+      }
+      
+      var inWatchlist = false;
+      async function checkWatchlistState() {
+          var token = _token();
+          var localList = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
+          
+          if (token) {
+              try {
+                  var res = await fetch('/api/watchlist', { headers: { 'Authorization': 'Bearer ' + token } });
+                  if (res.ok) {
+                      var data = await res.json();
+                      var list = data.watchlist || [];
+                      inWatchlist = list.some(function(i){ return i.ticker === ticker; });
+                      try { localStorage.setItem('_wl_cache', JSON.stringify(list.map(function(i){ return i.ticker; }))); } catch(e){}
+                  } else {
+                      inWatchlist = localList.indexOf(ticker) >= 0;
+                  }
+              } catch(e) {
+                  inWatchlist = localList.indexOf(ticker) >= 0;
+              }
+          } else {
+              inWatchlist = localList.indexOf(ticker) >= 0;
+          }
+          updateWatchlistButtonUI();
+      }
+      
+      function updateWatchlistButtonUI() {
+          var btn = document.getElementById('btnWatchlistToggle');
+          if (btn) {
+              if (inWatchlist) {
+                  btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="#4A90E2" stroke="#4A90E2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> In Watchlist';
+                  btn.style.borderColor = '#4A90E2';
+                  btn.style.color = '#fff';
+              } else {
+                  btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Add to Watchlist';
+                  btn.style.borderColor = '#333';
+                  btn.style.color = '#d1d4dc';
+              }
+          }
+      }
+      
+      window.toggleWatchlist = async function() {
+          var token = _token();
+          var localList = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
+          
+          if (inWatchlist) {
+              // Remove
+              if (token) {
+                  var csrf = await _fetchCsrf();
+                  try {
+                      var res = await fetch('/api/watchlist/remove?ticker=' + encodeURIComponent(ticker), {
+                          method: 'DELETE',
+                          headers: { 'Authorization': 'Bearer ' + token, 'X-CSRF-Token': csrf }
+                      });
+                      if (res.ok) {
+                          inWatchlist = false;
+                          showToast('Removed ' + ticker + ' from watchlist', 'success');
+                      } else {
+                          showToast('Error removing stock from watchlist', 'warn');
+                      }
+                  } catch(e) { showToast('Network error', 'warn'); }
+              } else {
+                  localList = localList.filter(function(t){ return t !== ticker; });
+                  localStorage.setItem('_wl_cache', JSON.stringify(localList));
+                  inWatchlist = false;
+                  showToast('Removed ' + ticker + ' from watchlist', 'success');
+              }
+          } else {
+              // Add
+              if (token) {
+                  var csrf = await _fetchCsrf();
+                  try {
+                      var res = await fetch('/api/watchlist/add?ticker=' + encodeURIComponent(ticker), {
+                          method: 'POST',
+                          headers: { 'Authorization': 'Bearer ' + token, 'X-CSRF-Token': csrf }
+                      });
+                      if (res.ok) {
+                          inWatchlist = true;
+                          showToast('Added ' + ticker + ' to watchlist', 'success');
+                      } else {
+                          var errData = await res.json().catch(function(){ return {}; });
+                          showToast(errData.detail || 'Error adding stock to watchlist', 'warn');
+                      }
+                  } catch(e) { showToast('Network error', 'warn'); }
+              } else {
+                  localList.unshift(ticker);
+                  localStorage.setItem('_wl_cache', JSON.stringify(localList.slice(0, 15)));
+                  inWatchlist = true;
+                  showToast('Added ' + ticker + ' to watchlist', 'success');
+              }
+          }
+          updateWatchlistButtonUI();
+      }
+
+      // ---- OHLC Data & Live Updates ----
+      function fmt(val) {
+          if (val == null || isNaN(val) || val === 0) return '--';
+          return '₹' + val.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+      
+      function fmtVol(val) {
+          if (val == null || isNaN(val) || val === 0) return '--';
+          if (val >= 10000000) return (val / 10000000).toFixed(2) + ' Cr';
+          if (val >= 100000) return (val / 100000).toFixed(2) + ' L';
+          return val.toLocaleString('en-IN');
+      }
+
+      function updateDayRange(low, high, current) {
+          var labelLow = document.getElementById('statDayLow');
+          var labelHigh = document.getElementById('statDayHigh');
+          var marker = document.getElementById('statDayRangeMarker');
+          
+          if (labelLow) labelLow.textContent = low ? '₹' + low.toFixed(2) : '--';
+          if (labelHigh) labelHigh.textContent = high ? '₹' + high.toFixed(2) : '--';
+          
+          if (marker && low && high && current) {
+              var range = high - low;
+              var pct = range > 0 ? ((current - low) / range) * 100 : 50;
+              marker.style.left = Math.max(0, Math.min(100, pct)) + '%';
+          }
+      }
+
+      function applyLiveStats(d) {
+          if (!d) return;
+          var cp = d.current_price || d.current || 0;
+          var pc = d.prev_close || 0;
+          var open = d.open || 0;
+          var high = d.high || cp || 0;
+          var low = d.low || cp || 0;
+          var vol = d.volume || 0;
+          
+          var diff = cp - pc;
+          var pct = pc > 0 ? (diff / pc) * 100 : 0;
+          var sign = diff >= 0 ? '+' : '';
+          var color = diff >= 0 ? '#089981' : '#f23645';
+          
+          document.getElementById('headerPrice').textContent = fmt(cp);
+          document.getElementById('headerPrice').style.color = color;
+          
+          var chgEl = document.getElementById('headerChange');
+          if (chgEl) {
+              chgEl.textContent = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
+              chgEl.style.color = color;
+          }
+          
+          document.getElementById('statOpen').textContent = fmt(open);
+          document.getElementById('statHigh').textContent = fmt(high);
+          document.getElementById('statLow').textContent = fmt(low);
+          document.getElementById('statPrevClose').textContent = fmt(pc);
+          document.getElementById('statVolume').textContent = fmtVol(vol);
+          
+          var weightMap = {
+              'RELIANCE': '₹18.15 Lakh Cr', 'TCS': '₹12.45 Lakh Cr', 'HDFCBANK': '₹11.20 Lakh Cr',
+              'INFY': '₹6.35 Lakh Cr', 'ICICIBANK': '₹7.15 Lakh Cr', 'BHARTIARTL': '₹5.95 Lakh Cr',
+              'SBIN': '₹5.65 Lakh Cr', 'HINDUNILVR': '₹5.30 Lakh Cr', 'ITC': '₹4.95 Lakh Cr',
+              'LT': '₹4.25 Lakh Cr', 'KOTAKBANK': '₹3.65 Lakh Cr', 'AXISBANK': '₹3.15 Lakh Cr',
+              'NIFTY': '--', 'BANKNIFTY': '--', 'SENSEX': '--'
+          };
+          document.getElementById('statMarketCap').textContent = weightMap[ticker] || '₹1.20 Lakh Cr';
+          
+          updateDayRange(low, high, cp);
+          
+          var now = new Date();
+          document.getElementById('liveTime').textContent = 'Last update: ' + now.toLocaleTimeString();
+      }
+
+      async function fetchTickerLive() {
+          PageCache.fetch('/api/live-prices', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ tickers: [ticker] })
+          }, 15000, function(data) {
+              if (data && data[ticker]) {
+                  var d = data[ticker];
+                  applyLiveStats(d);
+                  
+                  var isOpen = data._market_open === true;
+                  var pill = document.getElementById('marketStatusPill');
+                  var label = document.getElementById('marketStatusText');
+                  if (pill && label) {
+                      if (isOpen) {
+                          pill.className = 'status-dot open';
+                          label.textContent = 'Market Open (Live)';
+                      } else {
+                          pill.className = 'status-dot closed';
+                          label.textContent = 'Market Closed';
+                      }
+                  }
+              }
+          });
+      }
+
+      // ---- News & AI Sentiment ----
+      function getSentimentScore(a) {
+          if (!a || !a.sentiment) return 0.03;
+          var s = a.sentiment;
+          var score = null;
+          if (typeof s === 'object' && s.sentiment_score != null) {
+              score = Number(s.sentiment_score);
+          } else if (typeof a.sentiment_score === 'number') {
+              score = a.sentiment_score;
+          }
+          if (score == null || isNaN(score) || score === 0) return 0.03;
+          return score;
+      }
+
+      function getSentimentLabel(a) {
+          // Never return neutral — resolve from label then fall back to score sign
+          var score = getSentimentScore(a);
+          if (!a || !a.sentiment) return score < 0 ? 'negative' : 'positive';
+          var s = a.sentiment;
+          var label = '';
+          if (typeof s === 'string') {
+              label = s.toLowerCase();
+          } else if (typeof s === 'object') {
+              label = (s.label || s.sentiment || '').toLowerCase();
+          }
+          if (label === 'positive' || label === 'bullish') return 'positive';
+          if (label === 'negative' || label === 'bearish') return 'negative';
+          // label is neutral or empty — use score sign
+          return score < 0 ? 'negative' : 'positive';
+      }
+
+      var showingAllNews = false;
+      function renderNews(articles) {
+          var container = document.getElementById('newsListContainer');
+          if (!container) return;
+          
+          if (!articles || articles.length === 0) {
+              container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;font-size:0.85rem;">No recent news articles found for this ticker</div>';
+              updateSentimentUI(50, 0);
+              return;
+          }
+          
+          var positiveCount = 0;
+          var negativeCount = 0;
+          var neutralCount = 0;
+          
+          var itemsToShow = showingAllNews ? articles : articles.slice(0, 3);
+          
+          var html = itemsToShow.map(function(a) {
+              var sent = getSentimentLabel(a);
+              var badgeClass = 'sent-neu';
+              if (sent === 'positive') { badgeClass = 'sent-pos'; }
+              else if (sent === 'negative') { badgeClass = 'sent-neg'; }
+
+              var score = getSentimentScore(a);
+              var labelText = sent === 'positive' ? 'Bullish' : sent === 'negative' ? 'Bearish' : 'Neutral';
+              var arrow = sent === 'positive' ? '▲' : sent === 'negative' ? '▼' : '●';
+              var scoreText = '';
+              if (score != null) {
+                  var sign = score >= 0 ? '+' : '';
+                  scoreText = ' ' + sign + score.toFixed(2);
+              }
+              var badgeContent = arrow + ' ' + labelText + scoreText;
+
+              var dateStr = a.published_date || a.published_at || a.date || 'Today';
+              if (dateStr.indexOf('T') !== -1) {
+                  try { dateStr = new Date(dateStr).toLocaleDateString('en-IN', {dateStyle:'medium'}); } catch(e){}
+              }
+              var src = a.source || 'LEVERAGE AI';
+              var link = a.url && a.url !== '#' ? a.url : '#';
+
+              return '<a href="' + link + '" target="_blank" class="news-item">' +
+                  '<div class="news-item-title">' + a.title + '</div>' +
+                  '<div class="news-item-meta">' +
+                  '<span>' + src + ' &bull; ' + dateStr + '</span>' +
+                  '<span class="sentiment-badge ' + badgeClass + '" style="letter-spacing:0.01em;">' + badgeContent + '</span>' +
+                  '</div>' +
+                  '</a>';
+          }).join('');
+          
+          // Count sentiments from ALL loaded articles for accurate sentiment index gauge
+          articles.forEach(function(a) {
+              var sent = getSentimentLabel(a);
+              if (sent === 'positive') positiveCount++;
+              else if (sent === 'negative') negativeCount++;
+              else neutralCount++;
+          });
+          
+          var total = positiveCount + negativeCount;
+          var sentimentVal = 50;
+          if (total > 0) {
+              sentimentVal = Math.round((positiveCount / total) * 100);
+          }
+          
+          if (articles.length > 3) {
+              var toggleText = showingAllNews ? 'Show Less Articles' : 'Show All Articles (' + articles.length + ')';
+              html += '<button id="btnToggleNewsLimit" onclick="toggleNewsLimit()" style="width:100%;margin-top:12px;background:transparent;border:1px dashed rgba(255,255,255,0.12);color:#4A90E2;padding:8px;border-radius:8px;cursor:pointer;font-size:0.8rem;font-weight:600;transition:all 0.15s;font-family:inherit;">' + toggleText + '</button>';
+          }
+          
+          container.innerHTML = html;
+          updateSentimentUI(sentimentVal, articles.length);
+      }
+      
+      window.toggleNewsLimit = function() {
+          showingAllNews = !showingAllNews;
+          renderNews(window.allFetchedArticles || []);
+      };
+      
+      function updateSentimentUI(score, count) {
+          var fill = document.getElementById('sentimentGaugeFill');
+          var needle = document.getElementById('sentimentNeedle');
+          var valTxt = document.getElementById('sentimentValText');
+          var lblTxt = document.getElementById('sentimentLabel');
+          var srcTxt = document.getElementById('sentimentSource');
+          
+          if (fill) {
+              var dashOffset = 125.6 - (score / 100) * 125.6;
+              fill.style.strokeDashoffset = dashOffset;
+          }
+          if (needle) {
+              var angle = (score / 100) * 180 - 90;
+              needle.style.transform = 'rotate(' + angle + 'deg)';
+          }
+          if (valTxt) valTxt.textContent = score + '%';
+          
+          if (lblTxt) {
+              var mood = 'Neutral';
+              var color = '#b2b5be';
+              if (score < 40) { mood = 'Bearish'; color = '#f23645'; }
+              else if (score > 60) { mood = 'Bullish'; color = '#089981'; }
+              lblTxt.textContent = mood;
+              lblTxt.style.color = color;
+          }
+          
+          if (srcTxt) {
+              srcTxt.textContent = count > 0 ? 'Based on ' + count + ' recent articles' : 'No articles analyzed';
+          }
+      }
+
+      async function fetchTickerNews() {
+          // Fetch from live news search (uses scanx.trade + google news rss with sentiments)
+          PageCache.fetch('/api/news/search/' + encodeURIComponent(ticker), null, 600000, function(data) {
+              if (Array.isArray(data) && data.length > 0) {
+                  window.allFetchedArticles = data;
+                  renderNews(data);
+              } else {
+                  // Fallback to proxy
+                  PageCache.fetch('/api/news/ticker/' + ticker, null, 600000, function(d2) {
+                      if (d2 && d2.articles) {
+                          window.allFetchedArticles = d2.articles;
+                          renderNews(d2.articles);
+                      } else {
+                          window.allFetchedArticles = [];
+                          renderNews([]);
+                      }
+                  });
+              }
+          });
+      }
+
+      // ---- PDF Report Generator ----
+      function loadHtml2Pdf() {
+          return new Promise(function(resolve, reject) {
+              if (window.html2pdf) return resolve(window.html2pdf);
+              var script = document.createElement('script');
+              script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+              script.onload = function() { resolve(window.html2pdf); };
+              script.onerror = reject;
+              document.head.appendChild(script);
+          });
+      }
+
+      window.downloadNewsPDF = async function() {
+          var btn = document.getElementById('downloadPdfBtn');
+          var container = document.getElementById('newsListContainer');
+          if (!container) return;
+          try {
+              if (btn) { btn.innerText = 'Generating...'; btn.style.opacity = '0.7'; }
+              var html2pdf = await loadHtml2Pdf();
+              var opt = {
+                  margin:       [0.6, 0.6, 0.6, 0.6],
+                  filename:     ticker + '_News_Sentiment.pdf',
+                  image:        { type: 'jpeg', quality: 0.98 },
+                  html2canvas:  { scale: 2, backgroundColor: '#ffffff', useCORS: true },
+                  jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+              };
+
+              var sentimentScore = document.getElementById('sentimentValText').textContent;
+              var sentimentLabel = document.getElementById('sentimentLabel').textContent;
+              var isBull = sentimentLabel.toLowerCase() === 'bullish';
+              var isBear = sentimentLabel.toLowerCase() === 'bearish';
+              var accentColor = isBull ? '#089981' : isBear ? '#f23645' : '#555';
+
+              var exportEl = document.createElement('div');
+              exportEl.style.cssText = 'background:#ffffff;color:#111;padding:2.5rem;font-family:Arial,sans-serif;width:700px;box-sizing:border-box;';
+
+              var headerHtml =
+                  '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;padding-bottom:1rem;border-bottom:2px solid #e0e0e0;">' +
+                    '<div>' +
+                      '<div style="font-size:0.7rem;font-weight:700;letter-spacing:1.5px;color:#888;text-transform:uppercase;margin-bottom:6px;">LEVERAGE · News Sentiment Report</div>' +
+                      '<h2 style="margin:0;font-size:1.6rem;font-weight:800;color:#111;">' + ticker + '</h2>' +
+                    '</div>' +
+                    '<div style="text-align:right;font-size:0.72rem;color:#999;margin-top:4px;">' + new Date().toLocaleString('en-IN') + '</div>' +
+                  '</div>';
+
+              var sentimentHtml =
+                  '<div style="background:#f8f8f8;border-left:5px solid ' + accentColor + ';border-radius:6px;padding:1rem 1.25rem;margin-bottom:1.75rem;">' +
+                    '<div style="font-size:0.68rem;font-weight:700;letter-spacing:1px;color:#888;text-transform:uppercase;margin-bottom:4px;">Overall Sentiment Rating</div>' +
+                    '<div style="font-size:1.5rem;font-weight:800;color:' + accentColor + ';">' + sentimentLabel + ' (' + sentimentScore + ')</div>' +
+                  '</div>';
+
+              // Use ALL fetched articles (not just the 3 visible DOM nodes)
+              var pdfArticles = (window.allFetchedArticles && window.allFetchedArticles.length)
+                  ? window.allFetchedArticles : [];
+
+              var itemsHtml = pdfArticles.map(function(a) {
+                  var sent  = getSentimentLabel(a);
+                  var score = getSentimentScore(a);
+                  var isPos = sent === 'positive';
+                  var labelText = isPos ? 'Bullish' : 'Bearish';
+                  var arrow     = isPos ? '▲' : '▼';
+                  var sign      = score >= 0 ? '+' : '';
+                  var badgeText = arrow + ' ' + labelText + ' ' + sign + score.toFixed(2);
+                  var badgeBg   = isPos ? '#e6f7f4' : '#fdecea';
+                  var badgeFg   = isPos ? '#089981'  : '#f23645';
+
+                  var dateStr = a.published_date || a.published_at || a.date || '';
+                  if (dateStr && dateStr.indexOf('T') !== -1) {
+                      try { dateStr = new Date(dateStr).toLocaleDateString('en-IN', {dateStyle:'medium'}); } catch(e) {}
+                  }
+                  var src = (a.source || 'ScanX').replace(/scanx\.trade/i, 'ScanX');
+                  var title = (a.title || '').replace(/\s*[-–|]\s*scanx\.trade\s*$/i,'').replace(/\s*\|\s*[^|]+$/, '').trim();
+
+                  return '<div style="margin-bottom:0.75rem;padding:0.8rem 1rem;background:#fff;border:1px solid #e8e8e8;border-radius:6px;">' +
+                      '<div style="font-weight:600;color:#111;font-size:0.88rem;margin-bottom:5px;line-height:1.45;">' + title + '</div>' +
+                      '<div style="display:flex;justify-content:space-between;align-items:center;font-size:0.73rem;color:#888;">' +
+                        '<span>' + src + (dateStr ? ' · ' + dateStr : '') + '</span>' +
+                        '<span style="padding:3px 9px;border-radius:4px;font-size:0.67rem;font-weight:700;background:' + badgeBg + ';color:' + badgeFg + ';">' + badgeText + '</span>' +
+                      '</div>' +
+                      '</div>';
+              }).join('') || '<div style="color:#888;font-size:0.85rem;padding:1rem 0;">No articles found.</div>';
+
+              var footerHtml =
+                  '<div style="margin-top:2rem;padding-top:0.75rem;border-top:1px solid #e0e0e0;font-size:0.68rem;color:#bbb;text-align:center;">' +
+                    'Generated by LEVERAGE · For informational purposes only · Not financial advice' +
+                  '</div>';
+
+              exportEl.innerHTML = headerHtml + sentimentHtml +
+                  '<h3 style="font-size:0.85rem;font-weight:700;letter-spacing:0.5px;color:#444;text-transform:uppercase;margin-bottom:0.85rem;">Recent Articles</h3>' +
+                  itemsHtml + footerHtml;
+
+              document.body.appendChild(exportEl);
+              await html2pdf().set(opt).from(exportEl).save();
+              document.body.removeChild(exportEl);
+              if (btn) { btn.innerHTML = '&#128196; Download PDF'; btn.style.opacity = '1'; }
+          } catch (err) {
+              console.error('PDF generation failed:', err);
+              alert('Failed to generate PDF.');
+              if (btn) { btn.innerHTML = '&#128196; Download PDF'; btn.style.opacity = '1'; }
+          }
+      };
+
+      // ---- Real-time WebSocket Updates ----
+      var ws = null;
+      var reconnectTimer = null;
+      var reconnectAttempt = 0;
+
+      function connectWS() {
+          var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          var url = proto + '//' + window.location.host + '/ws/dashboard';
+          ws = new WebSocket(url);
+
+          ws.onopen = function() {
+              reconnectAttempt = 0;
+              if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+              ws.send(JSON.stringify({ type: 'subscribe', topics: [ticker, 'NIFTY', 'BANKNIFTY', 'SENSEX'] }));
+          };
+
+          ws.onmessage = function(evt) {
+              try {
+                  var msg = JSON.parse(evt.data);
+                  if (msg.type === 'price_update' && msg.data && msg.data[ticker]) {
+                      var tick = msg.data[ticker];
+                      if (tick.current) {
+                          var updatedData = {
+                              current_price: tick.current,
+                              prev_close: tick.prev_close || 0,
+                              open: tick.open || 0,
+                              high: tick.high || tick.current,
+                              low: tick.low || tick.current,
+                              volume: tick.volume || 0
+                          };
+                          applyLiveStats(updatedData);
+                      }
+                  }
+              } catch(e) {}
+          };
+
+          ws.onclose = function() {
+              ws = null;
+              scheduleReconnect();
+          };
+
+          ws.onerror = function() {
+              ws = null;
+              scheduleReconnect();
+          };
+      }
+
+      function scheduleReconnect() {
+          if (reconnectTimer) return;
+          var delay = Math.min(1000 * Math.pow(2, reconnectAttempt), 30000) + Math.random() * 1000;
+          reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
+          reconnectTimer = setTimeout(function() {
+              reconnectTimer = null;
+              connectWS();
+          }, delay);
+      }
+
+      // ---- Startup ----
+      checkWatchlistState();
+      fetchTickerLive();
+      fetchTickerNews();
+      connectWS();
+      
+      var _intLive = setInterval(fetchTickerLive, 15000);
+      document.addEventListener('visibilitychange', function() {
+          if (document.hidden) { clearInterval(_intLive); _intLive = null; }
+          else if (!_intLive) { _intLive = setInterval(fetchTickerLive, 15000); fetchTickerLive(); }
+      });
+      
+    })();
+  </script>
+  <script src="nav.js?v=8"></script>
+</body>
+</html>

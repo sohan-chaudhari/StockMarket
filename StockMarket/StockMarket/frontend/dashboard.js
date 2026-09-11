@@ -327,6 +327,43 @@ function initDashboard() {
   }
 }
 
+/* ── Helper to update dashboard minichart header + OHLC footer ────────────── */
+function updateMinichartOHLC(d) {
+  if (!d) return;
+  var pEl = document.getElementById('niftyPrice');
+  if (pEl && d.current != null && d.current > 0) {
+    var _lastMain = window._lastMainPrice;
+    if (_lastMain != null && d.current !== _lastMain) {
+      pEl.classList.remove('tick-up', 'tick-down');
+      void pEl.offsetWidth;
+      pEl.classList.add(d.current > _lastMain ? 'tick-up' : 'tick-down');
+    }
+    window._lastMainPrice = d.current;
+    pEl.innerText = Number(d.current).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  var prev = (d.prev_close != null && d.prev_close > 0) ? d.prev_close : ((d.open != null && d.open > 0) ? d.open : d.current);
+  if (d.current != null && d.current > 0 && prev != null && prev > 0) {
+    var diff = d.current - prev;
+    var pct  = (diff / prev) * 100;
+    var sign = diff >= 0 ? '+' : '';
+    var cEl  = document.getElementById('niftyChange');
+    if (cEl) {
+      cEl.innerText = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
+      cEl.className = 'price-change ' + (diff >= 0 ? 'text-green' : 'text-red');
+    }
+  }
+
+  var oEl = document.getElementById('niftyO');
+  if (oEl && d.open != null && d.open > 0) oEl.innerText = Number(d.open).toFixed(2);
+  var hEl = document.getElementById('niftyH');
+  if (hEl && d.high != null && d.high > 0) hEl.innerText = Number(d.high).toFixed(2);
+  var lEl = document.getElementById('niftyL');
+  if (lEl && d.low != null && d.low > 0)  lEl.innerText = Number(d.low).toFixed(2);
+  var cEl2 = document.getElementById('niftyC');
+  if (cEl2 && d.prev_close != null && d.prev_close > 0) cEl2.innerText = Number(d.prev_close).toFixed(2);
+}
+
 /* ── Seed UI from localStorage (called before WS connects) ──────────────── */
 function seedUIFromCache() {
   try {
@@ -342,25 +379,7 @@ function seedUIFromCache() {
     window._chartTicker = window._chartTicker || 'NIFTY';
     var chartData = prices[window._chartTicker];
     if (chartData && chartData.current) {
-      var pEl = document.getElementById('niftyPrice');
-      if (pEl) pEl.innerText = chartData.current.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      var prev = (chartData.prev_close != null && chartData.prev_close > 0) ? chartData.prev_close : ((chartData.open != null && chartData.open > 0) ? chartData.open : chartData.current);
-      var diff = chartData.current - prev;
-      var pct  = (prev > 0) ? (diff / prev) * 100 : 0;
-      var cEl  = document.getElementById('niftyChange');
-      if (cEl) {
-        var sign = diff >= 0 ? '+' : '';
-        cEl.innerText   = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
-        cEl.className   = 'price-change ' + (diff >= 0 ? 'text-green' : 'text-red');
-      }
-      var oEl = document.getElementById('niftyO');
-      if (oEl && chartData.open) oEl.innerText = chartData.open.toFixed(2);
-      var hEl = document.getElementById('niftyH');
-      if (hEl && chartData.high) hEl.innerText = chartData.high.toFixed(2);
-      var lEl = document.getElementById('niftyL');
-      if (lEl && chartData.low)  lEl.innerText = chartData.low.toFixed(2);
-      var cEl2 = document.getElementById('niftyC');
-      if (cEl2 && chartData.prev_close) cEl2.innerText = chartData.prev_close.toFixed(2);
+      updateMinichartOHLC(chartData);
     }
   } catch (e) { /* non-critical */ }
 }
@@ -379,33 +398,7 @@ function onPriceUpdate(evt) {
   window._chartTicker = window._chartTicker || 'NIFTY';
   var chartTickerData = prices[window._chartTicker];
   if (chartTickerData && chartTickerData.current) {
-    var pEl = document.getElementById('niftyPrice');
-    if (pEl) {
-      var _lastMain = window._lastMainPrice;
-      if (_lastMain != null && chartTickerData.current !== _lastMain) {
-        pEl.classList.remove('tick-up', 'tick-down');
-        void pEl.offsetWidth;
-        pEl.classList.add(chartTickerData.current > _lastMain ? 'tick-up' : 'tick-down');
-      }
-      window._lastMainPrice = chartTickerData.current;
-      pEl.innerText = chartTickerData.current.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-    }
-    var prev = (chartTickerData.prev_close != null && chartTickerData.prev_close > 0) ? chartTickerData.prev_close : ((chartTickerData.open != null && chartTickerData.open > 0) ? chartTickerData.open : chartTickerData.current);
-    var diff = chartTickerData.current - prev;
-    var pct  = (prev > 0) ? (diff / prev) * 100 : 0;
-    var sign = diff >= 0 ? '+' : '';
-    var cEl  = document.getElementById('niftyChange');
-    if (cEl) {
-      cEl.innerText = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
-      cEl.className = 'price-change ' + (diff >= 0 ? 'text-green' : 'text-red');
-    }
-    
-    var oEl = document.getElementById('niftyO');
-    if (oEl && chartTickerData.open) oEl.innerText = chartTickerData.open.toFixed(2);
-    var hEl = document.getElementById('niftyH');
-    if (hEl && chartTickerData.high) hEl.innerText = chartTickerData.high.toFixed(2);
-    var lEl = document.getElementById('niftyL');
-    if (lEl && chartTickerData.low) lEl.innerText = chartTickerData.low.toFixed(2);
+    updateMinichartOHLC(chartTickerData);
 
     // Real-time candlestick streaming via WebSocket (strictly during active market hours only)
     var _off = window._serverClockOffset;
@@ -746,9 +739,12 @@ async function fetchIndexPrices() {
   // only as instant seed BEFORE the REST call returns — see seedUIFromCache().
   // We skip the TTL check here so prices are always fresh on page load.
   try {
+    var ct = window._chartTicker || 'NIFTY';
+    var reqTickers = ['NIFTY','SENSEX','BANKNIFTY','FINNIFTY','MIDCAP','SMALLCAP'];
+    if (reqTickers.indexOf(ct) === -1) reqTickers.push(ct);
     var res = await fetch('/api/live-prices', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tickers: ['NIFTY','SENSEX','BANKNIFTY','FINNIFTY'] })
+      body: JSON.stringify({ tickers: reqTickers })
     });
     if (res.ok) {
       var data = await res.json();
@@ -757,29 +753,9 @@ async function fetchIndexPrices() {
         updateTickerStrip(data);
 
         // Update chart header + OHLC based on selected dropdown ticker
-        var ct = window._chartTicker || 'NIFTY';
-        var nifty = data[ct] || data['NIFTY'];
-        if (nifty && nifty.current) {
-          var pEl = document.getElementById('niftyPrice');
-          if (pEl) pEl.innerText = nifty.current.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-          var prev = (nifty.prev_close != null && nifty.prev_close > 0) ? nifty.prev_close : ((nifty.open != null && nifty.open > 0) ? nifty.open : nifty.current);
-          var diff = nifty.current - prev;
-          var pct  = (prev > 0) ? (diff / prev) * 100 : 0;
-          var sign = diff >= 0 ? '+' : '';
-          var cEl  = document.getElementById('niftyChange');
-          if (cEl) {
-            cEl.innerText = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
-            cEl.className = 'price-change ' + (diff >= 0 ? 'text-green' : 'text-red');
-          }
-          
-          var oEl = document.getElementById('niftyO');
-          if (oEl && nifty.open) oEl.innerText = nifty.open.toFixed(2);
-          var hEl = document.getElementById('niftyH');
-          if (hEl && nifty.high) hEl.innerText = nifty.high.toFixed(2);
-          var lEl = document.getElementById('niftyL');
-          if (lEl && nifty.low)  lEl.innerText = nifty.low.toFixed(2);
-          var cEl2 = document.getElementById('niftyC');
-          if (cEl2 && nifty.prev_close) cEl2.innerText = nifty.prev_close.toFixed(2);
+        var chartData = data[ct] || data['NIFTY'];
+        if (chartData && chartData.current) {
+          updateMinichartOHLC(chartData);
         }
 
         // Also update NIFTY chart area series from HTTP data (fallback when WS idle during active market hours only)
@@ -924,7 +900,7 @@ function _addDays(dateStr, days) {
   fetch('/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(ticker) + '&interval=5m&limit=5000').then(function (r) { return r.json(); }).then(function (data) {
     if (data && data.data) { data = data.data; }
     if (!Array.isArray(data) || data.length === 0) return;
-      data = filterMarketHours(data);
+    data = filterMarketHours(data);
     var areaData = data.map(function (p) {
       return { time: toTimeNum(p.time), value: p.close };
     });
@@ -940,16 +916,42 @@ function _addDays(dateStr, days) {
         var lastBar = candleData[candleData.length - 1];
         window._lastHistoricalCandle = lastBar;
 
-        var _off = window._serverClockOffset;
-        var _nowMs = Date.now() + (_off != null && !isNaN(_off) ? _off : 0);
-        var _IST_OFFSET_MS = 5.5 * 3600 * 1000;
-        var _istDate = new Date(_nowMs + _IST_OFFSET_MS);
-        var _istDay = _istDate.getUTCDay();
-        var _istMin = _istDate.getUTCHours() * 60 + _istDate.getUTCMinutes();
-        var _isMarketActive = (_istDay >= 1 && _istDay <= 5 && _istMin >= (9 * 60 + 15) && _istMin < (15 * 60 + 30));
+        // Synchronize minichart OHLC to accurately reflect the latest session displayed
+        var IST_OFFSET_SEC = 19800; // UTC+5:30
+        var getDayStr = function(tSec) {
+          var d = new Date((tSec + IST_OFFSET_SEC) * 1000);
+          return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+        };
+        var latestDay = getDayStr(lastBar.time);
+        var todayBars = candleData.filter(function(c) { return getDayStr(c.time) === latestDay; });
+        var prevBars  = candleData.filter(function(c) { return getDayStr(c.time) < latestDay; });
 
-        // niftyPrice is only set from /api/live-prices (fetchIndexPrices / onPriceUpdate).
-        // Never override it from chart candle data — that is a different source and causes dual-price divergence.
+        if (todayBars.length > 0) {
+          var dayOpen = todayBars[0].open;
+          var dayHigh = Math.max.apply(null, todayBars.map(function(c) { return c.high; }));
+          var dayLow  = Math.min.apply(null, todayBars.map(function(c) { return c.low; }));
+          var dayClose = todayBars[todayBars.length - 1].close;
+          var prevClose = prevBars.length > 0 ? prevBars[prevBars.length - 1].close : null;
+
+          try {
+            var raw = localStorage.getItem('llp');
+            if (raw) {
+              var cached = JSON.parse(raw);
+              var cachedT = cached[ticker];
+              if (cachedT && cachedT.prev_close > 0) {
+                prevClose = cachedT.prev_close;
+              }
+            }
+          } catch (e) {}
+
+          updateMinichartOHLC({
+            current: dayClose,
+            open: dayOpen,
+            high: dayHigh,
+            low: dayLow,
+            prev_close: prevClose
+          });
+        }
       }
     }
     var sma = calcSMA(areaData, 5);
@@ -1072,10 +1074,9 @@ function initNiftyChart() {
     sel.addEventListener('change', function () {
       window._chartTicker = sel.value;
       window._formingNiftyCandle = null;
-      loadChartData(window._chartTicker);
-      // Also subscribe via WS
-      if (window.DashboardWS) window.DashboardWS.addTickers([window._chartTicker]);
-      // Immediately update header from cache for snappy UI
+      window._lastHistoricalCandle = null;
+
+      // 1. Immediately update header from cache for snappy UI
       try {
         var raw = localStorage.getItem('llp');
         if (raw) {
@@ -1083,28 +1084,19 @@ function initNiftyChart() {
           var ct = window._chartTicker;
           var d = cached[ct];
           if (d && d.current) {
-            var pEl = document.getElementById('niftyPrice');
-            if (pEl) pEl.innerText = d.current.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-            var prev = (d.prev_close != null && d.prev_close > 0) ? d.prev_close : ((d.open != null && d.open > 0) ? d.open : d.current);
-            var diff = d.current - prev;
-            var pct  = (prev > 0) ? (diff / prev) * 100 : 0;
-            var cEl  = document.getElementById('niftyChange');
-            if (cEl) {
-              var sign = diff >= 0 ? '+' : '';
-              cEl.innerText = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
-              cEl.className = 'price-change ' + (diff >= 0 ? 'text-green' : 'text-red');
-            }
-            var oEl = document.getElementById('niftyO');
-            if (oEl && d.open) oEl.innerText = d.open.toFixed(2);
-            var hEl = document.getElementById('niftyH');
-            if (hEl && d.high) hEl.innerText = d.high.toFixed(2);
-            var lEl = document.getElementById('niftyL');
-            if (lEl && d.low)  lEl.innerText = d.low.toFixed(2);
-            var cEl2 = document.getElementById('niftyC');
-            if (cEl2 && d.prev_close) cEl2.innerText = d.prev_close.toFixed(2);
+            updateMinichartOHLC(d);
           }
         }
       } catch (e) {}
+
+      // 2. Fetch fresh index prices immediately
+      if (typeof fetchIndexPrices === 'function') fetchIndexPrices();
+
+      // 3. Load full chart data and sync OHLC from candles
+      loadChartData(window._chartTicker);
+
+      // 4. Also subscribe via WS
+      if (window.DashboardWS) window.DashboardWS.addTickers([window._chartTicker]);
     });
   }
 
@@ -1707,8 +1699,14 @@ async function initBigChart() {
       return;
     }
     
-    // The native price label height is around 22px, centered on Y.
-    countdownEl.style.top = (y + 11) + 'px';
+    // BUGFIX: was `y + 11`, which put the countdown's top edge immediately
+    // against (and on some prices/zoom levels, inside) the native
+    // lightweight-charts last-price label's bottom edge -- both are visible
+    // at the same time only during market hours while a candle is forming,
+    // which is exactly when this got reported as visually overlapping.
+    // Widened to a more conservative gap below the native label instead of
+    // assuming its exact height to the pixel.
+    countdownEl.style.top = (y + 20) + 'px';
     countdownEl.style.display = 'block';
     
     var fc = window._formingCandles && window._formingCandles['i'];
@@ -2276,8 +2274,38 @@ async function initBigChart() {
 
   var _loadId = 0;
   var _loadController = null;
+  var MAX_LOAD_RETRIES = 3;
+  var LOAD_RETRY_DELAYS_MS = [2000, 5000, 10000];
 
-  window.loadData = async function (range) {
+  // Returns true if a retry was scheduled (caller should suppress its own
+  // error UI for this attempt), false if retries are exhausted or this load
+  // has already been superseded by a newer one (range switch / page nav).
+  function _retryLoadData(range, attempt, myLoadId) {
+    if (attempt >= MAX_LOAD_RETRIES) return false;
+    if (myLoadId !== _loadId) return false;
+    var delay = LOAD_RETRY_DELAYS_MS[attempt] || LOAD_RETRY_DELAYS_MS[LOAD_RETRY_DELAYS_MS.length - 1];
+    setTimeout(function () {
+      if (myLoadId !== _loadId) return; // superseded while we were waiting
+      window.loadData(range, attempt + 1);
+    }, delay);
+    return true;
+  }
+
+  // BUGFIX (candle-build delay/stall): window._loadedRange only gets set by
+  // _renderChartData() on a SUCCESSFUL fetch. If the initial fetch for a
+  // freshly-opened ticker fails (network blip, non-200, etc — plausible
+  // since a cold ticker's first view kicks off the backend's lazy-recovery
+  // REST call), _loadedRange never gets set, and processBigChartPrice's own
+  // `activeRange !== window._loadedRange` gate (used to decide whether a
+  // live price tick should update the forming candle) then permanently
+  // blocks candle-building for the rest of the page session -- the price
+  // text keeps updating live (that path doesn't check _loadedRange) while
+  // the candle bar never appears, with no self-correction. Retrying here
+  // (bounded, not called for an intentional AbortError, and only when this
+  // is still the most recently requested load) closes that gap without
+  // changing behavior for the already-common success path.
+  window.loadData = async function (range, _retryAttempt) {
+    _retryAttempt = _retryAttempt || 0;
     window._pendingRange = range;
     _updateURLParam('range', range);
     document.querySelectorAll('.range-item, .range-selector button').forEach(function(el) {
@@ -2335,6 +2363,7 @@ async function initBigChart() {
       var res  = await fetch(url, { signal: signal });
       if (myLoadId !== _loadId) { hideLoader(loader2); return; }
       if (!res.ok) {
+        if (_retryLoadData(range, _retryAttempt, myLoadId)) return;
         showChartError('Server returned ' + res.status + ' for ' + range + ' data');
         return;
       }
@@ -2354,6 +2383,7 @@ async function initBigChart() {
       } catch (e) {}
     } catch (e) {
       if (e.name === 'AbortError') { hideLoader(loader2); return; }
+      if (_retryLoadData(range, _retryAttempt, myLoadId)) return;
       showChartError('Error loading ' + range + ' data: ' + e.message);
     }
     finally {

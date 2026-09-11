@@ -25,6 +25,9 @@ class StockData(Base):
         # database. ix_stock_data_ticker_date_desc (startup-injected, DESC
         # order) is the genuinely useful second index.
         UniqueConstraint('ticker', 'date', name='uix_ticker_date'),
+        # ALEMBIC-01: formalizes the startup "v007" raw-SQL index (see Candle
+        # above for the full rationale).
+        Index("ix_stock_data_ticker_date_desc", "ticker", date.desc()),
     )
 
 class IntradayTick(Base):
@@ -57,6 +60,9 @@ class CurrentDayCandle(Base):
 
     __table_args__ = (
         UniqueConstraint('ticker', 'trading_date', name='uix_ticker_trading_date'),
+        # ALEMBIC-01: formalizes the startup "v007" raw-SQL index (see Candle
+        # above for the full rationale).
+        Index("ix_currentdaycandle_ticker_date", "ticker", trading_date.desc()),
     )
 
 class IntradayCandle5Min(Base):
@@ -145,6 +151,13 @@ class Candle(Base):
         # (ix_candle_ticker_tf_ts below, DESC-ordered, is the genuinely
         # useful second index for this app's "latest first" queries).
         UniqueConstraint("ticker", "timeframe", "timestamp", name="uix_candle_key"),
+        # ALEMBIC-01: formalizes what main.py's startup "v007" block created
+        # via raw `CREATE INDEX IF NOT EXISTS` on every boot -- this index
+        # was real and live in production but had no ORM model, so it was
+        # invisible to Alembic's autogenerate (which only ever sees
+        # target_metadata) and would have been silently missing from a
+        # fresh database built from models.py alone.
+        Index("ix_candle_ticker_tf_ts", "ticker", "timeframe", timestamp.desc()),
     )
 
 
@@ -234,12 +247,21 @@ class StockMetadata(Base):
     exchange = Column(String)
     logo = Column(String, nullable=True)
     base_price = Column(Float, nullable=True)
-    is_active = Column(Boolean, default=True)
-    is_premium = Column(Boolean, default=False)
+    # DRIFT-01: production has always enforced these NOT NULL (the v005
+    # startup migration this replaced created them as
+    # "BOOLEAN NOT NULL DEFAULT ..." -- see alembic/README's drift history);
+    # the model just never declared that. Confirmed zero NULL rows in
+    # production before making this change.
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_premium = Column(Boolean, nullable=False, default=False)
     sector = Column(String, nullable=True)
 
     __table_args__ = (
         UniqueConstraint('ticker', 'exchange', name='uix_ticker_exchange'),
+        # ALEMBIC-01: formalizes the startup "v007" raw-SQL partial index
+        # (see Candle above for the full rationale) -- a partial index over
+        # only the (small) premium-ticker subset.
+        Index("ix_metadata_is_premium", "is_premium", postgresql_where=(is_premium == True)),
     )
 
 # ==================== AUTH MODELS ====================

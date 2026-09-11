@@ -16,6 +16,7 @@ Key rules:
 
 import time
 import threading
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from config.timeframe_registry import TIMEFRAME_REGISTRY
@@ -42,14 +43,23 @@ class CacheEntry:
 
 
 class CandleCache:
+    # Hard cap alongside the existing TTL, so L2 stays bounded even under a
+    # request pattern that keeps generating fresh keys faster than TTL expires
+    # them (e.g. many distinct start/end range queries). Same pattern as
+    # LiveTimeframeManager.MAX_BUILDERS.
+    MAX_L2_ENTRIES = 5000
+
     def __init__(self, live_timeframe_manager=None):
-        self._l2: Dict[str, CacheEntry] = {}
+        # OrderedDict so eviction (oldest-first) and LRU promotion (move_to_end)
+        # are both O(1) — no scanning the cache on every read/write.
+        self._l2: "OrderedDict[str, CacheEntry]" = OrderedDict()
         self._lock = threading.Lock()
         self._live_mgr = live_timeframe_manager
         self._l1_hits = 0
         self._l2_hits = 0
         self._l3_hits = 0
         self._misses = 0
+        self._l2_evictions = 0
         self._cleanup_thread_running = True
         self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
         self._cleanup_thread.start()
@@ -78,7 +88,14 @@ class CandleCache:
             ttl_sec = self._default_ttl(timeframe)
         cache_key = f"{ticker}:{timeframe}:{start}:{end}"
         with self._lock:
+            # Overwriting an existing key leaves its position unchanged in an
+            # OrderedDict, so drop it first — the fresh insert below both
+            # updates the value and moves it to the MRU (end) position.
+            self._l2.pop(cache_key, None)
             self._l2[cache_key] = CacheEntry(cache_key, data, ttl_sec)
+            while len(self._l2) > self.MAX_L2_ENTRIES:
+                self._l2.popitem(last=False)  # O(1): evict the LRU entry
+                self._l2_evictions += 1
 
     def invalidate(self, ticker: str, timeframe: str = None):
         prefix = f"{ticker}:"
@@ -110,6 +127,7 @@ class CandleCache:
             entry = self._l2.get(key)
             if entry is not None and not entry.is_expired():
                 entry.hit()
+                self._l2.move_to_end(key)  # O(1): mark as most-recently-used
                 return list(entry.data)
             if entry is not None and entry.is_expired():
                 del self._l2[key]
@@ -144,6 +162,8 @@ class CandleCache:
             "misses": self._misses,
             "hit_rate_pct": hit_rate,
             "l2_entries": l2_size,
+            "l2_max_entries": self.MAX_L2_ENTRIES,
+            "l2_evictions": self._l2_evictions,
             "total_requests": total,
         }
 

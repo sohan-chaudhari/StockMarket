@@ -151,10 +151,19 @@ class RecoveryService:
 
         if self._yf_downloader is not None and not self._yf_downloader.is_failed(ticker):
             try:
+                # Keep in sync with INDEX_MAP in main.py -- an index missing here
+                # falls through to the `f"{ticker}.NS"` guess below, which isn't a
+                # real yfinance symbol for indices (that suffix is for NSE equities).
+                # FINNIFTY was missing this entry, so every recovery attempt for it
+                # silently failed ("FINNIFTY.NS" doesn't exist on Yahoo Finance),
+                # leaving its 1D candle table stuck for months.
                 YFINANCE_INDEX_MAP = {
                     'NIFTY': '^NSEI',
                     'BANKNIFTY': '^NSEBANK',
                     'SENSEX': '^BSESN',
+                    'FINNIFTY': 'NIFTY_FIN_SERVICE.NS',
+                    'MIDCAP': '^NSEMDCP50',
+                    'SMALLCAP': '^NSESCP250',
                 }
                 yf_ticker = YFINANCE_INDEX_MAP.get(ticker, f"{ticker}.NS")
                 df = self._yf_downloader.download_single(yf_ticker, period="5d", interval="5m")

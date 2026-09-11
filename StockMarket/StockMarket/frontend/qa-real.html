@@ -1,0 +1,39 @@
+﻿<!DOCTYPE html><html><head><meta charset="utf-8"><title>Real Interaction QA</title>
+<link rel="stylesheet" href="drawings.css">
+<style>
+ body{margin:0;background:#0A0A0B;color:#d1d4dc;font:13px system-ui}
+ #wrap{position:relative;width:1200px;height:520px}
+ #chart{position:absolute;inset:0}
+ #log{padding:8px;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:300px;overflow:auto;border-top:1px solid #2a2e39}
+</style></head><body>
+<div id="wrap">
+  <div id="chart"></div>
+  <div id="drawing-canvas-container"><canvas id="drawing-canvas"></canvas></div>
+</div>
+<div id="log">loading&hellip;</div>
+<script src="lightweight-charts.js"></script>
+<script src="drawing-core.js?bust=1786597320"></script>
+<script src="drawings.js?bust=1786597320"></script>
+<script>
+const L=m=>{const d=document.getElementById('log');d.textContent+=m+'\n';};
+const STEP={'5m':300,'15m':900,'1h':3600,'1D':86400};
+const base=1700000000;
+function gen(tf,n,start){const s=STEP[tf],o=[];for(let i=0;i<n;i++){const k=(start||0)+i;
+  const p=100+Math.sin(k/11)*14+Math.cos(k/29)*6;
+  o.push({time:base+k*s,open:p,high:p+2.5,low:p-2.5,close:p+Math.sin(k/5),volume:1000+k});}return o;}
+const chart=LightweightCharts.createChart(document.getElementById('chart'),{
+  width:1200,height:520,
+  layout:{background:{color:'#0A0A0B'},textColor:'#d1d4dc'},
+  grid:{vertLines:{color:'#1e222d'},horzLines:{color:'#1e222d'}},
+  timeScale:{timeVisible:true},rightPriceScale:{borderColor:'#2a2e39'}});
+const series=chart.addCandlestickSeries();
+window.bigChart=chart;window.chart=chart;window.bigCandleSeries=series;window.candleSeries=series;
+window._chartCandles=gen('5m',260,0);
+series.setData(window._chartCandles);
+chart.timeScale().fitContent();
+window.coordinateMapper=window.coordinateMapper||new CoordinateMapper();
+try{window.initToolManager();L('toolManager: '+(window.toolManager?'INITIALIZED':'null'));}
+catch(e){L('initToolManager THREW: '+e.message);}
+L('ready. bars='+window._chartCandles.length);
+</script></body></html>
+

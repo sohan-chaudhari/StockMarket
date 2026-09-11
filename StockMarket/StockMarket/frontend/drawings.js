@@ -11572,33 +11572,62 @@ try {
             this.quantity = options.quantity || 10;
             this.riskRewardRatio = options.riskRewardRatio || 2;
 
-            this.initialHalfSize = 35; // Fixed pixel half-size for initial small square
+            this.initialHalfSize = 40; // Fixed pixel half-size for initial compact square
 
             // Asymmetric width offsets (from entry point)
             this.leftOffset = this.initialHalfSize;
             this.rightOffset = this.initialHalfSize;
 
-            // ---------------------------------------------------------------
-            // PHASE C (BUG-005): financial levels are computed in PRICE SPACE.
-            // ---------------------------------------------------------------
-            // Previously stop/target came from `entryPixel.y +/- initialHalfSize`
-            // -- i.e. SCREEN PIXELS -- so the same click produced different
-            // risk at different zoom levels, and the pixel path yielded a
-            // symmetric offset (R:R ~= 1) while the fallback used 1.5%/3.0%
-            // (R:R = 2). `riskRewardRatio` was declared but never applied.
-            //
-            // Canonical model (preserves the previous fallback's intent):
-            //     risk   = entry * DEFAULT_RISK_PCT      (1.5%, as before)
-            //     reward = risk  * riskRewardRatio
-            // initialHalfSize remains, but is now purely a VISUAL box size.
-            if (this.coords.length >= 1) {
-                this.entryPrice = this.coords[0].price || 0;
-                var _riskPct = (options.riskPct !== undefined) ? options.riskPct : 0.015;
-                var _risk = Math.abs(this.entryPrice) * _riskPct;
-                var _reward = _risk * this.riskRewardRatio;
-                // long: stop BELOW entry, target ABOVE entry
-                this.stopPrice = this.entryPrice - _risk;
-                this.targetPrice = this.entryPrice + _reward;
+            if (options.targetPrice !== undefined && options.stopPrice !== undefined) {
+                this.targetPrice = options.targetPrice;
+                this.stopPrice = options.stopPrice;
+                this.entryPrice = options.entryPrice || (this.coords[0] ? this.coords[0].price : 0);
+            } else {
+                if (this.coords.length >= 1) {
+                    this.entryPrice = this.coords[0].price || 0;
+                }
+                var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
+                var entryPixelY = null;
+                var entryPixelX = null;
+                if (startPos && typeof startPos.y === 'number') {
+                    entryPixelY = startPos.y;
+                    entryPixelX = startPos.x;
+                } else if (this.coords.length >= 1 && cs && typeof cs.coordToPixel === 'function') {
+                    var p = cs.coordToPixel(this.coords[0]);
+                    if (p) {
+                        entryPixelY = p.y;
+                        entryPixelX = p.x;
+                    }
+                }
+
+                var calculated = false;
+                if (cs && typeof cs.pixelToCoord === 'function' && typeof entryPixelY === 'number' && !isNaN(entryPixelY)) {
+                    // Place compact square: target 48px above, stop 24px below
+                    var targetCoord = cs.pixelToCoord(entryPixelX || 100, entryPixelY - 48);
+                    var stopCoord = cs.pixelToCoord(entryPixelX || 100, entryPixelY + 24);
+                    if (targetCoord && typeof targetCoord.price === 'number' && stopCoord && typeof stopCoord.price === 'number') {
+                        if (targetCoord.price > this.entryPrice && stopCoord.price < this.entryPrice) {
+                            this.targetPrice = targetCoord.price;
+                            this.stopPrice = stopCoord.price;
+                            var profit = this.targetPrice - this.entryPrice;
+                            var risk = this.entryPrice - this.stopPrice;
+                            if (risk > 0) {
+                                this.riskRewardRatio = Math.round((profit / risk) * 10) / 10 || 2;
+                            }
+                            calculated = true;
+                        }
+                    }
+                }
+
+                if (!calculated && this.coords.length >= 1) {
+                    this.entryPrice = this.coords[0].price || 0;
+                    var _riskPct = (options.riskPct !== undefined) ? options.riskPct : 0.015;
+                    var _risk = Math.abs(this.entryPrice) * _riskPct;
+                    var _reward = _risk * this.riskRewardRatio;
+                    // long: stop BELOW entry, target ABOVE entry
+                    this.stopPrice = this.entryPrice - _risk;
+                    this.targetPrice = this.entryPrice + _reward;
+                }
             }
         }
 
@@ -11611,9 +11640,13 @@ try {
             if (this.entryPrice === undefined || this.entryPrice === null || this.entryPrice === 0) {
                 if (this.coords && this.coords.length >= 1) {
                     this.entryPrice = this.coords[0].price || 0;
+                }
+            }
+            if (this.targetPrice === undefined || this.targetPrice === null || this.stopPrice === undefined || this.stopPrice === null) {
+                if (this.entryPrice) {
                     var _riskPct = (this.options && this.options.riskPct !== undefined) ? this.options.riskPct : 0.015;
                     var _risk = Math.abs(this.entryPrice) * _riskPct;
-                    var _reward = _risk * this.riskRewardRatio;
+                    var _reward = _risk * (this.riskRewardRatio || 2);
                     this.stopPrice = this.entryPrice - _risk;
                     this.targetPrice = this.entryPrice + _reward;
                 }
@@ -11652,6 +11685,34 @@ try {
             };
         }
 
+        _getCurrentPrice(entryFallback) {
+            if (typeof window.lastLivePrice === 'number' && !isNaN(window.lastLivePrice) && window.lastLivePrice > 0) {
+                return window.lastLivePrice;
+            }
+            if (typeof window._lastCandleClose === 'number' && !isNaN(window._lastCandleClose) && window._lastCandleClose > 0) {
+                return window._lastCandleClose;
+            }
+            if (window._lastHistoricalCandle && typeof window._lastHistoricalCandle.close === 'number' && window._lastHistoricalCandle.close > 0) {
+                return window._lastHistoricalCandle.close;
+            }
+            if (window.coordinateMapper && typeof window.coordinateMapper.lastPrice === 'number' && window.coordinateMapper.lastPrice > 0) {
+                return window.coordinateMapper.lastPrice;
+            }
+            if (typeof window.currentBarPrice === 'number' && window.currentBarPrice > 0) {
+                return window.currentBarPrice;
+            }
+            var candles = window._chartCandles || window.candleData || [];
+            if (candles.length > 0 && candles[candles.length - 1] && typeof candles[candles.length - 1].close === 'number') {
+                return candles[candles.length - 1].close;
+            }
+            var cpEl = document.getElementById('chart-ticker-price') || document.getElementById('header-price');
+            if (cpEl && cpEl.textContent) {
+                var p = parseFloat(cpEl.textContent.replace(/[^\d.]/g, ''));
+                if (!isNaN(p) && p > 0) return p;
+            }
+            return entryFallback || 0;
+        }
+
         draw(ctx, chartState, isSelected, isHovered) {
             this._ensurePrices();
             if (!chartState || this.coords.length < 1) return;
@@ -11660,10 +11721,13 @@ try {
             const entryPixel = chartState.coordToPixel(entryCoord);
             if (!entryPixel) return;
 
-            // Visual enhancement when hovered or selected - soft translucent fill
-            const isHighlighted = isSelected || isHovered;
-            const fillOpacity = isHighlighted ? 0.28 : 0.18;
-            const strokeWidth = isHighlighted ? 2 : 1;
+            const dpr = window.devicePixelRatio || 1;
+            const viewport = (window.coordinateMapper && window.coordinateMapper.viewport) || (chartState && chartState.viewport) || {};
+            const cw = (ctx.canvas ? ctx.canvas.width / dpr : 0) || (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || viewport.width || 800;
+            const ch = (ctx.canvas ? ctx.canvas.height / dpr : 0) || (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) || viewport.height || 500;
+
+            const isHighlighted = !!(isSelected || isHovered);
+            const fillOpacity = isHighlighted ? 0.28 : 0.20;
 
             const entryY = entryPixel.y;
             const left = entryPixel.x - this.leftOffset;
@@ -11678,80 +11742,321 @@ try {
             const stopLossY = stopPixel ? stopPixel.y : entryY + this.initialHalfSize;
 
             // Profit zone (green/teal) - above entry for long
-            ctx.fillStyle = `rgba(38, 166, 154, ${fillOpacity})`;
+            ctx.fillStyle = `rgba(8, 153, 129, ${fillOpacity})`;
             ctx.fillRect(left, targetY, width, entryY - targetY);
-            ctx.strokeStyle = '#26a69a';
-            ctx.lineWidth = strokeWidth;
-            ctx.strokeRect(left, targetY, width, entryY - targetY);
 
             // Loss zone (red) - below entry for long
-            ctx.fillStyle = `rgba(239, 83, 80, ${fillOpacity})`;
+            ctx.fillStyle = `rgba(242, 54, 69, ${fillOpacity})`;
             ctx.fillRect(left, entryY, width, stopLossY - entryY);
-            ctx.strokeStyle = '#ef5350';
-            ctx.lineWidth = strokeWidth;
-            ctx.strokeRect(left, entryY, width, stopLossY - entryY);
 
-            // Draw entry line (solid blue)
+            // Draw border outlines only when highlighted/selected
+            if (isHighlighted) {
+                ctx.strokeStyle = 'rgba(8, 153, 129, 0.7)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(left, targetY, width, entryY - targetY);
+                ctx.strokeStyle = 'rgba(242, 54, 69, 0.7)';
+                ctx.strokeRect(left, entryY, width, stopLossY - entryY);
+            }
+
+            // Draw entry line
             ctx.beginPath();
             ctx.moveTo(left, entryY);
             ctx.lineTo(right, entryY);
-            ctx.strokeStyle = '#2962ff';
-            ctx.lineWidth = isHighlighted ? 2 : 1.5;
+            ctx.strokeStyle = isHighlighted ? '#2962ff' : 'rgba(200, 200, 200, 0.5)';
+            ctx.lineWidth = isHighlighted ? 1.5 : 1;
             ctx.stroke();
 
-            // Calculate P&L values
-            const profitPercent = ((this.targetPrice - this.entryPrice) / this.entryPrice * 100).toFixed(2);
-            const lossPercent = ((this.entryPrice - this.stopPrice) / this.entryPrice * 100).toFixed(2);
-            const profitAmount = ((this.targetPrice - this.entryPrice) * this.quantity).toFixed(0);
-            const lossAmount = ((this.entryPrice - this.stopPrice) * this.quantity).toFixed(0);
+            // Always draw 3 price badges on the Y-Axis price scale (Target, Entry, Stop)
+            this._drawPriceScaleBadge(ctx, targetY, this.targetPrice, '#089981', chartState);
+            this._drawPriceScaleBadge(ctx, entryY, this.entryPrice, '#787b86', chartState);
+            this._drawPriceScaleBadge(ctx, stopLossY, this.stopPrice, '#f23645', chartState);
 
-            // TradingView style labels
-            this.drawPositionLabel(ctx, right + 5, targetY,
-                `Target: ${this.targetPrice.toFixed(2)} (${profitPercent}%) ${this.quantity}, Amount: ${profitAmount}`,
-                '#26a69a');
-
-            this.drawPositionLabel(ctx, right + 5, stopLossY,
-                `Stop: ${this.stopPrice.toFixed(2)} (${lossPercent}%) ${this.quantity}, Amount: ${lossAmount}`,
-                '#ef5350');
-
-            // Center P&L Info Box (TradingView style)
-            const centerX = left + width / 2;
-            const centerY = entryY - (entryY - targetY) / 2;
-            this.drawCenterPnL(ctx, centerX, centerY, profitPercent, profitAmount);
-
-            // Draw handles if highlighted
+            // When selected or hovered, show tooltips, center PnL badge, handles, and X-axis time tags
             if (isHighlighted) {
-                var hs = isSelected ? 6 : 4;
-                // Corner handles (square)
-                ctx.fillStyle = '#fff';
-                ctx.strokeStyle = '#2962ff';
-                ctx.lineWidth = 1.5;
-                [
-                    { x: left, y: targetY }, { x: right, y: targetY },
-                    { x: left, y: stopLossY }, { x: right, y: stopLossY }
-                ].forEach(function(p) {
-                    ctx.fillRect(p.x - hs, p.y - hs, hs * 2, hs * 2);
-                    ctx.strokeRect(p.x - hs, p.y - hs, hs * 2, hs * 2);
-                });
-                // Edge handles (small circles)
-                [
-                    { x: (left + right) / 2, y: targetY, c: '#26a69a' },
-                    { x: (left + right) / 2, y: stopLossY, c: '#ef5350' }
-                ].forEach(function(p) {
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-                    ctx.fillStyle = p.c;
-                    ctx.fill();
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                });
+                const targetDiff = this.targetPrice - this.entryPrice;
+                const targetPct = ((targetDiff / this.entryPrice) * 100).toFixed(3);
+                const targetTicks = Math.round(targetDiff / (window.currentTickSize || 0.05));
+                const targetAmount = (targetDiff * this.quantity).toFixed(2);
+                const targetText = `Target: ${targetDiff.toFixed(2)} (${targetPct}%) ${targetTicks}, Amount: ${targetAmount}`;
+                this._drawTooltipWithPointer(ctx, left, targetY, targetText, '#089981', 'down');
+
+                const stopDiff = this.entryPrice - this.stopPrice;
+                const stopPct = ((stopDiff / this.entryPrice) * 100).toFixed(3);
+                const stopTicks = Math.round(stopDiff / (window.currentTickSize || 0.05));
+                const stopAmount = (stopDiff * this.quantity).toFixed(2);
+                const stopText = `Stop: ${stopDiff.toFixed(2)} (${stopPct}%) ${stopTicks}, Amount: ${stopAmount}`;
+                this._drawTooltipWithPointer(ctx, left, stopLossY, stopText, '#f23645', 'up');
+
+                const currentPrice = this._getCurrentPrice(this.entryPrice);
+                const openPnl = (currentPrice - this.entryPrice) * this.quantity;
+                const centerX = left + width / 2;
+                const centerY = (targetY + entryY) / 2;
+                this._drawCenterPnLBox(ctx, centerX, centerY, openPnl, this.quantity, this.riskRewardRatio);
+
+                // Handles (blue rounded squares)
+                this._drawHandle(ctx, left, targetY);
+                this._drawHandle(ctx, right, targetY);
+                this._drawHandle(ctx, left, entryY);
+                this._drawHandle(ctx, right, entryY);
+                this._drawHandle(ctx, left, stopLossY);
+                this._drawHandle(ctx, right, stopLossY);
+
+                // X-Axis Time Badges
+                const startTimeStr = this._formatTimeBadge(left, entryY, chartState);
+                const endTimeStr = this._formatTimeBadge(right, entryY, chartState);
+                if (startTimeStr) this._drawTimeScaleBadge(ctx, left, startTimeStr, '#2962ff', chartState);
+                if (endTimeStr) this._drawTimeScaleBadge(ctx, right, endTimeStr, '#2962ff', chartState);
             }
+        }
+
+        _drawPriceScaleBadge(ctx, y, price, bgColor, chartState) {
+            if (y === null || y === undefined || isNaN(y) || price === null || price === undefined) return;
+            var text = typeof price === 'number' ? price.toFixed(2) : String(price);
+
+            var dpr = window.devicePixelRatio || 1;
+            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
+                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
+
+            var plotWidth = null;
+            var chart = window.bigChart || window.chart;
+            if (chart && chart.timeScale && typeof chart.timeScale().width === 'function') {
+                plotWidth = chart.timeScale().width();
+            }
+            if (plotWidth === null && window.coordinateMapper && window.coordinateMapper.viewport && window.coordinateMapper.viewport.width) {
+                plotWidth = window.coordinateMapper.viewport.width;
+            }
+            if (plotWidth === null && chartState && chartState.viewport && chartState.viewport.width) {
+                plotWidth = chartState.viewport.width;
+            }
+            if (plotWidth === null || plotWidth <= 0 || plotWidth >= totalWidth) {
+                plotWidth = totalWidth - 65;
+            }
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw = ctx.measureText(text).width;
+            var pad = 6, bh = 18;
+            var bw = Math.min(Math.round(tw + pad * 2), Math.max(40, totalWidth - plotWidth - 2));
+            var rx = plotWidth + 1;
+
+            ctx.fillStyle = bgColor;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(rx, y - bh / 2, bw, bh, 3);
+            } else {
+                ctx.rect(rx, y - bh / 2, bw, bh);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, rx + bw / 2, y);
+            ctx.restore();
+        }
+
+        _drawTimeScaleBadge(ctx, x, text, bgColor, chartState) {
+            if (x === null || x === undefined || isNaN(x) || !text) return;
+            var dpr = window.devicePixelRatio || 1;
+            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
+                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
+            var totalHeight = (ctx.canvas ? ctx.canvas.height / dpr : 0) ||
+                              (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) || 500;
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw = ctx.measureText(text).width;
+            var pad = 8, bh = 20;
+            var bw = tw + pad * 2;
+            var bx = Math.max(2, Math.min(totalWidth - bw - 2, x - bw / 2));
+            var by = totalHeight - bh - 2;
+
+            ctx.fillStyle = bgColor || '#2962ff';
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(bx, by, bw, bh, 3);
+            } else {
+                ctx.rect(bx, by, bw, bh);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, bx + bw / 2, by + bh / 2);
+            ctx.restore();
+        }
+
+        _formatTimeBadge(pixelX, entryY, chartState) {
+            if (!chartState) return null;
+            var coord = chartState.pixelToCoord ? chartState.pixelToCoord(pixelX, entryY) : null;
+            var timeSec = null;
+            var logical = coord ? coord.logical : null;
+
+            if (logical === null || logical === undefined || isNaN(logical)) {
+                if (chartState.xToLogical) logical = chartState.xToLogical(pixelX);
+            }
+
+            var candles = window._chartCandles || window.candleData || [];
+            if (candles.length > 0 && logical !== null && logical !== undefined && !isNaN(logical)) {
+                var idx = Math.round(logical);
+                if (idx >= 0 && idx < candles.length && candles[idx]) {
+                    var ct = candles[idx].time;
+                    if (typeof ct === 'number') timeSec = ct > 1e11 ? ct / 1000 : ct;
+                    else if (typeof ct === 'string') {
+                        var p = Date.parse(ct);
+                        if (!isNaN(p)) timeSec = p / 1000;
+                    }
+                } else if (idx >= candles.length && candles.length > 1) {
+                    var lastC = candles[candles.length - 1];
+                    var prevC = candles[candles.length - 2];
+                    var tLast = typeof lastC.time === 'number' ? (lastC.time > 1e11 ? lastC.time / 1000 : lastC.time) : (Date.parse(lastC.time) / 1000);
+                    var tPrev = typeof prevC.time === 'number' ? (prevC.time > 1e11 ? prevC.time / 1000 : prevC.time) : (Date.parse(prevC.time) / 1000);
+                    var interval = (!isNaN(tLast) && !isNaN(tPrev) && tLast > tPrev) ? (tLast - tPrev) : 300;
+                    timeSec = tLast + (idx - (candles.length - 1)) * interval;
+                } else if (idx < 0 && candles.length > 1) {
+                    var firstC = candles[0];
+                    var secondC = candles[1];
+                    var tFirst = typeof firstC.time === 'number' ? (firstC.time > 1e11 ? firstC.time / 1000 : firstC.time) : (Date.parse(firstC.time) / 1000);
+                    var tSecond = typeof secondC.time === 'number' ? (secondC.time > 1e11 ? secondC.time / 1000 : secondC.time) : (Date.parse(secondC.time) / 1000);
+                    var interval = (!isNaN(tSecond) && !isNaN(tFirst) && tSecond > tFirst) ? (tSecond - tFirst) : 300;
+                    timeSec = tFirst - (0 - idx) * interval;
+                }
+            }
+
+            if (timeSec === null && coord && coord.time !== undefined && coord.time !== null) {
+                if (typeof coord.time === 'number') {
+                    timeSec = coord.time > 1e11 ? coord.time / 1000 : coord.time;
+                } else if (typeof coord.time === 'string') {
+                    var parsed = Date.parse(coord.time);
+                    if (!isNaN(parsed)) timeSec = parsed / 1000;
+                }
+            }
+
+            if (timeSec === null && logical !== null && logical !== undefined && window.coordinateMapper && typeof window.coordinateMapper._logicalToTime === 'function') {
+                var cmTime = window.coordinateMapper._logicalToTime(logical);
+                if (cmTime != null) {
+                    timeSec = typeof cmTime === 'number' ? (cmTime > 1e11 ? cmTime / 1000 : cmTime) : (Date.parse(cmTime) / 1000);
+                }
+            }
+
+            if (timeSec === null || isNaN(timeSec) || timeSec <= 0) return null;
+
+            var d = new Date(timeSec * 1000);
+            var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            var dayName = days[d.getDay()];
+            var dayNum = String(d.getDate()).padStart(2, '0');
+            var mon = months[d.getMonth()];
+            var yr = "'" + String(d.getFullYear()).slice(-2);
+            var hrs = String(d.getHours()).padStart(2, '0');
+            var mins = String(d.getMinutes()).padStart(2, '0');
+
+            if (hrs === '00' && mins === '00' && (window.activeRange === '1D' || window.activeRange === '1W' || window.activeRange === '1M')) {
+                return `${dayName} ${dayNum} ${mon} ${yr}`;
+            }
+            return `${dayName} ${dayNum} ${mon} ${yr}  ${hrs}:${mins}`;
+        }
+
+        _drawTooltipWithPointer(ctx, x, y, text, bgColor, pointerDirection) {
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw = ctx.measureText(text).width;
+            var padX = 8, bh = 22;
+            var bw = tw + padX * 2;
+            var r = 4;
+            var pointerSize = 5;
+            var bx = x;
+            var by = pointerDirection === 'down' ? y - bh - pointerSize : y + pointerSize;
+
+            // Draw rounded box
+            ctx.fillStyle = bgColor;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(bx, by, bw, bh, r);
+            } else {
+                ctx.rect(bx, by, bw, bh);
+            }
+            ctx.fill();
+
+            // Draw pointer triangle
+            var px = bx + 18;
+            ctx.beginPath();
+            if (pointerDirection === 'down') {
+                ctx.moveTo(px - pointerSize, by + bh);
+                ctx.lineTo(px, by + bh + pointerSize);
+                ctx.lineTo(px + pointerSize, by + bh);
+            } else {
+                ctx.moveTo(px - pointerSize, by);
+                ctx.lineTo(px, by - pointerSize);
+                ctx.lineTo(px + pointerSize, by);
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            // Text
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, bx + padX, by + bh / 2);
+            ctx.restore();
+        }
+
+        _drawCenterPnLBox(ctx, centerX, centerY, pnl, qty, rr) {
+            var isPositive = pnl >= 0;
+            var bgColor = isPositive ? 'rgba(8, 153, 129, 0.95)' : 'rgba(242, 54, 69, 0.95)';
+            var pnlText = `Open PnL: ${isPositive ? '' : '-'}${Math.abs(pnl).toFixed(2)}, Qty: ${qty}`;
+            var rrText = `Risk/reward ratio: ${typeof rr === 'number' ? rr.toFixed(2) : rr}`;
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw1 = ctx.measureText(pnlText).width;
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw2 = ctx.measureText(rrText).width;
+            var boxWidth = Math.max(tw1, tw2) + 20;
+            var boxHeight = 36;
+            var bx = centerX - boxWidth / 2;
+            var by = centerY - boxHeight / 2;
+
+            ctx.fillStyle = bgColor;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(bx, by, boxWidth, boxHeight, 5);
+            } else {
+                ctx.rect(bx, by, boxWidth, boxHeight);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.fillText(pnlText, centerX, centerY - 8);
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.fillText(rrText, centerX, centerY + 8);
+            ctx.restore();
+        }
+
+        _drawHandle(ctx, x, y) {
+            var size = 8;
+            ctx.save();
+            ctx.fillStyle = '#131722';
+            ctx.strokeStyle = '#2962ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(x - size / 2, y - size / 2, size, size, 2);
+            } else {
+                ctx.rect(x - size / 2, y - size / 2, size, size);
+            }
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
         }
 
         drawHandle(ctx, p, isSelected, color) {
             const size = isSelected ? 5 : 3;
-            ctx.fillStyle = color;
+            ctx.fillStyle = color || '#2962ff';
             ctx.beginPath();
             ctx.rect(p.x - size, p.y - size, size * 2, size * 2);
             ctx.fill();
@@ -11960,33 +12265,62 @@ try {
             this.quantity = options.quantity || 10;
             this.riskRewardRatio = options.riskRewardRatio || 2;
 
-            this.initialHalfSize = 35; // Fixed pixel half-size for initial small square
+            this.initialHalfSize = 40; // Fixed pixel half-size for initial compact square
 
             // Asymmetric width offsets (from entry point)
             this.leftOffset = this.initialHalfSize;
             this.rightOffset = this.initialHalfSize;
 
-            // ---------------------------------------------------------------
-            // PHASE C (BUG-005): financial levels are computed in PRICE SPACE.
-            // ---------------------------------------------------------------
-            // Previously stop/target came from `entryPixel.y +/- initialHalfSize`
-            // -- i.e. SCREEN PIXELS -- so the same click produced different
-            // risk at different zoom levels, and the pixel path yielded a
-            // symmetric offset (R:R ~= 1) while the fallback used 1.5%/3.0%
-            // (R:R = 2). `riskRewardRatio` was declared but never applied.
-            //
-            // Canonical model (preserves the previous fallback's intent):
-            //     risk   = entry * DEFAULT_RISK_PCT      (1.5%, as before)
-            //     reward = risk  * riskRewardRatio
-            // initialHalfSize remains, but is now purely a VISUAL box size.
-            if (this.coords.length >= 1) {
-                this.entryPrice = this.coords[0].price || 0;
-                var _riskPctS = (options.riskPct !== undefined) ? options.riskPct : 0.015;
-                var _riskS = Math.abs(this.entryPrice) * _riskPctS;
-                var _rewardS = _riskS * this.riskRewardRatio;
-                // short: stop ABOVE entry, target BELOW entry
-                this.stopPrice = this.entryPrice + _riskS;
-                this.targetPrice = this.entryPrice - _rewardS;
+            if (options.targetPrice !== undefined && options.stopPrice !== undefined) {
+                this.targetPrice = options.targetPrice;
+                this.stopPrice = options.stopPrice;
+                this.entryPrice = options.entryPrice || (this.coords[0] ? this.coords[0].price : 0);
+            } else {
+                if (this.coords.length >= 1) {
+                    this.entryPrice = this.coords[0].price || 0;
+                }
+                var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
+                var entryPixelY = null;
+                var entryPixelX = null;
+                if (startPos && typeof startPos.y === 'number') {
+                    entryPixelY = startPos.y;
+                    entryPixelX = startPos.x;
+                } else if (this.coords.length >= 1 && cs && typeof cs.coordToPixel === 'function') {
+                    var p = cs.coordToPixel(this.coords[0]);
+                    if (p) {
+                        entryPixelY = p.y;
+                        entryPixelX = p.x;
+                    }
+                }
+
+                var calculated = false;
+                if (cs && typeof cs.pixelToCoord === 'function' && typeof entryPixelY === 'number' && !isNaN(entryPixelY)) {
+                    // For short: stop is 24px above (higher price), target is 48px below (lower price)
+                    var stopCoord = cs.pixelToCoord(entryPixelX || 100, entryPixelY - 24);
+                    var targetCoord = cs.pixelToCoord(entryPixelX || 100, entryPixelY + 48);
+                    if (targetCoord && typeof targetCoord.price === 'number' && stopCoord && typeof stopCoord.price === 'number') {
+                        if (stopCoord.price > this.entryPrice && targetCoord.price < this.entryPrice) {
+                            this.stopPrice = stopCoord.price;
+                            this.targetPrice = targetCoord.price;
+                            var profit = this.entryPrice - this.targetPrice;
+                            var risk = this.stopPrice - this.entryPrice;
+                            if (risk > 0) {
+                                this.riskRewardRatio = Math.round((profit / risk) * 10) / 10 || 2;
+                            }
+                            calculated = true;
+                        }
+                    }
+                }
+
+                if (!calculated && this.coords.length >= 1) {
+                    this.entryPrice = this.coords[0].price || 0;
+                    var _riskPctS = (options.riskPct !== undefined) ? options.riskPct : 0.015;
+                    var _riskS = Math.abs(this.entryPrice) * _riskPctS;
+                    var _rewardS = _riskS * this.riskRewardRatio;
+                    // short: stop ABOVE entry, target BELOW entry
+                    this.stopPrice = this.entryPrice + _riskS;
+                    this.targetPrice = this.entryPrice - _rewardS;
+                }
             }
         }
 
@@ -11999,9 +12333,13 @@ try {
             if (this.entryPrice === undefined || this.entryPrice === null || this.entryPrice === 0) {
                 if (this.coords && this.coords.length >= 1) {
                     this.entryPrice = this.coords[0].price || 0;
+                }
+            }
+            if (this.targetPrice === undefined || this.targetPrice === null || this.stopPrice === undefined || this.stopPrice === null) {
+                if (this.entryPrice) {
                     var _riskPctS = (this.options && this.options.riskPct !== undefined) ? this.options.riskPct : 0.015;
                     var _riskS = Math.abs(this.entryPrice) * _riskPctS;
-                    var _rewardS = _riskS * this.riskRewardRatio;
+                    var _rewardS = _riskS * (this.riskRewardRatio || 2);
                     this.stopPrice = this.entryPrice + _riskS;
                     this.targetPrice = this.entryPrice - _rewardS;
                 }
@@ -12040,6 +12378,34 @@ try {
             };
         }
 
+        _getCurrentPrice(entryFallback) {
+            if (typeof window.lastLivePrice === 'number' && !isNaN(window.lastLivePrice) && window.lastLivePrice > 0) {
+                return window.lastLivePrice;
+            }
+            if (typeof window._lastCandleClose === 'number' && !isNaN(window._lastCandleClose) && window._lastCandleClose > 0) {
+                return window._lastCandleClose;
+            }
+            if (window._lastHistoricalCandle && typeof window._lastHistoricalCandle.close === 'number' && window._lastHistoricalCandle.close > 0) {
+                return window._lastHistoricalCandle.close;
+            }
+            if (window.coordinateMapper && typeof window.coordinateMapper.lastPrice === 'number' && window.coordinateMapper.lastPrice > 0) {
+                return window.coordinateMapper.lastPrice;
+            }
+            if (typeof window.currentBarPrice === 'number' && window.currentBarPrice > 0) {
+                return window.currentBarPrice;
+            }
+            var candles = window._chartCandles || window.candleData || [];
+            if (candles.length > 0 && candles[candles.length - 1] && typeof candles[candles.length - 1].close === 'number') {
+                return candles[candles.length - 1].close;
+            }
+            var cpEl = document.getElementById('chart-ticker-price') || document.getElementById('header-price');
+            if (cpEl && cpEl.textContent) {
+                var p = parseFloat(cpEl.textContent.replace(/[^\d.]/g, ''));
+                if (!isNaN(p) && p > 0) return p;
+            }
+            return entryFallback || 0;
+        }
+
         draw(ctx, chartState, isSelected, isHovered) {
             this._ensurePrices();
             if (!chartState || this.coords.length < 1) return;
@@ -12048,10 +12414,13 @@ try {
             const entryPixel = chartState.coordToPixel(entryCoord);
             if (!entryPixel) return;
 
-            // Visual enhancement when hovered or selected - soft translucent fill
-            const isHighlighted = isSelected || isHovered;
-            const fillOpacity = isHighlighted ? 0.28 : 0.18;
-            const strokeWidth = isHighlighted ? 2 : 1;
+            const dpr = window.devicePixelRatio || 1;
+            const viewport = (window.coordinateMapper && window.coordinateMapper.viewport) || (chartState && chartState.viewport) || {};
+            const cw = (ctx.canvas ? ctx.canvas.width / dpr : 0) || (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || viewport.width || 800;
+            const ch = (ctx.canvas ? ctx.canvas.height / dpr : 0) || (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) || viewport.height || 500;
+
+            const isHighlighted = !!(isSelected || isHovered);
+            const fillOpacity = isHighlighted ? 0.28 : 0.20;
 
             const entryY = entryPixel.y;
             const left = entryPixel.x - this.leftOffset;
@@ -12066,74 +12435,328 @@ try {
             const stopLossY = stopPixel ? stopPixel.y : entryY - this.initialHalfSize; // Above entry for short
 
             // Loss zone (red) - above entry for short
-            ctx.fillStyle = `rgba(239, 83, 80, ${fillOpacity})`;
+            ctx.fillStyle = `rgba(242, 54, 69, ${fillOpacity})`;
             ctx.fillRect(left, stopLossY, width, entryY - stopLossY);
-            ctx.strokeStyle = '#ef5350';
-            ctx.lineWidth = strokeWidth;
-            ctx.strokeRect(left, stopLossY, width, entryY - stopLossY);
 
             // Profit zone (green/teal) - below entry for short
-            ctx.fillStyle = `rgba(38, 166, 154, ${fillOpacity})`;
+            ctx.fillStyle = `rgba(8, 153, 129, ${fillOpacity})`;
             ctx.fillRect(left, entryY, width, targetY - entryY);
-            ctx.strokeStyle = '#26a69a';
-            ctx.lineWidth = strokeWidth;
-            ctx.strokeRect(left, entryY, width, targetY - entryY);
 
-            // Draw entry line (solid blue)
+            // Draw border outlines only when highlighted/selected
+            if (isHighlighted) {
+                ctx.strokeStyle = 'rgba(242, 54, 69, 0.7)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(left, stopLossY, width, entryY - stopLossY);
+                ctx.strokeStyle = 'rgba(8, 153, 129, 0.7)';
+                ctx.strokeRect(left, entryY, width, targetY - entryY);
+            }
+
+            // Draw entry line
             ctx.beginPath();
             ctx.moveTo(left, entryY);
             ctx.lineTo(right, entryY);
-            ctx.strokeStyle = '#2962ff';
-            ctx.lineWidth = isHighlighted ? 2 : 1.5;
+            ctx.strokeStyle = isHighlighted ? '#2962ff' : 'rgba(200, 200, 200, 0.5)';
+            ctx.lineWidth = isHighlighted ? 1.5 : 1;
             ctx.stroke();
 
-            // Calculate P&L values
-            const profitPercent = ((this.entryPrice - this.targetPrice) / this.entryPrice * 100).toFixed(2);
-            const lossPercent = ((this.stopPrice - this.entryPrice) / this.entryPrice * 100).toFixed(2);
-            const profitAmount = ((this.entryPrice - this.targetPrice) * this.quantity).toFixed(0);
-            const lossAmount = ((this.stopPrice - this.entryPrice) * this.quantity).toFixed(0);
+            // Always draw 3 price badges on the Y-Axis price scale (Target, Entry, Stop)
+            this._drawPriceScaleBadge(ctx, targetY, this.targetPrice, '#089981', chartState);
+            this._drawPriceScaleBadge(ctx, entryY, this.entryPrice, '#787b86', chartState);
+            this._drawPriceScaleBadge(ctx, stopLossY, this.stopPrice, '#f23645', chartState);
 
-            // TradingView style labels
-            this.drawPositionLabel(ctx, right + 5, stopLossY,
-                `Stop: ${this.stopPrice.toFixed(2)} (${lossPercent}%) ${this.quantity}, Amount: ${lossAmount}`,
-                '#ef5350');
-
-            this.drawPositionLabel(ctx, right + 5, targetY,
-                `Target: ${this.targetPrice.toFixed(2)} (${profitPercent}%) ${this.quantity}, Amount: ${profitAmount}`,
-                '#26a69a');
-
-            // Center P&L Info Box (TradingView style)
-            const centerX = left + width / 2;
-            const centerY = entryY + (targetY - entryY) / 2;
-            this.drawCenterPnL(ctx, centerX, centerY, profitPercent, profitAmount);
-
-            // Draw handles if highlighted
+            // When selected or hovered, show tooltips, center PnL badge, handles, and X-axis time tags
             if (isHighlighted) {
-                var hs = isSelected ? 6 : 4;
-                // Corner handles (square)
-                ctx.fillStyle = '#fff';
-                ctx.strokeStyle = '#2962ff';
-                ctx.lineWidth = 1.5;
-                [
-                    { x: left, y: stopLossY }, { x: right, y: stopLossY },
-                    { x: left, y: targetY }, { x: right, y: targetY }
-                ].forEach(function(p) {
-                    ctx.fillRect(p.x - hs, p.y - hs, hs * 2, hs * 2);
-                    ctx.strokeRect(p.x - hs, p.y - hs, hs * 2, hs * 2);
-                });
-                // Edge handles (small circles)
-                [
-                    { x: (left + right) / 2, y: stopLossY, c: '#ef5350' },
-                    { x: (left + right) / 2, y: targetY, c: '#26a69a' }
-                ].forEach(function(p) {
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-                    ctx.fillStyle = p.c;
-                    ctx.fill();
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 1;
-                    ctx.stroke();
-                });
+                const stopDiff = this.stopPrice - this.entryPrice;
+                const stopPct = ((stopDiff / this.entryPrice) * 100).toFixed(3);
+                const stopTicks = Math.round(stopDiff / (window.currentTickSize || 0.05));
+                const stopAmount = (stopDiff * this.quantity).toFixed(2);
+                const stopText = `Stop: ${stopDiff.toFixed(2)} (${stopPct}%) ${stopTicks}, Amount: ${stopAmount}`;
+                this._drawTooltipWithPointer(ctx, left, stopLossY, stopText, '#f23645', 'down');
+
+                const targetDiff = this.entryPrice - this.targetPrice;
+                const targetPct = ((targetDiff / this.entryPrice) * 100).toFixed(3);
+                const targetTicks = Math.round(targetDiff / (window.currentTickSize || 0.05));
+                const targetAmount = (targetDiff * this.quantity).toFixed(2);
+                const targetText = `Target: ${targetDiff.toFixed(2)} (${targetPct}%) ${targetTicks}, Amount: ${targetAmount}`;
+                this._drawTooltipWithPointer(ctx, left, targetY, targetText, '#089981', 'up');
+
+                const currentPrice = this._getCurrentPrice(this.entryPrice);
+                const openPnl = (this.entryPrice - currentPrice) * this.quantity;
+                const centerX = left + width / 2;
+                const centerY = (targetY + entryY) / 2;
+                this._drawCenterPnLBox(ctx, centerX, centerY, openPnl, this.quantity, this.riskRewardRatio);
+
+                // Handles (blue rounded squares)
+                this._drawHandle(ctx, left, stopLossY);
+                this._drawHandle(ctx, right, stopLossY);
+                this._drawHandle(ctx, left, entryY);
+                this._drawHandle(ctx, right, entryY);
+                this._drawHandle(ctx, left, targetY);
+                this._drawHandle(ctx, right, targetY);
+
+                // X-Axis Time Badges
+                const startTimeStr = this._formatTimeBadge(left, entryY, chartState);
+                const endTimeStr = this._formatTimeBadge(right, entryY, chartState);
+                if (startTimeStr) this._drawTimeScaleBadge(ctx, left, startTimeStr, '#2962ff', chartState);
+                if (endTimeStr) this._drawTimeScaleBadge(ctx, right, endTimeStr, '#2962ff', chartState);
+            }
+        }
+
+        _drawPriceScaleBadge(ctx, y, price, bgColor, chartState) {
+            if (y === null || y === undefined || isNaN(y) || price === null || price === undefined) return;
+            var text = typeof price === 'number' ? price.toFixed(2) : String(price);
+
+            var dpr = window.devicePixelRatio || 1;
+            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
+                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
+
+            var plotWidth = null;
+            var chart = window.bigChart || window.chart;
+            if (chart && chart.timeScale && typeof chart.timeScale().width === 'function') {
+                plotWidth = chart.timeScale().width();
+            }
+            if (plotWidth === null && window.coordinateMapper && window.coordinateMapper.viewport && window.coordinateMapper.viewport.width) {
+                plotWidth = window.coordinateMapper.viewport.width;
+            }
+            if (plotWidth === null && chartState && chartState.viewport && chartState.viewport.width) {
+                plotWidth = chartState.viewport.width;
+            }
+            if (plotWidth === null || plotWidth <= 0 || plotWidth >= totalWidth) {
+                plotWidth = totalWidth - 65;
+            }
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw = ctx.measureText(text).width;
+            var pad = 6, bh = 18;
+            var bw = Math.min(Math.round(tw + pad * 2), Math.max(40, totalWidth - plotWidth - 2));
+            var rx = plotWidth + 1;
+
+            ctx.fillStyle = bgColor;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(rx, y - bh / 2, bw, bh, 3);
+            } else {
+                ctx.rect(rx, y - bh / 2, bw, bh);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, rx + bw / 2, y);
+            ctx.restore();
+        }
+
+        _drawTimeScaleBadge(ctx, x, text, bgColor, chartState) {
+            if (x === null || x === undefined || isNaN(x) || !text) return;
+            var dpr = window.devicePixelRatio || 1;
+            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
+                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
+            var totalHeight = (ctx.canvas ? ctx.canvas.height / dpr : 0) ||
+                              (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) || 500;
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw = ctx.measureText(text).width;
+            var pad = 8, bh = 20;
+            var bw = tw + pad * 2;
+            var bx = Math.max(2, Math.min(totalWidth - bw - 2, x - bw / 2));
+            var by = totalHeight - bh - 2;
+
+            ctx.fillStyle = bgColor || '#2962ff';
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(bx, by, bw, bh, 3);
+            } else {
+                ctx.rect(bx, by, bw, bh);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, bx + bw / 2, by + bh / 2);
+            ctx.restore();
+        }
+
+        _formatTimeBadge(pixelX, entryY, chartState) {
+            if (!chartState) return null;
+            var coord = chartState.pixelToCoord ? chartState.pixelToCoord(pixelX, entryY) : null;
+            var timeSec = null;
+            var logical = coord ? coord.logical : null;
+
+            if (logical === null || logical === undefined || isNaN(logical)) {
+                if (chartState.xToLogical) logical = chartState.xToLogical(pixelX);
+            }
+
+            var candles = window._chartCandles || window.candleData || [];
+            if (candles.length > 0 && logical !== null && logical !== undefined && !isNaN(logical)) {
+                var idx = Math.round(logical);
+                if (idx >= 0 && idx < candles.length && candles[idx]) {
+                    var ct = candles[idx].time;
+                    if (typeof ct === 'number') timeSec = ct > 1e11 ? ct / 1000 : ct;
+                    else if (typeof ct === 'string') {
+                        var p = Date.parse(ct);
+                        if (!isNaN(p)) timeSec = p / 1000;
+                    }
+                } else if (idx >= candles.length && candles.length > 1) {
+                    var lastC = candles[candles.length - 1];
+                    var prevC = candles[candles.length - 2];
+                    var tLast = typeof lastC.time === 'number' ? (lastC.time > 1e11 ? lastC.time / 1000 : lastC.time) : (Date.parse(lastC.time) / 1000);
+                    var tPrev = typeof prevC.time === 'number' ? (prevC.time > 1e11 ? prevC.time / 1000 : prevC.time) : (Date.parse(prevC.time) / 1000);
+                    var interval = (!isNaN(tLast) && !isNaN(tPrev) && tLast > tPrev) ? (tLast - tPrev) : 300;
+                    timeSec = tLast + (idx - (candles.length - 1)) * interval;
+                } else if (idx < 0 && candles.length > 1) {
+                    var firstC = candles[0];
+                    var secondC = candles[1];
+                    var tFirst = typeof firstC.time === 'number' ? (firstC.time > 1e11 ? firstC.time / 1000 : firstC.time) : (Date.parse(firstC.time) / 1000);
+                    var tSecond = typeof secondC.time === 'number' ? (secondC.time > 1e11 ? secondC.time / 1000 : secondC.time) : (Date.parse(secondC.time) / 1000);
+                    var interval = (!isNaN(tSecond) && !isNaN(tFirst) && tSecond > tFirst) ? (tSecond - tFirst) : 300;
+                    timeSec = tFirst - (0 - idx) * interval;
+                }
+            }
+
+            if (timeSec === null && coord && coord.time !== undefined && coord.time !== null) {
+                if (typeof coord.time === 'number') {
+                    timeSec = coord.time > 1e11 ? coord.time / 1000 : coord.time;
+                } else if (typeof coord.time === 'string') {
+                    var parsed = Date.parse(coord.time);
+                    if (!isNaN(parsed)) timeSec = parsed / 1000;
+                }
+            }
+
+            if (timeSec === null && logical !== null && logical !== undefined && window.coordinateMapper && typeof window.coordinateMapper._logicalToTime === 'function') {
+                var cmTime = window.coordinateMapper._logicalToTime(logical);
+                if (cmTime != null) {
+                    timeSec = typeof cmTime === 'number' ? (cmTime > 1e11 ? cmTime / 1000 : cmTime) : (Date.parse(cmTime) / 1000);
+                }
+            }
+
+            if (timeSec === null || isNaN(timeSec) || timeSec <= 0) return null;
+
+            var d = new Date(timeSec * 1000);
+            var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            var dayName = days[d.getDay()];
+            var dayNum = String(d.getDate()).padStart(2, '0');
+            var mon = months[d.getMonth()];
+            var yr = "'" + String(d.getFullYear()).slice(-2);
+            var hrs = String(d.getHours()).padStart(2, '0');
+            var mins = String(d.getMinutes()).padStart(2, '0');
+
+            if (hrs === '00' && mins === '00' && (window.activeRange === '1D' || window.activeRange === '1W' || window.activeRange === '1M')) {
+                return `${dayName} ${dayNum} ${mon} ${yr}`;
+            }
+            return `${dayName} ${dayNum} ${mon} ${yr}  ${hrs}:${mins}`;
+        }
+
+        _drawTooltipWithPointer(ctx, x, y, text, bgColor, pointerDirection) {
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw = ctx.measureText(text).width;
+            var padX = 8, bh = 22;
+            var bw = tw + padX * 2;
+            var r = 4;
+            var pointerSize = 5;
+            var bx = x;
+            var by = pointerDirection === 'down' ? y - bh - pointerSize : y + pointerSize;
+
+            // Draw rounded box
+            ctx.fillStyle = bgColor;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(bx, by, bw, bh, r);
+            } else {
+                ctx.rect(bx, by, bw, bh);
+            }
+            ctx.fill();
+
+            // Draw pointer triangle
+            var px = bx + 18;
+            ctx.beginPath();
+            if (pointerDirection === 'down') {
+                ctx.moveTo(px - pointerSize, by + bh);
+                ctx.lineTo(px, by + bh + pointerSize);
+                ctx.lineTo(px + pointerSize, by + bh);
+            } else {
+                ctx.moveTo(px - pointerSize, by);
+                ctx.lineTo(px, by - pointerSize);
+                ctx.lineTo(px + pointerSize, by);
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            // Text
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, bx + padX, by + bh / 2);
+            ctx.restore();
+        }
+
+        _drawCenterPnLBox(ctx, centerX, centerY, pnl, qty, rr) {
+            var isPositive = pnl >= 0;
+            var bgColor = isPositive ? 'rgba(8, 153, 129, 0.95)' : 'rgba(242, 54, 69, 0.95)';
+            var pnlText = `Open PnL: ${isPositive ? '' : '-'}${Math.abs(pnl).toFixed(2)}, Qty: ${qty}`;
+            var rrText = `Risk/reward ratio: ${typeof rr === 'number' ? rr.toFixed(2) : rr}`;
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw1 = ctx.measureText(pnlText).width;
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            var tw2 = ctx.measureText(rrText).width;
+            var boxWidth = Math.max(tw1, tw2) + 20;
+            var boxHeight = 36;
+            var bx = centerX - boxWidth / 2;
+            var by = centerY - boxHeight / 2;
+
+            ctx.fillStyle = bgColor;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(bx, by, boxWidth, boxHeight, 5);
+            } else {
+                ctx.rect(bx, by, boxWidth, boxHeight);
+            }
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.fillText(pnlText, centerX, centerY - 8);
+            ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+            ctx.fillText(rrText, centerX, centerY + 8);
+            ctx.restore();
+        }
+
+        _drawHandle(ctx, x, y) {
+            var size = 8;
+            ctx.save();
+            ctx.fillStyle = '#131722';
+            ctx.strokeStyle = '#2962ff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(x - size / 2, y - size / 2, size, size, 2);
+            } else {
+                ctx.rect(x - size / 2, y - size / 2, size, size);
+            }
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        drawHandle(ctx, p, isSelected, color) {
+            const size = isSelected ? 5 : 3;
+            ctx.fillStyle = color || '#2962ff';
+            ctx.beginPath();
+            ctx.rect(p.x - size, p.y - size, size * 2, size * 2);
+            ctx.fill();
+            if (isSelected) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
             }
         }
 

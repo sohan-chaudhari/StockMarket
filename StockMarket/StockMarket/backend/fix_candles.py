@@ -2,7 +2,7 @@ import sys
 from sqlalchemy import create_engine, text
 from models import Candle
 
-DB_URL = "postgresql://postgres:medikart%403145@localhost/stock_data"
+DB_URL = "postgresql://postgres:YOUR_POSTGRES_PASSWORD@localhost/stock_data"
 engine = create_engine(DB_URL)
 
 try:

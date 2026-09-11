@@ -1,0 +1,77 @@
+﻿<!DOCTYPE html><html><head><meta charset="utf-8"><title>Drawing Tools QA</title>
+<style>
+ body{margin:0;background:#0A0A0B;color:#d1d4dc;font:13px system-ui}
+ #bar{padding:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;border-bottom:1px solid #2a2e39}
+ button{background:#2a2e39;color:#d1d4dc;border:1px solid #363a45;padding:5px 9px;border-radius:4px;cursor:pointer}
+ button:hover{background:#363a45}
+ #chart{width:100%;height:520px;position:relative}
+ #log{padding:8px;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;max-height:190px;overflow:auto;border-top:1px solid #2a2e39}
+ .ok{color:#26a69a}.bad{color:#ef5350}.warn{color:#ffb74d}
+</style></head><body>
+<div id="bar">
+  <b>QA harness</b>
+  <button onclick="TF('5m')">5m</button><button onclick="TF('15m')">15m</button>
+  <button onclick="TF('1h')">1h</button><button onclick="TF('1D')">1D</button>
+  <button onclick="PREPEND()">prepend history</button>
+  <button onclick="RUNALL()">RUN ALL TESTS</button>
+  <span id="tf">tf=5m</span>
+</div>
+<div id="chart"></div>
+<div id="log">loading&hellip;</div>
+<script src="lightweight-charts.js"></script>
+<script src="drawing-core.js"></script>
+<script src="drawings.js"></script>
+<script>
+const L=(m,c)=>{const d=document.getElementById('log');d.innerHTML+=`<span class="${c||''}">${m}</span>\n`;d.scrollTop=d.scrollHeight;};
+const STEP={'5m':300,'15m':900,'1h':3600,'1D':86400};
+let curTF='5m', base=1700000000;
+function gen(tf,n,startIdx){const s=STEP[tf],out=[];for(let i=0;i<n;i++){const k=(startIdx||0)+i;const p=100+Math.sin(k/11)*14+Math.cos(k/29)*6;
+  out.push({time:base+k*s,open:p,high:p+2.5,low:p-2.5,close:p+Math.sin(k/5),volume:1000+k});}return out;}
+const chart=LightweightCharts.createChart(document.getElementById('chart'),{
+  layout:{background:{color:'#0A0A0B'},textColor:'#d1d4dc'},grid:{vertLines:{color:'#1e222d'},horzLines:{color:'#1e222d'}},
+  timeScale:{timeVisible:true,secondsVisible:false},rightPriceScale:{borderColor:'#2a2e39'}});
+const series=chart.addCandlestickSeries();
+window.bigChart=chart; window.chart=chart; window.bigCandleSeries=series; window.candleSeries=series;
+function setTF(tf){curTF=tf;const d=gen(tf,260,0);window._chartCandles=d;series.setData(d);chart.timeScale().fitContent();document.getElementById('tf').textContent='tf='+tf;}
+setTF('5m');
+if(window.initToolManager){try{window.initToolManager();}catch(e){L('initToolManager: '+e.message,'warn');}}
+window.coordinateMapper=window.coordinateMapper||(typeof CoordinateMapper==='function'?new CoordinateMapper():null);
+const CM=()=>window.coordinateMapper;
+function TF(tf){const anchors=snapshot();setTF(tf);setTimeout(()=>verify(anchors,'timeframe&rarr;'+tf),120);}
+function snapshot(){return (window._qaDrawings||[]).map(d=>({id:d.id,pts:(d.coords||[]).map(c=>({time:c.time,price:c.price}))}));}
+function verify(before,label){let bad=0;const after=snapshot();
+  before.forEach((b,i)=>{const a=after[i];if(!a)return;b.pts.forEach((p,j)=>{const q=a.pts[j];if(!q)return;
+    if(p.time!==q.time||Math.abs(p.price-q.price)>1e-9){bad++;L(`  ANCHOR MOVED ${label}: ${p.time},${p.price} &rarr; ${q.time},${q.price}`,'bad');}});});
+  L(`${label}: ${bad===0?'PASS anchors stable':'FAIL '+bad+' moved'}`,bad===0?'ok':'bad');return bad===0;}
+function PREPEND(){const anchors=snapshot();const older=gen(curTF,80,-80);const merged=older.concat(window._chartCandles);
+  window._chartCandles=merged;series.setData(merged);setTimeout(()=>verify(anchors,'history prepend'),120);}
+window._qaDrawings=[];
+function mk(type,n){const TD=window.__TD;if(!TD||!TD[type]){L('no tool '+type,'bad');return null;}
+  const def=TD[type];const cs=CM();const bars=window._chartCandles;
+  const mkp=i=>{const b=bars[60+i*25];const x=chart.timeScale().logicalToCoordinate(60+i*25);const y=series.priceToCoordinate(b.close);return{x,y};};
+  const opts={points:def.points};const inst=new def.class(mkp(0),cs,opts);
+  for(let i=1;i<(n||def.points||2);i++){if(inst.addPoint)inst.addPoint(mkp(i),cs);}
+  inst.id=type+'_'+Date.now();window._qaDrawings.push(inst);return inst;}
+function RUNALL(){document.getElementById('log').innerHTML='';
+  L('=== RUNTIME QA ===');
+  const cm=CM();L('coordinateMapper: '+(cm?'ok':'MISSING'),cm?'ok':'bad');
+  // exact mapping
+  const b=window._chartCandles;const t=b[100].time;const lg=cm.timeToLogical(t);const back=cm.logicalToTime(lg);
+  L(`exact map: time&rarr;logical&rarr;time ${back===t?'PASS':'FAIL'} (${t} vs ${back})`,back===t?'ok':'bad');
+  L(`xToTime returns TIME: ${cm.xToTime(300)>1e9?'PASS':'FAIL'} (${cm.xToTime(300)})`,cm.xToTime(300)>1e9?'ok':'bad');
+  // create tools
+  window._qaDrawings=[];
+  ['trendline','fib_retracement','rectangle','long_position','channel','gartley'].forEach(k=>{
+    try{const i=mk(k);L(`create ${k}: ${i?'ok':'FAIL'} coords=${i?i.coords.length:0} time=${i&&i.coords.every(c=>c.time)?'yes':'NO'}`,i&&i.coords.every(c=>c.time)?'ok':'bad');}
+    catch(e){L(`create ${k}: THREW ${e.message}`,'bad');}});
+  // position math
+  try{const lp=window._qaDrawings.find(d=>d.entryPrice!==undefined);
+    if(lp){const risk=Math.abs(lp.entryPrice-lp.stopPrice),rew=Math.abs(lp.targetPrice-lp.entryPrice);
+      L(`long_position entry=${lp.entryPrice.toFixed(2)} stop=${lp.stopPrice.toFixed(2)} tgt=${lp.targetPrice.toFixed(2)} R:R=${(rew/risk).toFixed(2)}`,Math.abs(rew/risk-2)<0.01?'ok':'bad');}}catch(e){L('pos: '+e.message,'bad');}
+  L('now click 5m/15m/1h/1D and "prepend history" to verify anchors','warn');
+}
+// expose registry for QA
+try{window.__TD=window.__ToolDefinitions||null;}catch(e){}
+L('loaded. bars='+window._chartCandles.length+' tools='+(window.__TD?Object.keys(window.__TD).length:'REGISTRY NOT EXPOSED'),window.__TD?'ok':'warn');
+</script></body></html>
+

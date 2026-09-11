@@ -5,6 +5,7 @@ Centralized service for fetching live stock prices from Angel One API
 
 import os
 import asyncio
+import logging
 import requests
 from typing import Optional, Dict
 from SmartApi import SmartConnect
@@ -19,6 +20,14 @@ backend_dir = pathlib.Path(__file__).parent.resolve()
 env_path = backend_dir / ".env"
 load_dotenv(dotenv_path=env_path)
 
+# HIGH-04 fix (Batch 4): _handle_ws_tick runs on EVERY incoming tick from the
+# AngelOne WS, per subscribed ticker (potentially thousands during market
+# hours). It previously used bare print() even on its hot path -- logger.debug
+# costs nothing when the level is above DEBUG (the format args are never
+# evaluated), unlike an f-string print() which always pays the formatting
+# cost and always writes to stdout regardless of level.
+logger = logging.getLogger(__name__)
+
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 import json
@@ -27,6 +36,11 @@ from aggregator import candle_aggregator
 from hardcoded_tokens import HARDCODED_TOKENS as _HARDCODED_TOKENS
 
 INSTRUMENTS_CACHE_FILE = "instruments_cache.json"
+
+# HIGH-04: rate limit for the exchange_timestamp-fallback debug log, matching
+# the pattern main.py's event-loop-lag probe already uses for a similar
+# "could fire every tick" diagnostic.
+_EXCH_TS_FALLBACK_LOG_INTERVAL = 60  # seconds
 
 TICKER_ALIASES = {
     "MARUTL": "MARUTI",
@@ -88,6 +102,12 @@ class AngelOneService:
         # WS reconnect intact instead of resetting exactly when it's needed.
         self._last_tick_fingerprint: Dict[str, tuple] = {}
         self._duplicate_tick_count = 0
+        # HIGH-04: cumulative count of ticks missing/zero exchange_timestamp
+        # (never reset -- meant for stats/observability), plus a rate-limit
+        # marker so the corresponding debug log line fires at most once per
+        # _EXCH_TS_FALLBACK_LOG_INTERVAL even if every tick hits this path.
+        self._exch_ts_fallback_count = 0
+        self._exch_ts_fallback_last_log = 0.0
         self.subscribed_tokens = set()
         self.token_lock = threading.Lock()
         self.subscription_times = {} # ticker -> timestamp
@@ -167,7 +187,15 @@ class AngelOneService:
             old_sws = getattr(self, 'sws', None)
             if old_sws:
                 try:
-                    old_sws.close()
+                    # SMOKE-01 fix: SmartWebSocketV2 has no .close() method (a
+                    # real production smoke test proved this -- confirmed via
+                    # dir(SmartWebSocketV2): the actual method is
+                    # close_connection()). This silently no-op'd behind the
+                    # broad except below on every single reconnect/re-login
+                    # since RT-07 was written -- the old socket's connect()
+                    # loop was never actually closed, exactly the leak RT-07
+                    # was meant to prevent.
+                    old_sws.close_connection()
                 except Exception:
                     pass
 
@@ -294,6 +322,7 @@ class AngelOneService:
         return {
             "duplicate_ticks_rejected": self._duplicate_tick_count,
             "tickers_tracked": len(self._last_tick_fingerprint),
+            "exchange_timestamp_fallbacks": self._exch_ts_fallback_count,
         }
 
     def _handle_ws_tick(self, msg):
@@ -323,7 +352,24 @@ class AngelOneService:
                             exch_ts = exch_ts / 1000.0
                         if exch_ts < 1.5e9:  # unreasonably old or zero — use server time
                             if exch_ts <= 0:
-                                print(f"[AngelWS] {ticker} exchange_timestamp=0, falling back to server time")
+                                # HIGH-04 fix: this used to be an unconditional
+                                # print() on every tick that hits this branch --
+                                # a real risk given AngelOne alternates full-quote
+                                # and LTP-only packets (the latter commonly omit
+                                # exchange_timestamp). Now a cheap counter
+                                # (always) plus a rate-limited debug log (at most
+                                # once per _EXCH_TS_FALLBACK_LOG_INTERVAL), not a
+                                # print on every occurrence. Market-data behavior
+                                # (falling back to server time) is unchanged.
+                                self._exch_ts_fallback_count += 1
+                                now_wall = time.time()
+                                if now_wall - self._exch_ts_fallback_last_log > _EXCH_TS_FALLBACK_LOG_INTERVAL:
+                                    logger.debug(
+                                        "[AngelWS] exchange_timestamp missing/zero, falling back to "
+                                        "server time (%d occurrence(s) so far; last ticker: %s)",
+                                        self._exch_ts_fallback_count, ticker,
+                                    )
+                                    self._exch_ts_fallback_last_log = now_wall
                             exch_ts = time.time()
                     except (TypeError, ValueError):
                         exch_ts = time.time()
@@ -340,6 +386,26 @@ class AngelOneService:
                     prev_close_rupees = _to_rupees(msg.get('closed_price') or msg.get('close') or msg.get('previous_close') or 0)
                     daily_volume = int(msg.get('volume_trade_for_the_day') or 0)
                     tick_volume = int(msg.get('last_traded_quantity') or 0)
+
+                    # AngelOne's WS alternates between full "quote" packets and
+                    # LTP-only packets that carry no OHLC/prev-close fields at all.
+                    # Without this fallback, an LTP-only tick would zero out
+                    # open/high/low/prev_close for the ticker, making the frontend's
+                    # client-side change/% calc (which falls back through
+                    # prev_close -> open -> current) briefly show a wildly wrong
+                    # change % until the next full-quote tick arrives. Mirrors the
+                    # same preserve-on-zero pattern already used by
+                    # CriticalIndexPoller._poll_ticker in price_poller.py.
+                    with self.latest_ticks_lock:
+                        _prev_tick = self.latest_ticks.get(ticker, {})
+                    if open_rupees <= 0 and _prev_tick.get('open', 0) > 0:
+                        open_rupees = _prev_tick['open']
+                    if high_rupees <= 0 and _prev_tick.get('high', 0) > 0:
+                        high_rupees = _prev_tick['high']
+                    if low_rupees <= 0 and _prev_tick.get('low', 0) > 0:
+                        low_rupees = _prev_tick['low']
+                    if prev_close_rupees <= 0 and _prev_tick.get('prev_close', 0) > 0:
+                        prev_close_rupees = _prev_tick['prev_close']
 
                     # Decision 3: reject an exact replay of the last tick for this
                     # ticker (same exchange timestamp + price + quantity) before it
@@ -390,9 +456,9 @@ class AngelOneService:
                                 "_source": "angel_ws",
                             })
                         except Exception as e:
-                            print(f"[AngelWS] Callback error for {ticker}: {e}")
+                            logger.warning("[AngelWS] Callback error for %s: %s", ticker, e)
         except Exception as e:
-            print(f"[AngelWS] Tick handler error for token {token}: {e}")
+            logger.error("[AngelWS] Tick handler error for token %s: %s", token, e)
             
     def _send_subscription(self, token_list):
         """Send correlation payload to WS. Batches into chunks of 200 tokens to avoid
@@ -463,6 +529,7 @@ class AngelOneService:
         """Unsubscribe tickers from AngelOne WebSocket.
         Protects token mutations under token_lock without holding lock during broker API calls."""
         tokens_to_remove = []
+        tickers_to_remove = []
         with self.token_lock:
             for t in tickers:
                 token_info = self.get_token(t)
@@ -470,6 +537,7 @@ class AngelOneService:
                     tk = str(token_info['token'])
                     if tk in self.subscribed_tokens:
                         tokens_to_remove.append(tk)
+                        tickers_to_remove.append(t)
                         self.subscribed_tokens.discard(tk)
 
         if tokens_to_remove and self.sws and getattr(self, 'ws_connected', False):
@@ -483,6 +551,24 @@ class AngelOneService:
                 print(f"[AngelOne WS] Unsubscribed {len(tokens_to_remove)} tokens")
             except Exception as e:
                 print(f"[!] [AngelOne WS] Unsubscribe error: {e}")
+
+        # Phase 15A: token_to_ticker_map/token_to_exch_type_map/subscription_times
+        # and latest_ticks were populated in subscribe_tickers/_handle_ws_tick but
+        # never pruned here -- is_subscription_ready() (below) treats a truthy
+        # latest_ticks entry as "still receiving live ticks", so an unsubscribed
+        # ticker kept reporting ready forever on its last frozen price instead of
+        # correctly falling back to REST. Cleared last, after the broker call, so
+        # exch_type lookups above still see the token they need.
+        with self.token_lock:
+            for tk in tokens_to_remove:
+                self.token_to_ticker_map.pop(tk, None)
+                self.token_to_exch_type_map.pop(tk, None)
+        for t in tickers_to_remove:
+            self.subscription_times.pop(t, None)
+        if tickers_to_remove:
+            with self.latest_ticks_lock:
+                for t in tickers_to_remove:
+                    self.latest_ticks.pop(t, None)
 
     def _cache_path(self) -> str:
         return os.path.join(str(backend_dir), INSTRUMENTS_CACHE_FILE)

@@ -57,17 +57,6 @@
            home.html's ticker strip. Inline with a heading that vertical pull is wrong. */
         @media (max-width: 768px) { #marketStatusSlot { margin: 0; padding: 0; } }
         .page-subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 2rem; }
-        /* minmax(0,1fr) not 1fr: grid tracks default to a min size of their content, so long
-           tickers/sector names (APOLLOHOSP, "Consumer Durables") were pushing the tracks wider
-           than their share and spilling the cells out past the card's right edge. */
-        .heatmap-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.5rem; }
-        /* Sector Leaders sits in a half-width card, so a fixed 6 columns is too many at most
-           widths &ndash; auto-fill lets it pick a column count that keeps every cell >= 104px. */
-        #sectorLeadersContainer { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); align-content: start; }
-        .heatmap-cell { padding: 0.75rem 0.5rem; border-radius: 6px; text-align: center; font-size: 0.8rem; font-weight: 500; min-width: 0; overflow: hidden; }
-        .heatmap-cell .hm-name { font-size: 0.7rem; color: rgba(255,255,255,0.7); margin-bottom: 2px; overflow-wrap: anywhere; }
-        .heatmap-cell .hm-sym { font-size: 0.8rem; font-weight: 600; color: #fff; margin: 2px 0; overflow-wrap: anywhere; line-height: 1.2; }
-        .heatmap-cell .hm-pct { font-family: 'Roboto Mono', monospace; font-weight: 700; font-size: 0.9rem; }
         /* Chart + list widgets */
         .chart-caption { font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 0.5rem; }
         .chart-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.5rem; }
@@ -95,35 +84,64 @@
         .status-dot.closed { background: #52525b; }
         /* #sectorLeadersContainer needs no width-based override &ndash; its auto-fill track definition
            above already adapts the column count to whatever width the card actually has. */
-        @media (max-width: 768px) { .markets-grid { grid-template-columns: 1fr; } .stat-grid { grid-template-columns: repeat(2, 1fr); } .heatmap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 768px) { .markets-grid { grid-template-columns: 1fr; } .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 
-        /* Live Market Heatmap Grid */
+        /* Live Market Heatmap Grid &ndash; treemap-style: grid-auto-flow:dense packs
+           variable-span tiles (see .hm-size-* below) without gaps, so a tile sized
+           2x2 for a big mover sits flush against the 1x1 tiles around it instead
+           of leaving holes. Real data drives size: |% change| of that sector's
+           top stocks (from /api/sector-leaders) &ndash; not a fabricated market-cap
+           number, which this app has no real source for. */
         .market-heatmap-grid {
           display: grid;
-          grid-template-columns: repeat(6, 1fr);
+          grid-template-columns: repeat(8, 1fr);
+          grid-auto-rows: 64px;
+          grid-auto-flow: dense;
           gap: 0.5rem;
           margin-top: 1rem;
           width: 100%;
         }
         .heatmap-box {
-          padding: 14px 10px;
+          padding: 10px 8px;
           border-radius: 8px;
           text-align: center;
           cursor: pointer;
           border: 1px solid rgba(255,255,255,0.06);
           transition: background 0.3s ease, border-color 0.15s ease, transform 0.15s ease;
           position: relative;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          min-width: 0;
         }
         .heatmap-box:hover {
           transform: translateY(-2px);
           border-color: rgba(255,255,255,0.25);
           box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          z-index: 1;
         }
+        /* Size tiers, keyed to |% change| of the move (see JS _sizeTierFor) --
+           biggest movers get the biggest tiles, matching a treemap's size+color
+           convention using data this app actually has, instead of a uniform grid. */
+        .heatmap-box.hm-size-xl { grid-column: span 3; grid-row: span 2; }
+        .heatmap-box.hm-size-lg { grid-column: span 2; grid-row: span 2; }
+        .heatmap-box.hm-size-md { grid-column: span 2; grid-row: span 1; }
+        .heatmap-box.hm-size-sm { grid-column: span 1; grid-row: span 1; }
+        .heatmap-box.hm-size-xl .hm-sym { font-size: 1.15rem; }
+        .heatmap-box.hm-size-xl .hm-pct { font-size: 1.1rem; }
+        .heatmap-box.hm-size-lg .hm-sym { font-size: 1rem; }
+        .heatmap-box.hm-size-sm .hm-price { display: none; }
         .heatmap-box .hm-sym {
           font-size: 0.85rem;
           font-weight: 700;
           color: #fff;
           margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 100%;
         }
         .heatmap-box .hm-price {
           font-family: 'Roboto Mono', monospace;
@@ -136,6 +154,57 @@
           font-size: 0.82rem;
           font-weight: 700;
         }
+        .heatmap-box .hm-sector-tag {
+          font-size: 0.6rem;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: rgba(255,255,255,0.45);
+          margin-top: 2px;
+        }
+        /* Sector-grouped mode: each sector gets a full-width label row above its
+           cluster of tiles, so the heatmap and "click a sector for its stocks"
+           interaction (Sector Performance) read as one coherent system instead
+           of two disconnected widgets. */
+        .hm-sector-heading {
+          grid-column: 1 / -1;
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          padding: 4px 2px;
+          margin-top: 4px;
+        }
+        .hm-sector-heading:first-child { margin-top: 0; }
+        .hm-sector-heading .hm-sector-title {
+          font-size: 0.78rem;
+          font-weight: 600;
+          color: #fff;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .hm-sector-heading .hm-sector-avg {
+          font-family: 'Roboto Mono', monospace;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+        .hm-sector-heading::after {
+          content: '';
+          flex: 1;
+          height: 1px;
+          background: rgba(255,255,255,0.08);
+        }
+        @media(max-width:768px){
+          .market-heatmap-grid { grid-template-columns: repeat(4, 1fr); }
+          .heatmap-box.hm-size-xl { grid-column: span 2; }
+        }
+        @media(max-width:480px){
+          .market-heatmap-grid { grid-template-columns: repeat(2, 1fr); }
+          .heatmap-box.hm-size-xl, .heatmap-box.hm-size-lg, .heatmap-box.hm-size-md { grid-column: span 2; grid-row: span 1; }
+        }
+        /* Sector Performance rows are now clickable (open that sector's stock
+           breakdown) -- was plain, non-interactive text before. */
+        .sector-row.clickable { cursor: pointer; border-radius: 6px; padding-left: 6px; padding-right: 6px; margin: 0 -6px; transition: background 0.15s ease; }
+        .sector-row.clickable:hover { background: rgba(255,255,255,0.04); }
+        .sector-row.clickable .sector-name::after { content: '›'; margin-left: 6px; color: var(--text-secondary); font-weight: 400; }
         
         /* Real-time Flashing animations */
         @keyframes flash-green {
@@ -154,13 +223,7 @@
         }
 
         @media(max-width:1024px){
-          .market-heatmap-grid { grid-template-columns: repeat(4, 1fr); }
-        }
-        @media(max-width:768px){
-          .market-heatmap-grid { grid-template-columns: repeat(3, 1fr); }
-        }
-        @media(max-width:480px){
-          .market-heatmap-grid { grid-template-columns: repeat(2, 1fr); }
+          .market-heatmap-grid { grid-template-columns: repeat(6, 1fr); }
         }
     </style>
 </head>
@@ -284,22 +347,16 @@
                     <div class="card-header">
                         <h3>Live Market Heatmap</h3>
                         <div class="tabs" style="margin: 0; padding: 2px;">
-                            <button class="tab active" onclick="switchHeatmapMode('nifty', this)">Nifty 50</button>
+                            <button class="tab active" onclick="switchHeatmapMode('movers', this)">Top Movers</button>
                             <button class="tab" onclick="switchHeatmapMode('sector', this)">By Sector</button>
                         </div>
                     </div>
-                    <div class="chart-caption">Real-time performance of index heavyweights. Color intensity scales with percentage move. Boxes flash on real-time price updates. Click any stock to view its interactive chart.</div>
+                    <div class="chart-caption">Each sector's best-performing stock and its nearest peers. Tile size and color both scale with the size of the move &ndash; the biggest movers stand out immediately. Click a tile for its chart, or a sector name for the full sector breakdown.</div>
                     <div id="heatmapGrid" class="market-heatmap-grid">
                         <div style="color:var(--text-secondary);padding:1.5rem 0;text-align:center;grid-column:1/-1;">Loading heatmap data...</div>
                     </div>
                     <div id="heatmapToggleContainer" style="text-align:center; margin-top: 1rem; display: none;">
                         <button class="tab" id="btnHeatmapToggle" onclick="toggleHeatmapLimit()" style="background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); padding: 8px 16px; border-radius: 6px; color: var(--text-primary); cursor: pointer; transition: all 0.2s;">Show All Stocks</button>
-                    </div>
-                </div>
-                <div class="markets-card">
-                    <div class="card-header"><h3>Sector Leaders</h3><span class="badge badge-blue">Top Stock</span></div>
-                    <div class="heatmap-grid" id="sectorLeadersContainer">
-                        <div style="color:var(--text-secondary);padding:1rem 0;text-align:center;grid-column:1/-1;">Loading...</div>
                     </div>
                 </div>
         </div>
@@ -309,8 +366,8 @@
                 <div class="card-header"><h3>BSE Indices</h3><span class="badge badge-blue">LIVE</span></div>
                 <div id="bseIndicesContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading...</div></div>
             </div>
-            <div style="padding:1rem;text-align:center;color:var(--text-secondary);font-size:0.8rem;background:rgba(255,255,255,0.02);border-radius:8px;">
-                &#9888; BSE sector indices (BSE500, Midcap, Smallcap, Bankex, etc.) are currently unavailable via our data providers. Only SENSEX is shown while we explore additional data sources.
+            <div style="padding:0.6rem 1rem;text-align:center;color:var(--text-secondary);font-size:0.72rem;">
+                Sector-level BSE indices (BSE500, Midcap, Smallcap, Bankex) are not yet covered &ndash; SENSEX only for now.
             </div>
         </div>
         <div id="marketTabGlobal" class="tab-content">
@@ -355,7 +412,11 @@
             ];
             var sectorPcts = {};
 
-            // Nifty 50 Heatmap Stocks configuration
+            // Broad-coverage WS subscription list (see allTickers below) so a good
+            // spread of large-cap tickers stay warm in the live tick cache
+            // regardless of which stocks /api/sector-leaders happens to surface.
+            // The heatmap itself is now driven by sectorLeadersCache (real,
+            // sector-tagged, backend-selected leaders) -- not by this list.
             var HEATMAP_STOCKS = [
                 { ticker: 'RELIANCE', name: 'Reliance', sector: 'Energy' },
                 { ticker: 'TCS', name: 'TCS', sector: 'IT' },
@@ -382,9 +443,7 @@
                 { ticker: 'TATASTEEL', name: 'Tata Steel', sector: 'Metals' },
                 { ticker: 'COALINDIA', name: 'Coal India', sector: 'Energy' }
             ];
-            var heatmapPrices = {};
-            var heatmapChanges = {};
-            var heatmapMode = 'nifty'; // 'nifty' or 'sector'
+            var heatmapMode = 'movers'; // 'movers' or 'sector'
             var heatmapExpanded = false;
 
             // ---- Advance-Decline Trend (session-only, client-side &ndash; no backend history exists
@@ -584,8 +643,9 @@
                             if (Object.keys(batch).length > 0) updateSectorsFromData(batch);
                             // Also update VIX + BSE from same batch
                             updateVixAndBseFromTicks(msg.data);
-                            // Update Heatmap from ticks
-                            updateHeatmapFromTicks(msg.data);
+                            // Heatmap is driven by /api/sector-leaders (real,
+                            // sector-tagged data), refreshed on refreshAll()'s
+                            // cycle -- not by raw per-tick updates here.
                         } else if (msg.type === 'connected') {
                             // subscribed
                         }
@@ -613,47 +673,56 @@
                 }, delay);
             }
 
+            // Real sector names (from the backend's own _SECTOR_MAP, via
+            // /api/sector-leaders) vs. this list's index-based rows: most match
+            // exactly ("Banking", "Auto", "IT", ...), but PSU Banks/Realty/Fin.
+            // Services are NSE *indices*, not entries in _SECTOR_MAP, so they
+            // have no per-stock breakdown available -- handled explicitly below
+            // rather than silently showing an empty/broken modal for them.
+            function _sectorLeaderEntryFor(sectorName) {
+                if (!sectorLeadersCache) return null;
+                var needle = sectorName.trim().toLowerCase();
+                return sectorLeadersCache.find(function(s){ return (s.sector || '').trim().toLowerCase() === needle; }) || null;
+            }
+
             function renderSectors(){
                 var container = document.getElementById('sectorsContainer');
                 container.innerHTML = SECTOR_INDICES.map(function(s){
                     var p = sectorPcts[s.name] || 0; var cls = p >= 0 ? 'text-green' : 'text-red';
                     var fillCls = p >= 0 ? '#089981' : '#f23645';
-                    return '<div class="sector-row"><span class="sector-name">'+s.name+'</span><div class="sector-bar"><div class="sector-fill" style="width:'+Math.min(Math.abs(p)*15,100)+'%;background:'+fillCls+';"></div></div><span class="sector-pct '+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</span></div>';
+                    var hasBreakdown = !!_sectorLeaderEntryFor(s.name);
+                    var rowCls = 'sector-row' + (hasBreakdown ? ' clickable' : '');
+                    var onclick = hasBreakdown ? ' onclick="showSectorTop5(\''+s.name.replace(/'/g,"\\'")+'\')"' : '';
+                    return '<div class="'+rowCls+'"'+onclick+'><span class="sector-name">'+s.name+'</span><div class="sector-bar"><div class="sector-fill" style="width:'+Math.min(Math.abs(p)*15,100)+'%;background:'+fillCls+';"></div></div><span class="sector-pct '+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</span></div>';
                 }).join('');
             }
 
-            // ---- Sector Leaders ----
+            // ---- Sector leaders: single real-data source shared by the heatmap
+            // (renderHeatmap, below) AND the Sector Performance click-through
+            // (showSectorTop5) -- previously two disconnected widgets fed by
+            // the same endpoint; now one dataset driving both. ----
             var sectorLeadersCache = null;
 
             async function fetchSectorLeaders() {
                 PageCache.fetch('/api/sector-leaders', null, 30000, function(data) {
                     if (data) {
                         sectorLeadersCache = data;
-                        renderSectorLeaders();
+                        renderHeatmap();
+                        renderSectors();
                     }
                 });
             }
 
-            function renderSectorLeaders(){
-                var container = document.getElementById('sectorLeadersContainer');
-                if (!sectorLeadersCache || sectorLeadersCache.length === 0) {
-                    container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;grid-column:1/-1;">No live data</div>';
+            function showSectorTop5(sectorName) {
+                var sector = _sectorLeaderEntryFor(sectorName);
+                if (!sector || !sector.top5 || !sector.top5.length) {
+                    var overlay0 = document.createElement('div');
+                    overlay0.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+                    overlay0.onclick = function(e){ if (e.target === overlay0) document.body.removeChild(overlay0); };
+                    overlay0.innerHTML = '<div style="background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:1.5rem;min-width:260px;max-width:340px;text-align:center;"><h3 style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.5rem;">'+sectorName+'</h3><div style="color:var(--text-secondary);font-size:0.85rem;">No per-stock breakdown available for this index yet.</div></div>';
+                    document.body.appendChild(overlay0);
                     return;
                 }
-                container.innerHTML = sectorLeadersCache.map(function(s){
-                    var p = s.change || 0; var cls = p >= 0 ? 'text-green' : 'text-red';
-                    var intensity = Math.min(Math.abs(p)/3, 1);
-                    var bg = p >= 0 ? 'rgba(0,'+Math.floor(230-(1-intensity)*180)+','+Math.floor(118-(1-intensity)*100)+',0.25)' : 'rgba('+Math.floor(255-(1-intensity)*200)+',0,'+Math.floor(85-(1-intensity)*70)+',0.25)';
-                    return '<div class="heatmap-cell" style="background:'+bg+';border:1px solid rgba(255,255,255,0.06);cursor:pointer;" onclick="showSectorTop5(\''+s.sector+'\')"><div class="hm-name">'+s.sector+'</div><div class="hm-sym">'+s.symbol+'</div><div class="hm-pct" style="color:'+cls+'">'+(p>=0?'+':'')+p.toFixed(2)+'%</div></div>';
-                }).join('');
-            }
-
-            // ---- Sector Top-5 Modal (optional enhancement) ----
-            var sectorTop5Cache = {};
-
-            function showSectorTop5(sectorName) {
-                var sector = sectorLeadersCache ? sectorLeadersCache.find(function(s){ return s.sector === sectorName; }) : null;
-                if (!sector || !sector.top5) return;
                 var overlay = document.createElement('div');
                 overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
                 overlay.onclick = function(e){ if (e.target === overlay) document.body.removeChild(overlay); };
@@ -678,13 +747,50 @@
             }
 
             // ---- Live Market Heatmap ----
+            // Wider than the old /3 (which pinned to full color at just +-3%,
+            // so most of a normal trading day looked uniformly "hot"). /6 keeps
+            // a real gradient visible across a typical day's spread of moves.
             function getHeatmapBgColor(pct) {
-                var intensity = Math.min(Math.abs(pct) / 3, 1);
+                var intensity = Math.min(Math.abs(pct) / 6, 1);
                 if (pct >= 0) {
-                    return 'rgba(8, 153, 129, ' + (intensity * 0.35 + 0.06).toFixed(2) + ')';
+                    return 'rgba(8, 153, 129, ' + (intensity * 0.4 + 0.06).toFixed(2) + ')';
                 } else {
-                    return 'rgba(242, 54, 69, ' + (intensity * 0.35 + 0.06).toFixed(2) + ')';
+                    return 'rgba(242, 54, 69, ' + (intensity * 0.4 + 0.06).toFixed(2) + ')';
                 }
+            }
+
+            // Tile size tier from |% change| -- real data (this app has no real
+            // market-cap source to size by; see the CSS comment above
+            // .market-heatmap-grid), so the biggest movers get the biggest,
+            // most visually prominent tiles instead of a uniform grid.
+            function _sizeTierFor(absPct) {
+                if (absPct >= 3) return 'xl';
+                if (absPct >= 1.5) return 'lg';
+                if (absPct >= 0.5) return 'md';
+                return 'sm';
+            }
+
+            function _flattenLeaderStocks() {
+                var out = [];
+                if (!sectorLeadersCache) return out;
+                sectorLeadersCache.forEach(function(entry) {
+                    (entry.top5 || []).forEach(function(stock) {
+                        out.push({ ticker: stock.symbol, pct: stock.change || 0, sector: entry.sector });
+                    });
+                });
+                return out;
+            }
+
+            function _heatmapBoxHtml(stock) {
+                var pct = stock.pct;
+                var bg = getHeatmapBgColor(pct);
+                var cls = pct >= 0 ? 'text-green' : 'text-red';
+                var sign = pct >= 0 ? '+' : '';
+                var tier = _sizeTierFor(Math.abs(pct));
+                return '<div class="heatmap-box hm-size-' + tier + '" style="background:' + bg + ';" onclick="window.location.href=\'overview.html?ticker=' + stock.ticker + '\'">' +
+                    '<div class="hm-sym">' + stock.ticker + '</div>' +
+                    '<div class="hm-pct ' + cls + '">' + sign + pct.toFixed(2) + '%</div>' +
+                    '</div>';
             }
 
             window.switchHeatmapMode = function(mode, btn) {
@@ -696,120 +802,50 @@
 
             window.toggleHeatmapLimit = function() {
                 heatmapExpanded = !heatmapExpanded;
-                var btn = document.getElementById('btnHeatmapToggle');
-                if (btn) {
-                    btn.textContent = heatmapExpanded ? 'Show Less' : 'Show All ' + HEATMAP_STOCKS.length + ' Stocks';
-                }
                 renderHeatmap();
             };
 
             function renderHeatmap() {
                 var container = document.getElementById('heatmapGrid');
                 if (!container) return;
-                
-                var stocks = HEATMAP_STOCKS.slice();
-                
-                if (heatmapMode === 'sector') {
-                    stocks.sort(function(a, b) {
-                        if (a.sector !== b.sector) {
-                            return a.sector.localeCompare(b.sector);
-                        }
-                        return a.ticker.localeCompare(b.ticker);
-                    });
+
+                if (!sectorLeadersCache || sectorLeadersCache.length === 0) {
+                    container.innerHTML = '<div style="color:var(--text-secondary);padding:1.5rem 0;text-align:center;grid-column:1/-1;">Loading heatmap data...</div>';
+                    return;
                 }
-                
-                // Only limit on mobile devices (width <= 768px)
-                var isMobile = window.innerWidth <= 768;
+
                 var toggleContainer = document.getElementById('heatmapToggleContainer');
-                if (toggleContainer) {
-                    toggleContainer.style.display = isMobile ? 'block' : 'none';
-                    var btn = document.getElementById('btnHeatmapToggle');
-                    if (btn) {
-                        btn.textContent = heatmapExpanded ? 'Show Less' : 'Show All ' + HEATMAP_STOCKS.length + ' Stocks';
-                    }
-                }
-                
-                if (isMobile && !heatmapExpanded) {
-                    stocks = stocks.slice(0, 8);
-                }
-                
-                container.innerHTML = stocks.map(function(s) {
-                    var price = heatmapPrices[s.ticker] || 0;
-                    var pct = heatmapChanges[s.ticker] || 0;
-                    var bg = getHeatmapBgColor(pct);
-                    var cls = pct >= 0 ? 'text-green' : 'text-red';
-                    var sign = pct >= 0 ? '+' : '';
-                    
-                    var priceStr = price > 0 ? '&#8377;' + price.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2}) : 'Loading...';
-                    var pctStr = price > 0 ? sign + pct.toFixed(2) + '%' : '--%';
-                    
-                    var sectorBadge = heatmapMode === 'sector' ? '<div style="font-size:0.6rem;text-transform:uppercase;color:rgba(255,255,255,0.4);margin-top:2px;">' + s.sector + '</div>' : '';
-                    
-                    return '<div class="heatmap-box" id="hm-box-' + s.ticker + '" style="background:' + bg + ';" onclick="window.location.href=\'overview.html?ticker=' + s.ticker + '\'">' +
-                        '<div class="hm-sym">' + s.ticker + '</div>' +
-                        '<div class="hm-price">' + priceStr + '</div>' +
-                        '<div class="hm-pct ' + cls + '">' + pctStr + '</div>' +
-                        sectorBadge +
-                        '</div>';
-                }).join('');
-            }
+                var isMobile = window.innerWidth <= 768;
 
-            function updateHeatmapFromTicks(data) {
-                var updated = false;
-                HEATMAP_STOCKS.forEach(function(stock) {
-                    var tick = data[stock.ticker];
-                    if (!tick || !tick.current) return;
-                    
-                    var prevPrice = heatmapPrices[stock.ticker] || 0;
-                    var newPrice = tick.current;
-                    heatmapPrices[stock.ticker] = newPrice;
-                    
-                    var base = tick.prev_close || tick.open || newPrice;
-                    var diff = newPrice - base;
-                    var pct = base > 0 ? (diff / base) * 100 : 0;
-                    heatmapChanges[stock.ticker] = pct;
-                    
-                    var box = document.getElementById('hm-box-' + stock.ticker);
-                    if (box) {
-                        var prEl = box.querySelector('.hm-price');
-                        var pctEl = box.querySelector('.hm-pct');
-                        
-                        if (prEl) prEl.innerHTML = '&#8377;' + newPrice.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
-                        if (pctEl) {
-                            pctEl.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
-                            pctEl.className = 'hm-pct ' + (pct >= 0 ? 'text-green' : 'text-red');
-                        }
-                        
-                        box.style.backgroundColor = getHeatmapBgColor(pct);
-                        
-                        if (prevPrice > 0 && prevPrice !== newPrice) {
-                            box.classList.remove('flash-up', 'flash-down');
-                            void box.offsetWidth;
-                            box.classList.add(newPrice > prevPrice ? 'flash-up' : 'flash-down');
-                        }
+                if (heatmapMode === 'sector') {
+                    // Grouped: each sector's real leaders clustered under its own
+                    // heading -- the same interaction Sector Performance's rows
+                    // link into, so the heatmap and sector click-through read as
+                    // one system instead of two disconnected widgets.
+                    if (toggleContainer) toggleContainer.style.display = 'none';
+                    var sectors = sectorLeadersCache.slice().sort(function(a, b){ return a.sector.localeCompare(b.sector); });
+                    var html = '';
+                    sectors.forEach(function(entry) {
+                        var stocks = (entry.top5 || []).map(function(s){ return { ticker: s.symbol, pct: s.change || 0, sector: entry.sector }; });
+                        if (!stocks.length) return;
+                        var avg = stocks.reduce(function(sum, s){ return sum + s.pct; }, 0) / stocks.length;
+                        var avgCls = avg >= 0 ? 'text-green' : 'text-red';
+                        html += '<div class="hm-sector-heading"><span class="hm-sector-title">' + entry.sector + '</span><span class="hm-sector-avg ' + avgCls + '">' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + '% avg</span></div>';
+                        html += stocks.map(_heatmapBoxHtml).join('');
+                    });
+                    container.innerHTML = html || '<div style="color:var(--text-secondary);padding:1.5rem 0;text-align:center;grid-column:1/-1;">No sector data available</div>';
+                } else {
+                    // Top Movers: every sector-leader stock, flattened, biggest
+                    // move first -- real backend data, not a hardcoded list.
+                    var flat = _flattenLeaderStocks().sort(function(a, b){ return Math.abs(b.pct) - Math.abs(a.pct); });
+                    if (toggleContainer) {
+                        toggleContainer.style.display = (isMobile && flat.length > 8) ? 'block' : 'none';
+                        var btn = document.getElementById('btnHeatmapToggle');
+                        if (btn) btn.textContent = heatmapExpanded ? 'Show Less' : 'Show All ' + flat.length + ' Stocks';
                     }
-                });
-            }
-
-            async function fetchHeatmapInitialData() {
-                var tickers = HEATMAP_STOCKS.map(function(s){ return s.ticker; });
-                PageCache.fetch('/api/live-prices', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({tickers: tickers})
-                }, 15000, function(data) {
-                    if (data) {
-                        HEATMAP_STOCKS.forEach(function(stock) {
-                            var d = data[stock.ticker];
-                            if (!d) return;
-                            heatmapPrices[stock.ticker] = d.current || 0;
-                            var base = d.prev_close || d.open || d.current || 0;
-                            var diff = (d.current || 0) - base;
-                            heatmapChanges[stock.ticker] = base > 0 ? (diff / base) * 100 : 0;
-                        });
-                        renderHeatmap();
-                    }
-                });
+                    if (isMobile && !heatmapExpanded) flat = flat.slice(0, 8);
+                    container.innerHTML = flat.map(_heatmapBoxHtml).join('');
+                }
             }
 
             // ---- 52-Week High / Low ----
@@ -1111,7 +1147,6 @@
                 fetchBSEIndices();
                 fetchIndiaVIX();
                 fetchCrypto();
-                fetchHeatmapInitialData();
                 updateLastUpdated();
             }
 

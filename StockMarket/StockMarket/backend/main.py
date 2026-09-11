@@ -2,6 +2,24 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# POST-LOAD MEMORY INVESTIGATION: opt-in only (MEMORY_TRACE=1), off by
+# default -- tracemalloc's per-allocation traceback bookkeeping has a real
+# CPU/memory cost of its own, so this must never run unconditionally in
+# production. Started here, before every other import, so allocation
+# tracebacks are captured from the very first heavy import (pandas, yfinance,
+# etc.) through to steady-state -- starting it later would miss exactly the
+# large one-time allocations most worth attributing. See
+# _get_memory_diagnostics() below and /api/health's "memory_diag" field.
+if os.getenv("MEMORY_TRACE") == "1":
+    import tracemalloc
+    # depth=10 was tried first and made startup's ~2270-ticker validation
+    # sweep + 170K-instrument index build so slow (3+ min, past the
+    # healthcheck's own retry budget) that the container never became
+    # healthy -- confirms startup itself is allocation-heavy, but unusable
+    # for iterative measurement. depth=1 (immediate call site only) still
+    # identifies which function is allocating, at a fraction of the cost.
+    tracemalloc.start(1)
+
 import logging
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -13,7 +31,14 @@ logging.getLogger("yfinance_downloader").setLevel(logging.WARNING)
 
 sentry_sdk.init(
     dsn="https://8a50cc92e51241826efa3282eb43375e@o4511643888123904.ingest.de.sentry.io/4511643905753168",
-    send_default_pii=True,
+    # HARDEN-01: was True. send_default_pii=True makes the SDK attach
+    # request bodies, cookies, and the caller's IP address to every
+    # captured event by default -- for an app handling login credentials,
+    # JWT-adjacent data, and trading actions, that's real PII shipped to a
+    # third-party SaaS with no way to opt out. False is the safe default;
+    # no concrete need for a controlled per-environment opt-in was found,
+    # so this is a plain constant, not an env var.
+    send_default_pii=False,
     traces_sample_rate=0.1,
     integrations=[sentry_logging],
     before_send=lambda event, hint: None if event.get('logger') in ('yfinance', 'yfinance_downloader') else event,
@@ -41,6 +66,15 @@ YFINANCE_INDEX_MAP = {
     'NIFTY': '^NSEI',
     'BANKNIFTY': '^NSEBANK',
     'SENSEX': '^BSESN',
+    # BUGFIX (candle-gap investigation): FINNIFTY/MIDCAP/SMALLCAP were missing
+    # here, so _yfinance_ticker() fell through to f"{ticker}.NS" for them --
+    # "FINNIFTY.NS"/"MIDCAP.NS"/"SMALLCAP.NS" are not real yfinance symbols
+    # for these indices, so every yfinance-fallback gap-fill attempt for
+    # them silently returned nothing. Same symbols already proven correct in
+    # recovery_service.py's own (separate, already-fixed) copy of this map.
+    'FINNIFTY': 'NIFTY_FIN_SERVICE.NS',
+    'MIDCAP': '^NSEMDCP50',
+    'SMALLCAP': '^NSESCP250',
     # Global
     '^GSPC': '^GSPC',
     '^IXIC': '^IXIC',
@@ -140,6 +174,7 @@ import secrets
 import time
 import threading
 import concurrent.futures
+from collections import OrderedDict, deque
 
 from fetch_stocks import sync_market_data
 
@@ -337,9 +372,9 @@ viewed_ticker_mgr = None  # initialized in startup
 
 # ── YFinance concurrent download limiter ──
 # Prevents 100 concurrent yfinance calls when many users request different tickers.
-_yf_semaphore = threading.BoundedSemaphore(10)
-# Separate semaphore for background tasks (daily prefill, prewarm) so user requests aren't starved
-_yf_bg_semaphore = threading.BoundedSemaphore(10)
+_yf_semaphore = threading.BoundedSemaphore(5)
+# bg semaphore matches ThreadPoolExecutor(max_workers=3) in _daily_prefill_all — no artificial queuing
+_yf_bg_semaphore = threading.BoundedSemaphore(3)
 
 def _yf_bg_download(yf_ticker: str, period: str, interval: str, timeout=8):
     """Wrapper around yf.download for background tasks (separate semaphore from user requests)."""
@@ -363,7 +398,20 @@ def _yfinance_limited_download(yf_ticker: str, period: str, interval: str, timeo
     finally:
         _yf_semaphore.release()
 
-app = FastAPI(title="Stock Market API")
+# Phase 15A: Swagger UI / ReDoc / raw OpenAPI schema expose the full API
+# surface (every route, param, and response shape) to anyone who requests
+# them. Harmless in dev; unnecessary information disclosure once this is
+# reachable from the public internet. ENVIRONMENT defaults to "development"
+# (docs on) so nothing changes for the existing local workflow -- set
+# ENVIRONMENT=production in backend/.env (already read via load_dotenv() in
+# database.py, imported above this line) to turn them off.
+_is_production = os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
+app = FastAPI(
+    title="Stock Market API",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
+)
 
 # Cache-Control middleware: aggressive cache for assets, no-cache for HTML
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -502,8 +550,12 @@ _ALL_STOCKS_CACHE_TTL = 3600  # 1 hour
 # --- TTL cache for news endpoints (avoid expensive StockData queries) ---
 _news_general_cache: dict = None
 _news_general_cache_ts: float = 0
-_news_ticker_cache: dict = {}
+# OrderedDict so the hard cap below can evict the LRU entry in O(1)
+# (move-to-end on hit, popitem(last=False) on overflow) instead of an
+# O(n) scan/sort on every write.
+_news_ticker_cache: "OrderedDict[str, dict]" = OrderedDict()
 _NEWS_CACHE_TTL = 180  # 180 seconds
+_MAX_NEWS_CACHE_ENTRIES = 500  # hard cap alongside the TTL above
 
 # --- AngelOne WebSocket Tick Buffer (thread-safe) ---
 # AngelOne WS runs in a background thread; ticks are buffered here
@@ -533,6 +585,274 @@ _monitoring = {
     "last_reset_time": 0.0,           # when counters were last zeroed
 }
 _monitoring["last_reset_time"] = time.time()
+
+# ── Phase 14: production monitoring ──────────────────────────────────────
+# Reuses existing counters/stats wherever they already exist (_monitoring
+# above, ViewedTickerManager.get_metrics(), CandleCache.get_stats(),
+# LiveTimeframeManager.get_stats(), monitor.py's Monitor class at
+# /api/monitoring/candle-system). This section only adds what's genuinely
+# missing: process RSS/CPU/threads, event-loop lag, DB pool introspection,
+# and prefill running/completion state. Read-only -- no existing behavior,
+# config, or architecture changes.
+
+_cpu_monitor_last_cpu: Optional[float] = None
+_cpu_monitor_last_wall: Optional[float] = None
+
+
+def _get_process_rss_mb() -> Optional[float]:
+    """Current resident set size in MB. Reads /proc/self/status on Linux
+    (the actual current RSS -- deliberately NOT resource.getrusage().ru_maxrss,
+    which is a peak-EVER high-water mark that never reflects memory being
+    freed). Falls back to the Win32 GetProcessMemoryInfo API for local
+    Windows development. Returns None if neither is available rather than
+    reporting a misleading number -- honest absence beats a wrong value."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return round(int(line.split()[1]) / 1024, 1)
+    except (FileNotFoundError, OSError):
+        pass
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+        psapi = ctypes.WinDLL("psapi.dll")
+        kernel32 = ctypes.WinDLL("kernel32.dll")
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        counters = _PMC()
+        counters.cb = ctypes.sizeof(_PMC)
+        if psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb):
+            return round(counters.WorkingSetSize / 1024 / 1024, 1)
+    except Exception:
+        pass
+    return None
+
+
+def _get_cpu_percent() -> Optional[float]:
+    """Instantaneous CPU% since the LAST call to this function -- computed as
+    (delta of cumulative process CPU time) / (delta of wall-clock time) * 100.
+    Deliberately NOT the same thing as cumulative CPU-seconds (that would
+    only ever grow and isn't a percentage), and NOT psutil's blocking
+    interval-sample style either: time.process_time() is cross-platform
+    stdlib (Linux prod + Windows dev), and the delta is computed cheaply at
+    request time with no background polling loop. Returns None on the first
+    call after startup (nothing to diff against yet) rather than a
+    misleading 0.0 or 100.0.
+
+    Can legitimately exceed 100%: time.process_time() sums CPU time across
+    EVERY thread in the process, so a multi-threaded workload (e.g. the
+    3-worker daily prefill running alongside the main event loop thread)
+    using ~5 cores at once reports ~500%, the same convention top/htop use
+    for multi-threaded processes. Not a bug -- verified live during a
+    prefill run and cross-checked against the wall-clock-vs-cumulative-CPU
+    measurement from the earlier Phase 4 investigation."""
+    global _cpu_monitor_last_cpu, _cpu_monitor_last_wall
+    cpu_now = time.process_time()
+    wall_now = time.monotonic()
+    prev_cpu, prev_wall = _cpu_monitor_last_cpu, _cpu_monitor_last_wall
+    _cpu_monitor_last_cpu, _cpu_monitor_last_wall = cpu_now, wall_now
+    if prev_cpu is None or wall_now <= prev_wall:
+        return None
+    wall_delta = wall_now - prev_wall
+    cpu_delta = cpu_now - prev_cpu
+    return round(max(0.0, (cpu_delta / wall_delta) * 100), 1)
+
+
+def _get_memory_diagnostics(top_n: int = 15) -> Optional[dict]:
+    """POST-LOAD MEMORY INVESTIGATION: only returns data when MEMORY_TRACE=1
+    started tracemalloc at import time (see top of this file) -- returns None
+    otherwise, so /api/health's response shape is unchanged in production.
+
+    traced_current/traced_peak are tracemalloc's own view of live Python
+    object memory -- NOT the same thing as process RSS. The gap between
+    traced_peak and process RSS is the single most important number this
+    produces: a small gap means the growth IS real, tracked Python objects
+    (this function's top_allocations then says which ones); a LARGE gap
+    means most of the extra RSS is malloc-arena/allocator overhead that
+    tracemalloc structurally cannot see (freed-but-not-returned-to-the-OS
+    memory), which points at allocator tuning instead of object retention.
+    thread_count is included alongside for the same reason -- glibc gives
+    each thread its own malloc arena by default, so thread churn is a
+    plausible independent contributor to that gap."""
+    if not (os.getenv("MEMORY_TRACE") == "1"):
+        return None
+    try:
+        import tracemalloc
+        if not tracemalloc.is_tracing():
+            return None
+        current, peak = tracemalloc.get_traced_memory()
+        result = {
+            "traced_current_mb": round(current / 1024 / 1024, 1),
+            "traced_peak_mb": round(peak / 1024 / 1024, 1),
+            "rss_mb": _get_process_rss_mb(),
+            "thread_count": threading.active_count(),
+        }
+        # snapshot()+statistics() is the expensive part -- with this app's
+        # allocation volume (170K+ instrument rows alone) it was observed to
+        # take well over 90s and made /api/health itself hang, so it's
+        # opt-in via ?top_allocations=1 rather than on every call.
+        if top_n > 0:
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.statistics("lineno")
+            result["top_allocations"] = [
+                {
+                    "file_line": str(stat.traceback[0]) if stat.traceback else "?",
+                    "size_mb": round(stat.size / 1024 / 1024, 2),
+                    "count": stat.count,
+                }
+                for stat in top_stats[:top_n]
+            ]
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Event-loop lag probe ──
+# Wakes every _EVENT_LOOP_PROBE_INTERVAL seconds and measures how late it
+# actually woke up relative to when it asked to sleep -- a delayed wake-up
+# means something else held the event loop (a slow sync call, GIL
+# contention from a CPU-heavy background thread, etc). No busy-loop: the
+# probe spends the entire interval inside asyncio.sleep().
+_EVENT_LOOP_PROBE_INTERVAL = 1.0
+_event_loop_lag_state = {"current_ms": 0.0, "max_ms": 0.0}
+_event_loop_probe_task: Optional[asyncio.Task] = None
+_event_loop_lag_last_warn = float("-inf")  # ensures the first-ever lag warning always fires, regardless of loop.time()'s (implementation-defined) reference point
+
+# DIAGNOSTIC-ONLY, added for the EVENT LOOP LAG RESIDUAL ROOT-CAUSE
+# ISOLATION investigation phase: a bounded history of every probe sample
+# (wall-clock time, lag_ms), in addition to the running max_ms above, so a
+# real distribution (P50/P95/P99, threshold counts) can be computed instead
+# of just a running maximum. Purely additive -- does not change what the
+# probe measures, its cadence, or its existing 500ms warning behavior.
+# 7200 entries at one sample/second is 2 hours of history, a few hundred KB
+# at most. Read via _event_loop_lag_stats() below; surfaced at /api/health
+# for this investigation only, not a permanent monitoring commitment.
+_event_loop_lag_history: "deque" = deque(maxlen=7200)
+
+
+async def _event_loop_lag_probe():
+    loop = asyncio.get_event_loop()
+    next_expected = loop.time() + _EVENT_LOOP_PROBE_INTERVAL
+    while True:
+        await asyncio.sleep(_EVENT_LOOP_PROBE_INTERVAL)
+        now = loop.time()
+        lag_ms = max(0.0, (now - next_expected) * 1000)
+        _event_loop_lag_state["current_ms"] = round(lag_ms, 1)
+        _event_loop_lag_history.append((time.time(), lag_ms))
+        if lag_ms > _event_loop_lag_state["max_ms"]:
+            _event_loop_lag_state["max_ms"] = round(lag_ms, 1)
+        if lag_ms > 500:
+            global _event_loop_lag_last_warn
+            # Rate-limited to at most one warning per 60s so a sustained-lag
+            # period doesn't spam the log every single probe tick.
+            if now - _event_loop_lag_last_warn > 60:
+                print(f"[Monitor] Event loop lag {lag_ms:.0f}ms exceeds 500ms threshold")
+                _event_loop_lag_last_warn = now
+        next_expected = now + _EVENT_LOOP_PROBE_INTERVAL
+
+
+def _event_loop_lag_stats() -> dict:
+    """Read-only: percentile/threshold-count stats computed from the
+    diagnostic history above. No new probing -- pure post-hoc arithmetic on
+    samples _event_loop_lag_probe() already collected."""
+    samples = sorted(lag for _, lag in _event_loop_lag_history)
+    n = len(samples)
+    if n == 0:
+        return {"samples": 0}
+
+    def _pct(p):
+        idx = min(n - 1, int(round(p * (n - 1))))
+        return round(samples[idx], 1)
+
+    return {
+        "samples": n,
+        "p50_ms": _pct(0.50),
+        "p95_ms": _pct(0.95),
+        "p99_ms": _pct(0.99),
+        "max_ms": round(samples[-1], 1),
+        "over_100ms": sum(1 for s in samples if s > 100),
+        "over_500ms": sum(1 for s in samples if s > 500),
+        "over_1000ms": sum(1 for s in samples if s > 1000),
+        "over_2000ms": sum(1 for s in samples if s > 2000),
+        "over_5000ms": sum(1 for s in samples if s > 5000),
+    }
+
+
+def _get_db_pool_stats() -> dict:
+    """Read-only introspection of the existing SQLAlchemy pool -- opens no
+    new connections, changes no config. pool_size/max_overflow stay exactly
+    as set in database.py (20/30), which the earlier connection-exhaustion
+    investigation already proved correct for this app's startup/background
+    concurrency; Phase 14 does not touch that."""
+    try:
+        pool = database.engine.pool
+        size = pool.size()
+        checked_out = pool.checkedout()
+        max_overflow = getattr(pool, "_max_overflow", None)
+        max_total = (size + max_overflow) if max_overflow is not None else None
+        return {
+            "pool_size": size,
+            "checked_out": checked_out,
+            "max_overflow": max_overflow,
+            "available": (max_total - checked_out) if max_total is not None else None,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Prefill observability (main.py's _daily_prefill_all sets these; scheduling,
+# chunking (50-ticker batches, 3 workers, 0.5s yield) and ticker selection are
+# all Phase 4 and untouched here) ──
+_prefill_state = {
+    "running": False,
+    "last_started_at": None,   # ISO timestamp, IST
+    "last_completed_at": None,  # ISO timestamp, IST
+    "last_duration_sec": None,
+    "last_run_ok": None,       # None = never run this process lifetime
+}
+
+
+_db_health_cache = {"result": None, "ts": 0.0}
+_DB_HEALTH_CACHE_TTL = 5  # seconds -- matches the pattern used by _all_stocks_cache etc.
+
+
+def _check_db_health() -> dict:
+    """Lightweight connectivity check -- SELECT 1 only, never an application
+    query, per the requirement that /api/health stay fast and non-blocking.
+    TTL-cached for 5s: a load balancer or uptime monitor hitting /api/health
+    every few seconds would otherwise open a fresh pool connection on every
+    single call, adding exactly the kind of pool pressure this phase is
+    meant to observe, not cause. Relies on the existing pool_timeout=10
+    (database.py) as the effective ceiling rather than adding a new timeout
+    mechanism, since Phase 14 is explicitly not meant to change engine/pool
+    configuration."""
+    now = time.time()
+    if _db_health_cache["result"] is not None and (now - _db_health_cache["ts"]) < _DB_HEALTH_CACHE_TTL:
+        return _db_health_cache["result"]
+    from sqlalchemy import text as _health_text
+    db = None
+    try:
+        db = database.SessionLocal()
+        db.execute(_health_text("SELECT 1"))
+        result = {"reachable": True}
+    except Exception as e:
+        result = {"reachable": False, "error": str(e)}
+    finally:
+        if db is not None:
+            db.close()
+    _db_health_cache["result"] = result
+    _db_health_cache["ts"] = now
+    return result
+
 
 # --- CSRF Protection Logic ---
 
@@ -778,7 +1098,10 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             return
         backfill_locks.add(ticker)
 
-    db = database.SessionLocal()
+    # HARDEN-XX: db session is opened later, only once network I/O is done --
+    # see the "Phase 2" comment below. `db = None` here lets the except/finally
+    # blocks tell "never opened" apart from "opened, needs rollback/close".
+    db = None
     try:
 
         if interval in ("1m", "5m", "15m", "30m", "1h"):
@@ -856,6 +1179,13 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             except Exception as e:
                 print(f"[GapFill] YFinance fallback failed for {ticker}: {e}")
 
+        # ---- Phase 2: open the DB session only now, after every network call
+        # (AngelOne login, both get_historical_candles attempts, the 3s retry
+        # sleep, and the yfinance fallback) has already finished. Nothing
+        # above this line touches `db` -- it stays None and no pooled
+        # connection is held for the duration of any of that I/O. ----
+        db = database.SessionLocal()
+
         # === RESAMPLE FALLBACK: if API fetch failed, build from stored 5m candles ===
         if not intraday_candles and interval in ("15m", "30m", "1h"):
             try:
@@ -931,12 +1261,14 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
 
     except Exception as e:
         print(f"[Intraday] [BG] Error backfilling {ticker}: {e}")
-        db.rollback()
+        if db is not None:
+            db.rollback()
 
     finally:
         with _backfill_lock:
             backfill_locks.discard(ticker)
-        db.close()
+        if db is not None:
+            db.close()
 
 # ==================== TRADING ENDPOINTS ====================
 
@@ -1010,6 +1342,19 @@ from websocket_manager import user_ws_manager
 
 from fastapi import WebSocketDisconnect
 
+# HIGH-03 fix (Batch 3): /ws/user previously had zero dead-connection
+# detection -- a laptop sleep or network drop without a clean TCP close left
+# `websocket.receive_json()` blocked forever with nothing to notice, letting
+# a zombie session sit registered against MAX_USER_WS_PER_USER (6) until the
+# OS's own (very long, unconfigured) TCP timeout eventually fired. /ws/dashboard
+# doesn't have this problem: ConnectionManager.broadcast() already detects
+# stale sockets via its own send-timeout/consecutive-failure counter because
+# it's actively pushing data every broadcast cycle -- /ws/user is push-rare
+# (only fires on an order fill etc.), so it needs its own heartbeat.
+_USER_WS_HEARTBEAT_INTERVAL = 20  # seconds between server-initiated pings
+_USER_WS_HEARTBEAT_TIMEOUT = 45   # no client activity (message OR pong) within this -> treat as dead
+
+
 @app.websocket("/ws/user")
 
 async def user_websocket_endpoint(websocket: WebSocket):
@@ -1064,11 +1409,62 @@ async def user_websocket_endpoint(websocket: WebSocket):
 
         await websocket.send_json({"type": "authenticated"})
 
-        await user_ws_manager.connect(user_id, websocket)
+        connected = await user_ws_manager.connect(user_id, websocket)
+        if not connected:
+            # MAX_USER_WS_TOTAL / MAX_USER_WS_PER_USER reached -- socket was
+            # never registered, nothing to clean up in user_ws_manager.
+            await websocket.send_json({"type": "error", "message": "Too many active sessions"})
+            await websocket.close(code=1013)
+            return
         try:
-            while True:
-                msg = await websocket.receive_json()
-                await user_ws_manager.handle_message(user_id, msg)
+            # HIGH-03 fix (Batch 3): run the message-receive loop and a
+            # heartbeat loop concurrently. Whichever notices the connection
+            # is dead first (a real WebSocketDisconnect from receive_json,
+            # or the heartbeat's own staleness/send-failure check) wins;
+            # the other is cancelled immediately. This also means a server
+            # shutdown's ws.close() (Batch 2's _close_all_client_websockets)
+            # is handled the same way it always was -- receive_json() raises
+            # WebSocketDisconnect right away, which cancels the heartbeat
+            # loop cleanly with no separate race window.
+            last_activity = {"ts": time.time()}
+
+            async def _receive_loop():
+                while True:
+                    msg = await websocket.receive_json()
+                    last_activity["ts"] = time.time()
+                    if isinstance(msg, dict) and msg.get("type") == "pong":
+                        continue  # heartbeat ack only -- no app-level handling
+                    await user_ws_manager.handle_message(user_id, msg)
+
+            async def _heartbeat_loop():
+                while True:
+                    await asyncio.sleep(_USER_WS_HEARTBEAT_INTERVAL)
+                    idle_for = time.time() - last_activity["ts"]
+                    if idle_for > _USER_WS_HEARTBEAT_TIMEOUT:
+                        raise ConnectionError(
+                            f"No client activity for {idle_for:.0f}s -- treating connection as dead"
+                        )
+                    # A send that itself fails/hangs is just as good a dead-
+                    # connection signal as a missed pong -- bounded so one
+                    # bad socket can't stall this loop past the timeout.
+                    await asyncio.wait_for(websocket.send_json({"type": "ping"}), timeout=5)
+
+            receive_task = asyncio.create_task(_receive_loop())
+            heartbeat_task = asyncio.create_task(_heartbeat_loop())
+            done, pending = await asyncio.wait(
+                {receive_task, heartbeat_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in pending:
+                t.cancel()
+            for t in pending:
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+            for t in done:
+                exc = t.exception()
+                if exc is not None:
+                    raise exc
         except WebSocketDisconnect:
             user_ws_manager.disconnect(user_id, websocket)
 
@@ -1356,8 +1752,6 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                         latest_c = c_rows[0]
                         prev_c = c_rows[1] if len(c_rows) > 1 else None
 
-                        # If the latest 1D candle is from a previous day (not yet aggregated today),
-                        # use today's last 5m candle close as the actual current price.
                         from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
                         _IST2 = _tz2(_td2(hours=5, minutes=30))
                         _ist_now2 = _dt2.now(_IST2)
@@ -1367,30 +1761,52 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                             _lt_date = _lt.astimezone(_IST2).date()
                         else:
                             _lt_date = _lt.date()
-                        _current_price = float(latest_c.close)
-                        if _lt_date < _today_ist2:
-                            _today_start = _dt2(_today_ist2.year, _today_ist2.month, _today_ist2.day, 0, 0, 0)
-                            _recent_5m = db_prices.query(Candle).filter(
-                                Candle.ticker.in_([raw, clean]),
-                                Candle.timeframe == '5m',
-                                Candle.close > 0,
-                                Candle.timestamp >= _today_start
-                            ).order_by(Candle.timestamp.desc()).limit(1).first()
-                            if _recent_5m:
-                                _current_price = float(_recent_5m.close)
 
-                        pc = prev_c.close if prev_c else (latest_c.open or latest_c.close)
-                        diff = round(_current_price - float(pc), 2) if pc else 0
-                        pct = round((diff / float(pc)) * 100, 2) if pc and float(pc) != 0 else 0
+                        # Check for today's 5m intraday candles
+                        _today_start = _dt2(_today_ist2.year, _today_ist2.month, _today_ist2.day, 0, 0, 0)
+                        _today_5m = db_prices.query(Candle).filter(
+                            Candle.ticker.in_([raw, clean]),
+                            Candle.timeframe == '5m',
+                            Candle.close > 0,
+                            Candle.timestamp >= _today_start
+                        ).order_by(Candle.timestamp.asc()).all()
+
+                        if _today_5m:
+                            _current_price = float(_today_5m[-1].close)
+                            _open_price = float(_today_5m[0].open)
+                            _high_price = float(max(c.high for c in _today_5m))
+                            _low_price = float(min(c.low for c in _today_5m))
+                            _volume = sum(int(c.volume or 0) for c in _today_5m)
+                            _pc_source = latest_c.close
+                        elif _lt_date == _today_ist2:
+                            # 1D candle for today exists directly
+                            _current_price = float(latest_c.close)
+                            _open_price = float(latest_c.open or latest_c.close)
+                            _high_price = float(latest_c.high or latest_c.close)
+                            _low_price = float(latest_c.low or latest_c.close)
+                            _volume = int(latest_c.volume or 0)
+                            _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
+                        else:
+                            # Market closed / historical: latest_c is the last traded day
+                            _current_price = float(latest_c.close)
+                            _open_price = float(latest_c.open or latest_c.close)
+                            _high_price = float(latest_c.high or latest_c.close)
+                            _low_price = float(latest_c.low or latest_c.close)
+                            _volume = int(latest_c.volume or 0)
+                            _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
+
+                        pc = float(_pc_source) if _pc_source else _open_price
+                        diff = round(_current_price - pc, 2) if pc else 0
+                        pct = round((diff / pc) * 100, 2) if pc and pc != 0 else 0
                         price_obj = {
                             "current_price": _current_price,
                             "current": _current_price,
-                            "open": float(latest_c.open or latest_c.close),
-                            "prev_close": float(pc),
-                            "high": float(latest_c.high or latest_c.close),
-                            "low": float(latest_c.low or latest_c.close),
-                            "volume": int(latest_c.volume or 0),
-                            "volume_display": _fmt_volume(int(latest_c.volume or 0)),
+                            "open": _open_price,
+                            "prev_close": pc,
+                            "high": _high_price,
+                            "low": _low_price,
+                            "volume": _volume,
+                            "volume_display": _fmt_volume(_volume),
                             "change": diff,
                             "change_pct": pct,
                             "source": "db",
@@ -1400,6 +1816,45 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                             _live_prices_cache[raw] = {"data": price_obj, "ts": now}
                             _ticker_last_update[raw] = now
                         db_resolved.append(tkr)
+                    else:
+                        # No 1D candles, check 5m candles
+                        _recent_5m_all = db_prices.query(Candle).filter(
+                            Candle.ticker.in_([raw, clean]),
+                            Candle.timeframe == '5m',
+                            Candle.close > 0
+                        ).order_by(Candle.timestamp.desc()).limit(150).all()
+                        if _recent_5m_all:
+                            _last_5m_date = _recent_5m_all[0].timestamp.date()
+                            _day_5m = [c for c in _recent_5m_all if c.timestamp.date() == _last_5m_date]
+                            _day_5m.reverse()
+                            _current_price = float(_day_5m[-1].close)
+                            _open_price = float(_day_5m[0].open)
+                            _high_price = float(max(c.high for c in _day_5m))
+                            _low_price = float(min(c.low for c in _day_5m))
+                            _prev_5m = [c for c in _recent_5m_all if c.timestamp.date() < _last_5m_date]
+                            _pc_source = _prev_5m[0].close if _prev_5m else _open_price
+                            pc = float(_pc_source)
+                            diff = round(_current_price - pc, 2)
+                            pct = round((diff / pc) * 100, 2) if pc and pc != 0 else 0
+                            _volume = sum(int(c.volume or 0) for c in _day_5m)
+                            price_obj = {
+                                "current_price": _current_price,
+                                "current": _current_price,
+                                "open": _open_price,
+                                "prev_close": pc,
+                                "high": _high_price,
+                                "low": _low_price,
+                                "volume": _volume,
+                                "volume_display": _fmt_volume(_volume),
+                                "change": diff,
+                                "change_pct": pct,
+                                "source": "db",
+                            }
+                            prices[raw] = price_obj
+                            if not market_open:
+                                _live_prices_cache[raw] = {"data": price_obj, "ts": now}
+                                _ticker_last_update[raw] = now
+                            db_resolved.append(tkr)
                 still_remaining = [t for t in still_remaining if t not in db_resolved]
             finally:
                 db_prices.close()
@@ -1621,13 +2076,13 @@ async def get_live_prices_batch(request: Request, req: BatchPriceRequest, curren
     return prices
 
 @app.get("/api/health")
-def health_check():
+def health_check(top_allocations: int = 0):
     sub_metrics = viewed_ticker_mgr.get_metrics() if viewed_ticker_mgr else {}
     # Compute rates for counters since last reset
     uptime = time.time() - _monitoring["last_reset_time"]
     yf_req_rate = round(_monitoring["yfinance_requests"] / max(uptime, 1), 4)
     evictions_rate = round(sub_metrics.get("evictions", 0) / max(uptime, 1), 4)
-    return {
+    response = {
         "status": "ok",
         "timestamp": datetime.now(IST).isoformat(),
         "market_open": is_market_open_now(),
@@ -1655,6 +2110,112 @@ def health_check():
         },
         "evictions_per_sec": evictions_rate,
     }
+
+    # ── Phase 14 additions below: purely additive, every field above is
+    # unchanged. Each block is independently guarded so one metric source
+    # failing (e.g. DB unreachable) still returns the rest of the response
+    # rather than a 500 -- health checks must never throw.
+    try:
+        response["process"] = {
+            "rss_mb": _get_process_rss_mb(),
+            "cpu_percent": _get_cpu_percent(),
+            "threads": threading.active_count(),
+        }
+    except Exception as e:
+        response["process"] = {"error": str(e)}
+
+    # POST-LOAD MEMORY INVESTIGATION: only present when MEMORY_TRACE=1 (see
+    # _get_memory_diagnostics' own docstring) -- omitted entirely otherwise,
+    # so this doesn't change /api/health's shape for any existing caller.
+    try:
+        diag = _get_memory_diagnostics(top_n=top_allocations)
+        if diag is not None:
+            response["memory_diag"] = diag
+    except Exception as e:
+        response["memory_diag"] = {"error": str(e)}
+
+    try:
+        response["event_loop"] = {
+            "lag_ms": _event_loop_lag_state["current_ms"],
+            "max_lag_ms": _event_loop_lag_state["max_ms"],
+            "distribution": _event_loop_lag_stats(),
+        }
+    except Exception as e:
+        response["event_loop"] = {"error": str(e)}
+
+    try:
+        db_health = _check_db_health()
+        db_pool = _get_db_pool_stats()
+        if db_health.get("reachable"):
+            response["database"] = {**db_pool, "reachable": True}
+        else:
+            # HIGH-01 fix: never surface the raw driver/connection exception
+            # text to callers -- it can include hostnames, usernames, or DSN
+            # fragments (e.g. "password authentication failed for user X").
+            # Full detail goes to the server log only; the client gets a
+            # generic reason so /api/health stays safe to expose publicly.
+            print(f"[Health] Database unreachable: {db_health.get('error')}")
+            response["database"] = {**db_pool, "reachable": False, "error": "database unreachable"}
+    except Exception as e:
+        print(f"[Health] Database check raised: {e}")
+        response["database"] = {"reachable": False, "error": "database check failed"}
+
+    try:
+        response["market_data"] = {
+            "angelone_connected": bool(_last_angel_tick_time > 0 and time.time() - _last_angel_tick_time < 30),
+            "last_tick_age_seconds": round(time.time() - _last_angel_tick_time, 1) if _last_angel_tick_time > 0 else None,
+            "reconnects": _monitoring["ws_reconnects"],
+            "subscriptions": len(angelone_service.subscribed_tokens) if hasattr(angelone_service, "subscribed_tokens") else None,
+        }
+    except Exception as e:
+        response["market_data"] = {"error": str(e)}
+
+    try:
+        lm_stats = live_timeframe_manager.get_stats()
+        response["live_engine"] = {
+            "active_builders": lm_stats.get("active_builders"),
+            "builder_capacity": lm_stats.get("max_builders"),
+            "active_viewers": sub_metrics.get("active_viewers"),
+        }
+    except Exception as e:
+        response["live_engine"] = {"error": str(e)}
+
+    try:
+        response["websocket"] = {
+            "dashboard_connections": len(manager.active_connections),
+            "max_connections": MAX_DASHBOARD_WS,
+            "max_observed_connections": manager.max_observed_connections,
+        }
+    except Exception as e:
+        response["websocket"] = {"error": str(e)}
+
+    try:
+        cache_stats = candle_cache.get_stats()
+        response["cache"] = {
+            "l2_entries": cache_stats.get("l2_entries"),
+            "l2_max_entries": cache_stats.get("l2_max_entries"),
+            "news_entries": len(_news_ticker_cache),
+            "news_max_entries": _MAX_NEWS_CACHE_ENTRIES,
+        }
+    except Exception as e:
+        response["cache"] = {"error": str(e)}
+
+    response["prefill"] = dict(_prefill_state)
+
+    # HIGH-01 fix: the database dependency is the one thing this endpoint
+    # must actually gate on. Every other section above stays best-effort
+    # (independently try/except-guarded, never fails the whole response),
+    # but a DB that's actually down must produce a non-2xx status, not a
+    # 200 with "reachable": false buried in the body -- otherwise Docker's
+    # HEALTHCHECK / an ALB target-group check / any future orchestrator
+    # will never notice and keep routing traffic to a DB-less worker.
+    db_reachable = response.get("database", {}).get("reachable") is True
+    response["status"] = "ok" if db_reachable else "error"
+
+    if not db_reachable:
+        return JSONResponse(status_code=503, content=response)
+
+    return response
 
 # ==================== YFINANCE REPORT & SYNC ====================
 
@@ -2584,7 +3145,17 @@ async def proxy_market_sentiment(db: Session = Depends(get_db)):
     try:
         # Generate sentiment from actual live market data
         try:
-            live = await fetch_batch_live_data(['NIFTY', 'SENSEX', 'BANKNIFTY'])
+            # BUGFIX (AI-insights accuracy check): this call was missing
+            # market_open=..., silently defaulting to False regardless of the
+            # real market state. fetch_batch_live_data only runs its tick
+            # staleness check (>30s since last receive) when market_open is
+            # True -- with it always False here, a stale/stuck AngelOne tick
+            # for NIFTY/SENSEX/BANKNIFTY during real trading hours would keep
+            # being accepted as current forever, with the sentiment gauge
+            # never detecting or falling back. /api/live-prices (the main
+            # dashboard price endpoint) already passes is_market_open_now()
+            # correctly; this call just hadn't been wired up the same way.
+            live = await fetch_batch_live_data(['NIFTY', 'SENSEX', 'BANKNIFTY'], market_open=is_market_open_now())
             live_scores = []
             for t in ['NIFTY', 'SENSEX', 'BANKNIFTY']:
                 p = live.get(t, {})
@@ -2887,6 +3458,7 @@ async def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
     t = ticker.strip().upper().replace('.NS', '')
     cached = _news_ticker_cache.get(t)
     if cached and (now - cached["ts"]) < _NEWS_CACHE_TTL:
+        _news_ticker_cache.move_to_end(t)  # O(1): mark as most-recently-used
         return cached["data"]
     try:
         meta = db.query(models.StockMetadata).filter(models.StockMetadata.ticker == t).first()
@@ -2933,7 +3505,13 @@ async def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
                 })
                 
         result = {"articles": articles}
+        # Overwriting an existing key leaves its position unchanged in an
+        # OrderedDict, so drop it first — the fresh insert both updates the
+        # value and moves it to the MRU (end) position.
+        _news_ticker_cache.pop(t, None)
         _news_ticker_cache[t] = {"data": result, "ts": now}
+        while len(_news_ticker_cache) > _MAX_NEWS_CACHE_ENTRIES:
+            _news_ticker_cache.popitem(last=False)  # O(1): evict the LRU entry
         return result
     except Exception as e:
         print(f"[News Ticker] Error: {e}")
@@ -2941,17 +3519,49 @@ async def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
 
 # ==================== DASHBOARD WEBSOCKET ====================
 
+# Phase 7: bound how many dashboard WS clients can be connected at once.
+# No prior evidence of an expected concurrent-user ceiling in this repo
+# (ViewedTickerManager's max_subscriptions=2000 bounds distinct *tickers*
+# watched across all clients, a different axis from connection count) —
+# 500 is a conservative starting point pending real numbers from the
+# AWS load test in Phase 15.
+MAX_DASHBOARD_WS = 500
+
+# Matches the timeout value already in use below (was an inline 0.5s magic
+# number) — a single slow send never blocks the broadcast to everyone else.
+WS_SEND_TIMEOUT_SECONDS = 0.5
+
+# A single slow send is tolerated (transient network blip); only a client
+# that's slow on every consecutive broadcast for this many ticks in a row
+# is treated as dead and cleaned up. Ticks broadcast every ~0.1-1s during
+# market hours, so this bounds detection to a few seconds without
+# flip-flopping healthy-but-momentarily-slow clients.
+WS_MAX_CONSECUTIVE_TIMEOUTS = 3
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.user_topics: Dict[str, set] = {}
+        self._consecutive_timeouts: Dict[str, int] = {}
+        self.max_observed_connections = 0  # Phase 14: monitoring only, never read for any admission decision
 
-    async def connect(self, websocket: WebSocket, client_id: str = None):
+    async def connect(self, websocket: WebSocket, client_id: str = None) -> Optional[str]:
         await websocket.accept()
         if client_id is None:
             client_id = str(id(websocket))
+        # Check-then-register with no `await` in between: asyncio's
+        # single-threaded cooperative scheduling means this synchronous
+        # block always runs to completion before another connect() call
+        # can be scheduled, so concurrent connection attempts can't both
+        # observe room under the cap and register anyway.
+        if len(self.active_connections) >= MAX_DASHBOARD_WS:
+            return None
         self.active_connections[client_id] = websocket
         self.user_topics[client_id] = set()
+        self._consecutive_timeouts[client_id] = 0
+        if len(self.active_connections) > self.max_observed_connections:
+            self.max_observed_connections = len(self.active_connections)
         return client_id
 
     def disconnect(self, client_id: str):
@@ -2959,10 +3569,30 @@ class ConnectionManager:
         if ws:
             try:
                 import asyncio
-                asyncio.create_task(ws.close())
+                # SMOKE-01 fix: this fire-and-forget task's exception was
+                # never retrieved -- a real production smoke test surfaced it
+                # as an unhandled "Task exception was never retrieved"
+                # RuntimeError during shutdown (ws.close() on a connection
+                # uvicorn itself was already closing). The outer try/except
+                # here only ever guarded scheduling the task (create_task
+                # itself failing), never what happens once it actually runs.
+                # add_done_callback's callback runs once the task finishes and
+                # calling .exception() inside it marks the exception
+                # retrieved, so a failed close is logged instead of dumping
+                # an unhandled traceback.
+                def _log_close_error(t):
+                    try:
+                        exc = t.exception()
+                        if exc:
+                            print(f"[WS] Dashboard client {client_id} close() failed (non-fatal): {exc}")
+                    except asyncio.CancelledError:
+                        pass
+
+                asyncio.create_task(ws.close()).add_done_callback(_log_close_error)
             except Exception:
                 pass
         self.user_topics.pop(client_id, None)
+        self._consecutive_timeouts.pop(client_id, None)
 
     async def send_personal_message(self, message: dict, client_id: str):
         ws = self.active_connections.get(client_id)
@@ -2976,22 +3606,47 @@ class ConnectionManager:
     async def broadcast(self, message: dict):
         if not self.active_connections:
             return
-            
+
         async def _send(cid, ws):
             import asyncio
             try:
-                await asyncio.wait_for(ws.send_json(message), timeout=0.5)
+                await asyncio.wait_for(ws.send_json(message), timeout=WS_SEND_TIMEOUT_SECONDS)
+                self._consecutive_timeouts[cid] = 0  # reset on any success
+                return None
             except asyncio.TimeoutError:
-                return None  # slow client, skip without disconnecting
+                n = self._consecutive_timeouts.get(cid, 0) + 1
+                self._consecutive_timeouts[cid] = n
+                if n >= WS_MAX_CONSECUTIVE_TIMEOUTS:
+                    print(f"[WS Dashboard] Client {cid} unresponsive for {n} consecutive "
+                          f"broadcasts, disconnecting")
+                    return cid  # unhealthy -- caller cleans it up
+                return None  # transient slow send, tolerate it
             except Exception as e:
                 print(f"[WS Dashboard] Broadcast error to {cid}: {e}")
                 return cid
-        
+
         import asyncio
         tasks = [_send(cid, ws) for cid, ws in self.active_connections.items()]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for cid in results:
+            if isinstance(cid, str):
+                _cleanup_dashboard_client(cid)
 
 manager = ConnectionManager()
+
+
+def _cleanup_dashboard_client(client_id: str):
+    """Idempotent full teardown for one dashboard WS client: releases its
+    ticker-view references, then removes it from the connection manager.
+    Safe to call more than once (unview_all([]) and manager.disconnect's
+    .pop(..., None) are both no-ops on an already-cleaned-up client) — used
+    from the normal disconnect/error handlers below AND from broadcast()
+    when a client is found unresponsive, so every teardown path releases
+    the exact same state."""
+    topics = manager.user_topics.get(client_id, set())
+    if viewed_ticker_mgr and topics:
+        viewed_ticker_mgr.unview_all(list(topics))
+    manager.disconnect(client_id)
 
 DASHBOARD_TICKERS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'BHARTIARTL']
 SECTOR_TICKERS = ['NIFTY_AUTO', 'NIFTY_IT', 'NIFTY_PHARMA', 'NIFTY_FMCG', 'NIFTY_METAL', 'NIFTY_ENERGY', 'NIFTY_MEDIA', 'NIFTY_PSU_BANK', 'NIFTY_REALTY']
@@ -2999,6 +3654,12 @@ SECTOR_TICKERS = ['NIFTY_AUTO', 'NIFTY_IT', 'NIFTY_PHARMA', 'NIFTY_FMCG', 'NIFTY
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     client_id = await manager.connect(websocket)
+    if client_id is None:
+        # MAX_DASHBOARD_WS reached: manager.connect() never registered this
+        # socket, so there's nothing to clean up here -- just close it.
+        # 1013 = RFC 6455 "Try Again Later", the standard code for this case.
+        await websocket.close(code=1013)
+        return
     # Send connected message so frontend subscribes
     await websocket.send_json({"type": "connected", "client_id": client_id})
     _msg_window_start = time.time()
@@ -3056,14 +3717,10 @@ async def dashboard_websocket(websocket: WebSocket):
                 if tkr and viewed_ticker_mgr:
                     viewed_ticker_mgr.unview(tkr)
     except WebSocketDisconnect:
-        if viewed_ticker_mgr and client_id in manager.user_topics:
-            viewed_ticker_mgr.unview_all(list(manager.user_topics[client_id]))
-        manager.disconnect(client_id)
+        _cleanup_dashboard_client(client_id)
     except Exception as e:
         print(f"[WS Dashboard] Error: {e}")
-        if viewed_ticker_mgr and client_id in manager.user_topics:
-            viewed_ticker_mgr.unview_all(list(manager.user_topics[client_id]))
-        manager.disconnect(client_id)
+        _cleanup_dashboard_client(client_id)
 
 # ── Background dashboard broadcast loop ──
 _live_dashboard_cache = {}
@@ -3776,6 +4433,87 @@ class _YfCandle:
         for k, v in kwargs.items():
             setattr(self, k, v)
 
+
+def _yf_intraday_df_to_candles(yf_int, clean_ticker: str, interval: str) -> list:
+    """Turn one yfinance intraday-OHLCV DataFrame into the list of _YfCandle
+    objects _fetch_yfinance_intraday returns.
+
+    STARTUP-BACKFILL CPU/GIL INVESTIGATION fix: this used to be an inline
+    `for idx, row in yf_int.iterrows(): ...` loop -- a DIFFERENT call site
+    than the one already fixed for the daily-prefill path (main.py's
+    _yf_daily_df_to_candle_rows). _startup_backfill calls this function
+    (via _fetch_yfinance_intraday) for ~56 tickers x 2 intervals on an
+    always-on daemon thread starting immediately at boot, so the same
+    iterrows()-boxes-every-row-into-a-Series cost applies here, at rough
+    estimate several hundred thousand rows cumulatively across one full
+    startup-backfill run. itertuples() reads each column's own array
+    directly, which is cheaper per row for the same output.
+
+    Extracted to a module-level, pure (no I/O) function specifically so
+    this transformation's output can be unit-tested directly against the
+    previous behavior -- see
+    tests/test_intraday_yfinance_itertuples_equivalence.py.
+
+    Semantic equivalence with the previous `row.get(col)` pattern:
+      - Series.get('Open') with no explicit default returns None if the
+        column is present-but-missing-for-this-row (impossible for a
+        regular DataFrame column, which is always fully populated or NaN)
+        or if the column doesn't exist at all. getattr(t, 'Open', None) on
+        an itertuples() namedtuple replicates BOTH cases: it returns the
+        real (possibly NaN) value when the column exists, and None when it
+        doesn't -- no pre-filling of missing columns is needed here (unlike
+        the daily-prefill fix, which used bare attribute access with no
+        default and therefore needed to pre-fill).
+      - _safe_float()/_safe_int() (unchanged, not part of this fix) already
+        normalize None AND NaN to their `default` argument (0.0 / 0) and
+        catch the ValueError int(nan) would otherwise raise -- so, unlike
+        the daily-prefill path's quirk, NaN behavior here is identical
+        regardless of how the raw value was extracted.
+      - The DatetimeIndex value (`idx` from iterrows) is available from
+        itertuples() as `t.Index` (index=True, the default) -- NOT omitted
+        via index=False, which would make timestamp handling impossible;
+        this function's own logic needs it for every row.
+    """
+    from aggregator import snap_to_nse_session, fix_ohlc
+    bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+    intraday_candles_5min = []
+    seen_ts = set()
+    for t in yf_int.itertuples(index=True):
+        try:
+            idx = t.Index
+            ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
+            if hasattr(idx, 'tz') and idx.tz is not None:
+                ts = ts.astimezone(IST).replace(tzinfo=None)
+            else:
+                ts = ts.replace(tzinfo=timezone.utc).astimezone(IST).replace(tzinfo=None)
+            epoch = int(ts.replace(tzinfo=IST).timestamp())
+            snapped_epoch = snap_to_nse_session(epoch, bucket_min)
+            snapped_dt = _epoch_to_ist_dt(snapped_epoch)
+            o = _safe_float(getattr(t, 'Open', None))
+            h = _safe_float(getattr(t, 'High', None))
+            l = _safe_float(getattr(t, 'Low', None))
+            c = _safe_float(getattr(t, 'Close', None))
+            v = _safe_int(getattr(t, 'Volume', None))
+            if o is None and h is None and l is None and c is None:
+                continue
+            o = o or 0.0; h = h or 0.0; l = l or 0.0; c = c or 0.0
+            o, h, l, c = fix_ohlc(o, h, l, c)
+            if o <= 0 or h <= 0 or l <= 0 or c <= 0:
+                continue
+            # Deduplicate by snapped timestamp
+            ts_key = snapped_dt.strftime("%Y%m%d%H%M")
+            if ts_key in seen_ts:
+                continue
+            seen_ts.add(ts_key)
+            intraday_candles_5min.append(_YfCandle(
+                ticker=clean_ticker, timeframe=interval, timestamp=snapped_dt,
+                open=o, high=h, low=l, close=c, volume=v, is_completed=True,
+            ))
+        except Exception:
+            pass
+    return intraday_candles_5min
+
+
 def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg_semaphore: bool = False):
     """Fetch intraday data from yfinance. No DB persistence — returned in-memory only.
     Uses centralized YFinanceDownloader for consistent error handling and retry.
@@ -3842,41 +4580,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
             yf_int.columns = yf_int.columns.get_level_values(0)
 
     # Snap yfinance timestamps to NSE session-aligned buckets
-    bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
-    intraday_candles_5min = []
-    seen_ts = set()
-    for idx, row in yf_int.iterrows():
-        try:
-            ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
-            if hasattr(idx, 'tz') and idx.tz is not None:
-                ts = ts.astimezone(IST).replace(tzinfo=None)
-            else:
-                ts = ts.replace(tzinfo=timezone.utc).astimezone(IST).replace(tzinfo=None)
-            epoch = int(ts.replace(tzinfo=IST).timestamp())
-            snapped_epoch = snap_to_nse_session(epoch, bucket_min)
-            snapped_dt = _epoch_to_ist_dt(snapped_epoch)
-            o = _safe_float(row.get('Open'))
-            h = _safe_float(row.get('High'))
-            l = _safe_float(row.get('Low'))
-            c = _safe_float(row.get('Close'))
-            v = _safe_int(row.get('Volume'))
-            if o is None and h is None and l is None and c is None:
-                continue
-            o = o or 0.0; h = h or 0.0; l = l or 0.0; c = c or 0.0
-            o, h, l, c = fix_ohlc(o, h, l, c)
-            if o <= 0 or h <= 0 or l <= 0 or c <= 0:
-                continue
-            # Deduplicate by snapped timestamp
-            ts_key = snapped_dt.strftime("%Y%m%d%H%M")
-            if ts_key in seen_ts:
-                continue
-            seen_ts.add(ts_key)
-            intraday_candles_5min.append(_YfCandle(
-                ticker=clean_ticker, timeframe=interval, timestamp=snapped_dt,
-                open=o, high=h, low=l, close=c, volume=v, is_completed=True,
-            ))
-        except Exception:
-            pass
+    intraday_candles_5min = _yf_intraday_df_to_candles(yf_int, clean_ticker, interval)
 
     if intraday_candles_5min:
         _yf_intraday_cache[cache_key] = (time.time(), intraday_candles_5min)
@@ -4243,6 +4947,19 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
 
             if fill_needed:
+                # HARDEN-XX: `db` (this request's Depends(get_db) session) already
+                # checked out a real pooled connection at the `records = q...all()`
+                # query above and would otherwise hold it, idle and uncommitted,
+                # across perform_on_demand_backfill's AngelOne/yfinance network I/O
+                # below -- proven with engine.pool.checkedout() instrumentation
+                # (see tests/test_intraday_paginated_session_lifetime.py). Closing
+                # here is safe: perform_on_demand_backfill takes no db argument and
+                # uses its own separate, already-hardened session (see main.py's
+                # "Phase 2" comment in perform_on_demand_backfill), and a
+                # SQLAlchemy Session remains fully usable after close() -- its next
+                # query (q_fresh below, built from the SAME q_base object created
+                # before this close) transparently opens a fresh connection.
+                db.close()
                 # Synchronous fill — user waits during loading, gets complete data on first paint
                 perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
                 # Re-query after fill so the response contains the freshly stored candles
@@ -5002,37 +5719,238 @@ async def _broadcast_angel_ticks():
             print(f"[AngelTick] Broadcast error: {e}")
             await asyncio.sleep(1.0)
 
+# ── Background-task registry (Batch 2: graceful shutdown) ──
+# Every asyncio.create_task(...) call inside startup() is wrapped with
+# _track_task() so shutdown can cancel + await ALL of them, not just the
+# one task (_event_loop_probe_task) the previous shutdown handler knew
+# about. A plain list is enough here -- workers=1 (gunicorn.conf.py) means
+# there is exactly one process appending to it, all from the same event
+# loop, so no lock is needed.
+_background_tasks: list = []
+
+
+def _track_task(task: "asyncio.Task") -> "asyncio.Task":
+    _background_tasks.append(task)
+    return task
+
+
+def _yf_daily_df_to_candle_rows(df, tkr: str) -> list:
+    """Turn one yfinance daily-OHLCV DataFrame into the list-of-dicts shape
+    _daily_prefill_all's _fetch_daily() inserts into `candles`.
+
+    EVENT-LOOP-LAG fix (Category B, startup GIL contention): this used to be
+    an inline `for idx, row in df.iterrows(): ...` loop. iterrows() boxes
+    every row into a fresh Series object -- expensive, and this closure runs
+    inside a 3-worker ThreadPoolExecutor at startup for potentially
+    thousands of tickers, competing for the GIL with the event-loop thread
+    the whole time. itertuples() reads each column's own array directly (no
+    per-row Series), which is dramatically cheaper per row and correspondingly
+    less GIL time taken from the event loop for the same work.
+
+    Extracted to a module-level, pure (no I/O/DB) function specifically so
+    this transformation's output can be unit-tested directly against the
+    previous behavior -- see tests/test_daily_prefill_itertuples_equivalence.py.
+
+    Semantic equivalence with the previous `row.get(col, 0) or 0` pattern is
+    preserved deliberately, INCLUDING its existing quirks, not "improved":
+      - A present-but-NaN OHLC value stays NaN (NaN is truthy, so `NaN or 0`
+        evaluates to NaN, not 0) -- harmless in practice because the
+        `o > 0 and h > 0 and l > 0 and c > 0` guard below excludes the row
+        either way (NaN comparisons are always False).
+      - A present-but-NaN Volume raises ValueError from int(NaN), which
+        propagates out of this function exactly as it did out of the old
+        iterrows loop -- callers that wrapped the old loop in a try/except
+        (as _fetch_daily does) see identical failure behavior.
+      - A genuinely missing column (yfinance always returns Open/High/Low/
+        Close/Volume for a daily download in practice, so this is a
+        defensive/theoretical case) is pre-filled with 0 before iterating,
+        matching Series.get(col, 0)'s missing-column fallback -- itertuples()
+        has no equivalent per-row default, so this must happen up front.
+    """
+    rows = []
+    if df is None or df.empty:
+        return rows
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    for _col in ("Open", "High", "Low", "Close", "Volume"):
+        if _col not in df.columns:
+            df[_col] = 0
+    for t in df.itertuples(index=True):
+        ts = t.Index.to_pydatetime() if hasattr(t.Index, 'to_pydatetime') else t.Index
+        ts_naive = ts.replace(tzinfo=None) if (hasattr(ts, 'tzinfo') and ts.tzinfo) else ts
+        o = float(t.Open or 0)
+        h = float(t.High or 0)
+        l = float(t.Low or 0)
+        c = float(t.Close or 0)
+        v = int(t.Volume or 0)
+        if o > 0 and h > 0 and l > 0 and c > 0:
+            rows.append({"t": tkr, "ts": ts_naive,
+                         "o": o, "h": max(o, h, c), "l": min(o, l, c),
+                         "c": c, "v": v, "src": "YFINANCE"})
+    return rows
+
+
+def _sync_yfinance_inactive_symbols() -> int:
+    """Synchronous worker for the periodic yfinance-inactive-symbol sync.
+
+    EVENT-LOOP-LAG fix (root cause #1, root-cause isolation phase): this
+    loop used to run directly on the asyncio event loop inside
+    _yfinance_inactive_sync() below, with no asyncio.to_thread -- an
+    idle-control experiment (every other background job disabled) proved
+    this loop ALONE causes a ~9.6s event-loop stall every time it fires.
+    Extracted verbatim (same per-ticker .first()-then-update-or-insert
+    logic, same commit/rollback/close shape) into this plain function so it
+    can run via asyncio.to_thread with its OWN fresh session -- never a
+    session shared with the event-loop thread.
+
+    Batching was deliberately NOT applied to the per-ticker existence
+    check/update: stock_metadata has real duplicate ticker rows in this
+    database (7,821 rows for 5,543 distinct tickers -- the same ticker
+    under NSE and BSE both exist as separate rows, matching the
+    (ticker, exchange) unique constraint in models.py). The original
+    `.filter(ticker == X).first()` touches exactly one arbitrary row per
+    ticker; a bulk `UPDATE ... WHERE ticker IN (...)` would instead touch
+    EVERY row matching that ticker, changing which rows get marked
+    inactive. Preserving exact existing behavior takes priority over the
+    (optional, per the investigation's own instructions) round-trip
+    reduction here.
+
+    Returns the number of symbols synced (0 if there was nothing to do).
+    """
+    inactive = yf_downloader.get_inactive_symbols()
+    if not inactive:
+        return 0
+    from database import SessionLocal
+    db_sync = SessionLocal()
+    try:
+        for ticker, reason in inactive.items():
+            existing = db_sync.query(models.StockMetadata).filter(
+                models.StockMetadata.ticker == ticker
+            ).first()
+            if existing:
+                existing.is_active = False
+            else:
+                rec = models.StockMetadata(
+                    ticker=ticker, name=f"[{reason}]", exchange="NSE",
+                    is_active=False
+                )
+                db_sync.add(rec)
+        db_sync.commit()
+        yf_downloader.clear_inactive_symbols()
+        return len(inactive)
+    except Exception:
+        db_sync.rollback()
+        raise
+    finally:
+        db_sync.close()
+
+
+def _sync_daily_base_price() -> int:
+    """Synchronous worker for the daily-prefill base_price sync.
+
+    EVENT-LOOP-LAG fix (root cause #2, root-cause isolation phase): this
+    UPDATE...FROM(SELECT DISTINCT ON...) query used to run directly on the
+    asyncio event loop inside _daily_prefill_all() below, with no
+    asyncio.to_thread. EXPLAIN ANALYZE showed a parallel sequential scan
+    over the whole `candles` table plus an external disk-based sort (no
+    supporting index for this timeframe/ticker/timestamp access pattern) --
+    measured ~3.06s of genuine execution time on this local dev DB alone;
+    production's much larger candles table is plausibly worse. Observed
+    causing 14.3s-16.7s event-loop stalls in the live app.
+
+    Deliberately NOT paired with a new index in this phase -- the
+    objective here is moving the blocking work off the event loop, not SQL
+    optimization; an index has its own production write/storage cost that
+    needs separate justification and measurement.
+
+    Uses its OWN fresh session, never the caller's db_df (which stays
+    owned by the event-loop-thread coroutine that calls this via
+    asyncio.to_thread, and is never passed across the thread boundary).
+
+    Returns elapsed milliseconds.
+    """
+    from database import SessionLocal
+    from sqlalchemy import text as sa_text
+    start = time.time()
+    db = SessionLocal()
+    try:
+        db.execute(sa_text("""
+            UPDATE stock_metadata sm
+            SET base_price = latest.close
+            FROM (
+                SELECT DISTINCT ON (ticker) ticker, close
+                FROM candles
+                WHERE timeframe = '1D' AND close > 0
+                ORDER BY ticker, timestamp DESC
+            ) latest
+            WHERE sm.ticker = latest.ticker;
+        """))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+    return round((time.time() - start) * 1000)
+
+
 @app.on_event("startup")
 async def startup():
     """Load NSE holidays + start dashboard broadcast loops + subscribe AngelOne WS."""
+    # POST-LOAD MEMORY INVESTIGATION: every synchronous (`def`) FastAPI route
+    # -- /api/stock-data/chart, /intraday, /api/all-stocks among the busiest
+    # -- runs on a worker thread from AnyIO's default thread pool (Starlette's
+    # run_in_threadpool), which defaults to up to 40 concurrent threads. Each
+    # OS thread gets its own glibc malloc arena that is never released even
+    # once idle, confirmed as the dominant driver of RSS growth under
+    # combined API+WebSocket load (tracemalloc's own tracked-object view grew
+    # far less than process RSS did across the same load). Capping this
+    # alongside MALLOC_ARENA_MAX (Dockerfile) directly bounds peak concurrent
+    # threads for sync routes -- pure config, no route/behavior change; sync
+    # routes that would have queued behind thread #9 now simply wait longer
+    # under very high concurrency instead of spawning thread #10-40, which is
+    # an acceptable trade on a single-worker, memory-constrained deployment.
+    import anyio.to_thread
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 8
+
     global viewed_ticker_mgr
     viewed_ticker_mgr = ViewedTickerManager(angelone_service, max_subscriptions=2000)
     threading.Thread(target=viewed_ticker_mgr._process_pending, daemon=True).start()
 
+    # ALEMBIC-01: schema management (create_all() + the hand-rolled v005/v006/
+    # v007 ALTER TABLE / CREATE INDEX blocks that used to live here) has moved
+    # to Alembic migrations (backend/alembic/versions/). This block is now
+    # read-only: it just reports the DB's current migration state so a
+    # missing/behind-head schema is visible in the logs instead of silently
+    # "working" via create_all() masking the gap. See
+    # docs/architecture (or the Alembic README) for the stamp/upgrade
+    # procedure -- this code deliberately never runs `alembic upgrade`
+    # itself (no startup-time schema mutation).
     try:
-        models.Base.metadata.create_all(bind=database.engine)
+        from database import SessionLocal
+        from sqlalchemy import text as sa_text
+        _rev_db = SessionLocal()
+        try:
+            current_rev = _rev_db.execute(sa_text("SELECT version_num FROM alembic_version")).scalar()
+            print(f"[Startup] Alembic schema revision: {current_rev}")
+        except Exception:
+            print("[Startup] WARNING: alembic_version table not found -- this database has not been "
+                  "stamped/migrated with Alembic yet. See backend/alembic/README or run "
+                  "`alembic stamp head` (already-current DB) / `alembic upgrade head` (fresh DB).")
+        finally:
+            _rev_db.close()
     except Exception as e:
-        print(f"[Startup] Could not create tables: {e}")
+        print(f"[Startup] Alembic revision check failed (non-fatal): {e}")
 
-    # ── Migration v005: add is_premium column + seed premium tickers ──
+    # ── Data seeding: premium tickers (was formerly bundled with the v005
+    # schema migration above; this part is pure DATA, not schema, and still
+    # needs to run every startup -- Alembic only owns table/column/index
+    # creation, not ongoing data seeding/backfill) ──
     db_migrate = None
     try:
         from database import SessionLocal
         db_migrate = SessionLocal()
         from sqlalchemy import text as sa_text
-        # Add columns if not exists (model was updated but DB wasn't migrated)
-        for col, col_type in [("is_active", "BOOLEAN NOT NULL DEFAULT TRUE"), ("is_premium", "BOOLEAN NOT NULL DEFAULT FALSE")]:
-            try:
-                db_migrate.execute(sa_text(f"ALTER TABLE stock_metadata ADD COLUMN IF NOT EXISTS {col} {col_type}"))
-            except Exception:
-                # IF NOT EXISTS is PG 9.6+; fallback for older versions
-                db_migrate.rollback()
-                col_exists = db_migrate.execute(sa_text(
-                    f"SELECT column_name FROM information_schema.columns WHERE table_name='stock_metadata' AND column_name='{col}'"
-                )).fetchone()
-                if not col_exists:
-                    db_migrate.execute(sa_text(f"ALTER TABLE stock_metadata ADD COLUMN {col} {col_type}"))
-        db_migrate.commit()
         # Seed premium tickers only if none are flagged yet (avoids 213 UPDATEs on every restart)
         existing = db_migrate.execute(sa_text("SELECT COUNT(*) FROM stock_metadata WHERE is_premium = TRUE")).scalar()
         if existing == 0:
@@ -5080,27 +5998,19 @@ async def startup():
             print(f"[Startup] Seeded {len(premium_tickers)} premium tickers")
     except Exception as e:
         if db_migrate: db_migrate.rollback()
-        print(f"[Startup] Migration v005 error: {e}")
+        print(f"[Startup] Premium ticker seeding error: {e}")
     finally:
         if db_migrate: db_migrate.close()
 
-    # ── Migration v006: add sector column + load sector map ──
+    # ── Data seeding: sector map (was formerly bundled with the v006 schema
+    # migration; the ALTER TABLE ADD COLUMN part is now in the Alembic
+    # baseline -- this part is pure DATA (in-memory cache load + backfill)
+    # and still needs to run every startup ──
     db_migrate2 = None
     try:
         from database import SessionLocal
         db_migrate2 = SessionLocal()
         from sqlalchemy import text as sa_text2
-        for col, col_type in [("sector", "VARCHAR(100)")]:
-            try:
-                db_migrate2.execute(sa_text2(f"ALTER TABLE stock_metadata ADD COLUMN IF NOT EXISTS {col} {col_type}"))
-            except Exception:
-                db_migrate2.rollback()
-                col_exists = db_migrate2.execute(sa_text2(
-                    f"SELECT column_name FROM information_schema.columns WHERE table_name='stock_metadata' AND column_name='{col}'"
-                )).fetchone()
-                if not col_exists:
-                    db_migrate2.execute(sa_text2(f"ALTER TABLE stock_metadata ADD COLUMN {col} {col_type}"))
-        db_migrate2.commit()
 
         # Load sector_data.json into memory
         sector_json_path = os.path.join(os.path.dirname(__file__), "sector_data.json")
@@ -5132,30 +6042,16 @@ async def startup():
             print(f"[Startup] WARNING: sector_data.json not found at {sector_json_path}")
     except Exception as e:
         if db_migrate2: db_migrate2.rollback()
-        print(f"[Startup] Migration v006 error: {e}")
+        print(f"[Startup] Sector map seeding error: {e}")
     finally:
         if db_migrate2: db_migrate2.close()
 
-    # ── Migration v007: performance indexes ──
-    try:
-        from database import SessionLocal as SessIdx
-        sess_idx = SessIdx()
-        index_sql = [
-            "CREATE INDEX IF NOT EXISTS ix_candle_ticker_tf_ts ON candles (ticker, timeframe, timestamp DESC)",
-            "CREATE INDEX IF NOT EXISTS ix_currentdaycandle_ticker_date ON current_day_candle (ticker, trading_date DESC)",
-            "CREATE INDEX IF NOT EXISTS ix_metadata_is_premium ON stock_metadata (is_premium) WHERE is_premium = TRUE",
-            "CREATE INDEX IF NOT EXISTS ix_stock_data_ticker_date_desc ON stock_data (ticker, date DESC)",
-        ]
-        for stmt in index_sql:
-            try:
-                sess_idx.execute(sa_text(stmt))
-            except Exception as idx_e:
-                print(f"[Startup] Index error: {idx_e}")
-        sess_idx.commit()
-        sess_idx.close()
-        print("[Startup] Performance indexes created/verified (v007)")
-    except Exception as e:
-        print(f"[Startup] Migration v007 error: {e}")
+    # NOTE: the former "v007: performance indexes" block (raw CREATE INDEX
+    # IF NOT EXISTS for ix_candle_ticker_tf_ts, ix_currentdaycandle_ticker_date,
+    # ix_metadata_is_premium, ix_stock_data_ticker_date_desc) has been removed
+    # from here -- all 4 are now formalized as real Index() declarations in
+    # models.py (see the ALEMBIC-01 comments there) and created by the
+    # Alembic baseline migration instead of on every process boot.
 
     # ── Refresh MOVER_TICKERS from DB (premium stocks + indices) ──
     try:
@@ -5182,11 +6078,15 @@ async def startup():
     # hardcoded tokens returns None from get_token(), making every historical
     # fallback silently skip them → "No chart data" for those stocks.
     try:
-        loaded = await asyncio.to_thread(angelone_service.load_instruments)
-        if loaded:
-            print(f"[Startup] AngelOne instruments loaded — token lookup enabled for all NSE stocks (incl. SME)")
+        # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control (see ELL_DISABLE_RETENTION above).
+        if os.getenv("ELL_DISABLE_INSTRUMENT_LOAD") == "1":
+            print("[ELLInvestigation] AngelOne instrument load skipped via ELL_DISABLE_INSTRUMENT_LOAD")
         else:
-            print("[Startup] WARNING: AngelOne instruments failed to load — SME/unlisted stocks may show no data")
+            loaded = await asyncio.to_thread(angelone_service.load_instruments)
+            if loaded:
+                print(f"[Startup] AngelOne instruments loaded — token lookup enabled for all NSE stocks (incl. SME)")
+            else:
+                print("[Startup] WARNING: AngelOne instruments failed to load — SME/unlisted stocks may show no data")
     except Exception as e:
         print(f"[Startup] AngelOne instruments load error: {e}")
 
@@ -5296,10 +6196,20 @@ async def startup():
         index_tickers = ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
         tickers = list(dict.fromkeys(index_tickers + stock_tickers))  # deduplicate, indices first
         if tickers:
-            import threading as _th
-            now = database.get_ist_now()
-            bf = threading.Thread(target=_startup_backfill, args=(tickers, now), daemon=True)
-            bf.start()
+            # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control (see ELL_DISABLE_RETENTION
+            # above): _startup_backfill runs _fetch_yfinance_intraday (main.py,
+            # which itself still uses yf_int.iterrows() -- a DIFFERENT call site
+            # than the one fixed in the daily-prefill event-loop-lag phase) for
+            # up to 56 tickers x 2 intervals on a dedicated, never-gated-until-now
+            # OS thread starting immediately at boot -- a candidate for the
+            # residual post-fix event-loop spike under investigation.
+            if os.getenv("ELL_DISABLE_STARTUP_BACKFILL") != "1":
+                import threading as _th
+                now = database.get_ist_now()
+                bf = threading.Thread(target=_startup_backfill, args=(tickers, now), daemon=True)
+                bf.start()
+            else:
+                print("[ELLInvestigation] Startup yfinance pre-warm backfill skipped via ELL_DISABLE_STARTUP_BACKFILL")
     except Exception as e:
         print(f"[Startup] Backfill trigger error: {e}")
     finally:
@@ -5356,8 +6266,17 @@ async def startup():
 
     # Subscribe to AngelOne WebSocket + start multi-threaded poller for ALL stocks
     try:
-        # Run login in thread to avoid blocking the event loop (1-3s HTTP call)
-        login_ok = await asyncio.to_thread(angelone_service.login)
+        # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control (see ELL_DISABLE_RETENTION
+        # above): unset (the default) is exactly today's production behavior.
+        # Skipping straight to login_ok=False reuses the EXISTING, already-shipped
+        # "real login failed" code path below (subscribe/PricePoller/
+        # CriticalIndexPoller all naturally skip) rather than adding a new one.
+        if os.getenv("ELL_DISABLE_ANGELONE") == "1":
+            print("[ELLInvestigation] AngelOne login/WS/subscribe skipped via ELL_DISABLE_ANGELONE")
+            login_ok = False
+        else:
+            # Run login in thread to avoid blocking the event loop (1-3s HTTP call)
+            login_ok = await asyncio.to_thread(angelone_service.login)
         if login_ok:
             # Subscribe only the essential tickers at startup (indices + dashboard + movers).
             # ALL_WS_TICKERS (~3000+) is intentionally excluded: sending thousands of tokens
@@ -5371,31 +6290,39 @@ async def startup():
             await asyncio.to_thread(angelone_service.subscribe_tickers, startup_ws)
             print(f"[Startup] Subscribed {len(startup_ws)} core tickers to AngelOne WS (on-demand for others)")
 
-            # Start the multi-threaded REST poller for active tickers (not all 5575)
-            # Include dashboard, movers, sector indices, and the top 2 stocks of each sector
-            sector_rep = []
-            for s, tkrs in _sector_tickers.items():
-                sector_rep.extend(tkrs[:2])
-            
-            active_tickers = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS + SECTOR_TICKERS + sector_rep))
-            poller = PricePoller(angelone_service, tickers=active_tickers)
-            poller_task = asyncio.create_task(poller.start())
-            poller_task.add_done_callback(_log_task_error)
-            print(f"[Startup] Multi-threaded price poller started for {len(active_tickers)} tickers")
+            # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control: PricePoller and
+            # CriticalIndexPoller aren't named workloads in the isolation
+            # matrix (daily prefill / intraday prefill / retention) -- held
+            # off, alongside dashboard-index-backfill above, so the A-G
+            # experiments cleanly isolate just those 3 jobs' contribution.
+            if os.getenv("ELL_DISABLE_OTHER_BG") != "1":
+                # Start the multi-threaded REST poller for active tickers (not all 5575)
+                # Include dashboard, movers, sector indices, and the top 2 stocks of each sector
+                sector_rep = []
+                for s, tkrs in _sector_tickers.items():
+                    sector_rep.extend(tkrs[:2])
 
-            # ── Start CriticalIndexPoller ─ dedicated thread for NIFTY/SENSEX/BANKNIFTY/FINNIFTY ──
-            # This thread polls only the 6 major indices every 1 second so they are NEVER stale.
-            # It runs independently of the bulk PricePoller to avoid any delay from stock polling.
-            critical_poller = CriticalIndexPoller(
-                angelone_service,
-                on_price_update=_on_angel_tick  # same callback → broadcast to dashboard WS
-            )
-            critical_poller.start()
-            app.state.critical_poller = critical_poller
-            print(f"[Startup] CriticalIndexPoller started — major indices now update every 1s")
+                active_tickers = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS + SECTOR_TICKERS + sector_rep))
+                poller = PricePoller(angelone_service, tickers=active_tickers)
+                poller_task = _track_task(asyncio.create_task(poller.start()))
+                poller_task.add_done_callback(_log_task_error)
+                print(f"[Startup] Multi-threaded price poller started for {len(active_tickers)} tickers")
 
-            # Expose poller for stats endpoint
-            app.state.price_poller = poller
+                # ── Start CriticalIndexPoller ─ dedicated thread for NIFTY/SENSEX/BANKNIFTY/FINNIFTY ──
+                # This thread polls only the 6 major indices every 1 second so they are NEVER stale.
+                # It runs independently of the bulk PricePoller to avoid any delay from stock polling.
+                critical_poller = CriticalIndexPoller(
+                    angelone_service,
+                    on_price_update=_on_angel_tick  # same callback → broadcast to dashboard WS
+                )
+                critical_poller.start()
+                app.state.critical_poller = critical_poller
+                print(f"[Startup] CriticalIndexPoller started — major indices now update every 1s")
+
+                # Expose poller for stats endpoint
+                app.state.price_poller = poller
+            else:
+                print("[ELLInvestigation] PricePoller/CriticalIndexPoller disabled via ELL_DISABLE_OTHER_BG")
     except Exception as e:
         print(f"[Startup] AngelOne WS/poller setup failed: {e}")
 
@@ -5408,7 +6335,14 @@ async def startup():
             reconnecting = getattr(angelone_service, '_ws_reconnecting', False)
             await asyncio.sleep(30 if reconnecting else 15)
             try:
-                ws_ok = angelone_service.ensure_ws_connected()
+                # Phase 15A: ensure_ws_connected() can do blocking work
+                # (socket close + up to a 1s thread-join) inside
+                # angelone_service._init_websocket() -- run it off the
+                # single event loop thread so a reconnect attempt can't
+                # stall every HTTP request and WS broadcast app-wide for
+                # that window (this is a single-Gunicorn-worker deployment,
+                # so there's no other thread serving requests meanwhile).
+                ws_ok = await asyncio.to_thread(angelone_service.ensure_ws_connected)
                 if ws_ok and not _ws_was_ok:
                     _monitoring["ws_reconnects"] += 1
                     print(f"[Watchdog] WS reconnected — checking stale tickers...")
@@ -5434,8 +6368,13 @@ async def startup():
                                     _monitoring["ws_replay_count"] += 1
                             except Exception:
                                 pass
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                            pool.map(_replay_worker, stale_list)
+                        def _run_replay_pool():
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                                list(pool.map(_replay_worker, stale_list))
+                        # pool.map() blocks the calling thread until every
+                        # worker finishes -- offload it too, same reasoning
+                        # as the ensure_ws_connected() call above.
+                        await asyncio.to_thread(_run_replay_pool)
                 _ws_was_ok = ws_ok
                 if ws_ok and _last_angel_tick_time > 0 and is_market_open_now():
                     age = time.time() - _last_angel_tick_time
@@ -5444,7 +6383,7 @@ async def startup():
             except Exception as e:
                 print(f"[Watchdog] WS reconnect error: {e}")
 
-    watchdog_task = asyncio.create_task(_ws_watchdog())
+    watchdog_task = _track_task(asyncio.create_task(_ws_watchdog()))
     watchdog_task.add_done_callback(_log_task_error)
 
     # Periodic AngelOne auth refresh (every 30 min) to prevent token expiry
@@ -5456,12 +6395,12 @@ async def startup():
             except Exception as e:
                 print(f"[AuthRefresh] Error: {e}")
 
-    auth_refresh_task = asyncio.create_task(_angel_auth_refresh())
+    auth_refresh_task = _track_task(asyncio.create_task(_angel_auth_refresh()))
     auth_refresh_task.add_done_callback(_log_task_error)
 
     # Start broadcast loops
-    bc1 = asyncio.create_task(_broadcast_dashboard())
-    bc2 = asyncio.create_task(_broadcast_angel_ticks())
+    bc1 = _track_task(asyncio.create_task(_broadcast_dashboard()))
+    bc2 = _track_task(asyncio.create_task(_broadcast_angel_ticks()))
     bc1.add_done_callback(_log_task_error)
     bc2.add_done_callback(_log_task_error)
 
@@ -5473,7 +6412,7 @@ async def startup():
         while True:
             await asyncio.sleep(_MOVERS_REFRESH_SEC)
             await refresh_movers_snapshot()
-    movers_task = asyncio.create_task(_movers_refresh_loop())
+    movers_task = _track_task(asyncio.create_task(_movers_refresh_loop()))
     movers_task.add_done_callback(_log_task_error)
 
     # Periodic aggregator health monitor (every 5 min)
@@ -5484,7 +6423,7 @@ async def startup():
                 candle_aggregator.print_health()
             except Exception as e:
                 print(f"[Aggregator] Health monitor error: {e}")
-    hc = asyncio.create_task(_aggregator_health_monitor())
+    hc = _track_task(asyncio.create_task(_aggregator_health_monitor()))
     hc.add_done_callback(_log_task_error)
 
     # REST poller → aggregator bridge: feeds aggregator from poller data
@@ -5506,7 +6445,7 @@ async def startup():
             except Exception:
                 pass
             await asyncio.sleep(2.0)
-    bridge = asyncio.create_task(_poller_aggregator_bridge())
+    bridge = _track_task(asyncio.create_task(_poller_aggregator_bridge()))
     bridge.add_done_callback(_log_task_error)
 
     # Periodic subscription consistency audit (every 60s) - ADR-011
@@ -5519,7 +6458,7 @@ async def startup():
                     viewed_ticker_mgr.audit_and_repair()
             except Exception as e:
                 print(f"[SubscriptionAudit] Error: {e}")
-    audit_task = asyncio.create_task(_subscription_audit())
+    audit_task = _track_task(asyncio.create_task(_subscription_audit()))
     audit_task.add_done_callback(_log_task_error)
 
     # Periodic sync of yfinance inactive symbols to DB (every 5 minutes)
@@ -5527,34 +6466,14 @@ async def startup():
         while True:
             await asyncio.sleep(300)
             try:
-                inactive = yf_downloader.get_inactive_symbols()
-                if inactive:
-                    from database import SessionLocal
-                    db_sync = SessionLocal()
-                    try:
-                        for ticker, reason in inactive.items():
-                            existing = db_sync.query(models.StockMetadata).filter(
-                                models.StockMetadata.ticker == ticker
-                            ).first()
-                            if existing:
-                                existing.is_active = False
-                            else:
-                                rec = models.StockMetadata(
-                                    ticker=ticker, name=f"[{reason}]", exchange="NSE",
-                                    is_active=False
-                                )
-                                db_sync.add(rec)
-                        db_sync.commit()
-                        yf_downloader.clear_inactive_symbols()
-                        print(f"[YFSync] Synced {len(inactive)} inactive symbols to DB")
-                    except Exception as e:
-                        db_sync.rollback()
-                        print(f"[YFSync] Error syncing inactive symbols: {e}")
-                    finally:
-                        db_sync.close()
+                start = time.time()
+                synced = await asyncio.to_thread(_sync_yfinance_inactive_symbols)
+                if synced:
+                    elapsed_ms = round((time.time() - start) * 1000)
+                    print(f"[YFSync] Synced {synced} inactive symbols to DB in {elapsed_ms}ms")
             except Exception as e:
-                print(f"[YFSync] Error: {e}")
-    yf_sync_task = asyncio.create_task(_yfinance_inactive_sync())
+                print(f"[YFSync] Error syncing inactive symbols: {e}")
+    yf_sync_task = _track_task(asyncio.create_task(_yfinance_inactive_sync()))
     yf_sync_task.add_done_callback(_log_task_error)
 
     # ── Daily market-close sync: at ~18:30 IST, fetch today's daily candle for all active tickers ──
@@ -5674,79 +6593,21 @@ async def startup():
                 print(f"[DailySync] Error: {e}")
             finally:
                 db_sync.close()
-    daily_sync = asyncio.create_task(_daily_market_close_sync())
+    daily_sync = _track_task(asyncio.create_task(_daily_market_close_sync()))
     daily_sync.add_done_callback(_log_task_error)
 
-    # ── Rolling retention compression: compress aged 1D → 1W and 1W → 1M ──────
-    # Runs nightly at 19:30 IST (after daily sync at 18:30).
-    # As 1D data crosses the 2yr boundary it gets aggregated into 1W candles.
-    # As 1W data crosses the 5yr boundary it gets aggregated into 1M candles.
-    # ON CONFLICT DO NOTHING makes this idempotent — safe to run repeatedly.
-    async def _retention_compress():
-        from sqlalchemy import text as _sa_text
-        from datetime import date as _date
-        while True:
-            _now = database.get_ist_now()
-            _next = _now.replace(hour=19, minute=30, second=0, microsecond=0)
-            if _now >= _next:
-                _next += timedelta(days=1)
-            await asyncio.sleep((_next - _now).total_seconds())
-
-            _today = database.get_ist_now().date()
-            _2yr = _date(_today.year - 2, _today.month, _today.day)
-            _5yr = _date(_today.year - 5, _today.month, _today.day)
-            try:
-                _db = SessionLocal()
-                try:
-                    # 1D → 1W: candles older than 2yr
-                    r1w = _db.execute(_sa_text("""
-                        INSERT INTO candles
-                            (ticker, timeframe, timestamp, open, high, low, close, volume,
-                             is_completed, is_backfilled, data_source)
-                        SELECT ticker, '1W',
-                               DATE_TRUNC('week', timestamp)::timestamp,
-                               (ARRAY_AGG(open  ORDER BY timestamp ASC))[1],
-                               MAX(high), MIN(low),
-                               (ARRAY_AGG(close ORDER BY timestamp DESC))[1],
-                               SUM(volume)::bigint,
-                               TRUE, TRUE, 'SD_AGG'
-                        FROM candles
-                        WHERE timeframe = '1D'
-                          AND timestamp::date < :cutoff2
-                          AND open > 0
-                        GROUP BY ticker, DATE_TRUNC('week', timestamp)
-                        ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
-                    """), {"cutoff2": _2yr})
-                    _db.commit()
-                    # 1W → 1M: weekly candles older than 5yr
-                    r1m = _db.execute(_sa_text("""
-                        INSERT INTO candles
-                            (ticker, timeframe, timestamp, open, high, low, close, volume,
-                             is_completed, is_backfilled, data_source)
-                        SELECT ticker, '1M',
-                               DATE_TRUNC('month', timestamp)::timestamp,
-                               (ARRAY_AGG(open  ORDER BY timestamp ASC))[1],
-                               MAX(high), MIN(low),
-                               (ARRAY_AGG(close ORDER BY timestamp DESC))[1],
-                               SUM(volume)::bigint,
-                               TRUE, TRUE, 'SD_AGG'
-                        FROM candles
-                        WHERE timeframe = '1W'
-                          AND timestamp::date < :cutoff5
-                          AND open > 0
-                        GROUP BY ticker, DATE_TRUNC('month', timestamp)
-                        ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
-                    """), {"cutoff5": _5yr})
-                    _db.commit()
-                    if r1w.rowcount or r1m.rowcount:
-                        print(f"[RetentionCompress] +{r1w.rowcount} 1W, +{r1m.rowcount} 1M candles compressed")
-                finally:
-                    _db.close()
-            except Exception as _e:
-                print(f"[RetentionCompress] Error: {_e}")
-
-    retention_task = asyncio.create_task(_retention_compress())
-    retention_task.add_done_callback(_log_task_error)
+    # NOTE (Phase 15A audit): a second, independent nightly 1D→1W/1W→1M
+    # compression job used to live here (`_retention_compress`, 19:30 IST,
+    # raw unbounded INSERT...SELECT...GROUP BY over the whole candles table,
+    # run directly on the event loop with no asyncio.to_thread offload).
+    # Removed: RetentionService's Chain B (config/retention_policy.py,
+    # after_days=730/1825) already performs the exact same 1D→1W and 1W→1M
+    # conversion via `_retention_scheduler` below, through the properly
+    # engineered engine (keyset-paginated batches, checksum-verified atomic
+    # downgrade, asyncio.to_thread-offloaded). Two independent code paths
+    # writing the same rows was wasted nightly full-table-scan work and an
+    # unnecessary event-loop stall risk with zero functional benefit — this
+    # one was the strictly worse of the two, not the one actually relied on.
 
     # ── Pre-warm yfinance cache at market open ──
     async def _yfinance_prewarm():
@@ -5821,7 +6682,7 @@ async def startup():
             finally:
                 db_pw.close()
 
-    prewarm_task = asyncio.create_task(_yfinance_prewarm())
+    prewarm_task = _track_task(asyncio.create_task(_yfinance_prewarm()))
     prewarm_task.add_done_callback(_log_task_error)
 
     # ── Startup: pre-populate yfinance failure cache for tickers with no recent data ──
@@ -5846,7 +6707,7 @@ async def startup():
                 db_fc.close()
         except Exception as e:
             print(f"[Startup] Failure cache pre-population error: {e}")
-    asyncio.create_task(_prepopulate_failure_cache())
+    _track_task(asyncio.create_task(_prepopulate_failure_cache()))
 
     # ── Startup: Prewarm market news from ScanX Google News RSS on boot ──
     async def _news_prewarm():
@@ -5857,7 +6718,7 @@ async def startup():
             print("[News Prewarm] Market news pre-warmed successfully")
         except Exception as e:
             print(f"[News Prewarm] Error pre-warming news: {e}")
-    asyncio.create_task(_news_prewarm())
+    _track_task(asyncio.create_task(_news_prewarm()))
 
     # ── Retention scheduler: run-once per NSE trading day, market-closed only ──
     def _retention_due_today() -> bool:
@@ -5912,8 +6773,15 @@ async def startup():
             except Exception as e:
                 print(f"[Retention] Scheduler check failed: {e}")
 
-    retention_task = asyncio.create_task(_retention_scheduler())
-    retention_task.add_done_callback(_log_task_error)
+    # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control: unset (the default) is
+    # exactly today's production behavior. Set only via docker-compose
+    # environment overrides in the isolated local experiments for the
+    # residual root-cause isolation phase -- never in real deployment config.
+    if os.getenv("ELL_DISABLE_RETENTION") != "1":
+        retention_task = _track_task(asyncio.create_task(_retention_scheduler()))
+        retention_task.add_done_callback(_log_task_error)
+    else:
+        print("[ELLInvestigation] Retention scheduler disabled via ELL_DISABLE_RETENTION")
 
     # ── Daily pre-fill: ensure ALL 5,543 tickers have daily intraday_candles_5min ──
     async def _daily_prefill_all():
@@ -5942,6 +6810,9 @@ async def startup():
                 continue
 
             print(f"[DailyPreFill] Checking all tickers for daily intraday_candles_5min...")
+            _prefill_state["running"] = True
+            _prefill_started_ts = time.time()
+            _prefill_state["last_started_at"] = database.get_ist_now().isoformat()
             db_df = SessionLocal()
             try:
                 before = time.time()
@@ -5999,22 +6870,7 @@ async def startup():
                     local_db = None
                     try:
                         df = _yf_bg_download(_yfinance_ticker(tkr), period="1y", interval="1d", timeout=12)
-                        rows = []
-                        if df is not None and not df.empty:
-                            if isinstance(df.columns, pd.MultiIndex):
-                                df.columns = df.columns.get_level_values(0)
-                            for idx, row in df.iterrows():
-                                ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
-                                ts_naive = ts.replace(tzinfo=None) if (hasattr(ts, 'tzinfo') and ts.tzinfo) else ts
-                                o = float(row.get('Open', 0) or 0)
-                                h = float(row.get('High', 0) or 0)
-                                l = float(row.get('Low', 0) or 0)
-                                c = float(row.get('Close', 0) or 0)
-                                v = int(row.get('Volume', 0) or 0)
-                                if o > 0 and h > 0 and l > 0 and c > 0:
-                                    rows.append({"t": tkr, "ts": ts_naive,
-                                                 "o": o, "h": max(o, h, c), "l": min(o, l, c),
-                                                 "c": c, "v": v, "src": "YFINANCE"})
+                        rows = _yf_daily_df_to_candle_rows(df, tkr)
                         # Fallback to AngelOne if yfinance didn't return rows up to target_trading_day
                         has_target = any(r["ts"].date() == target_trading_day for r in rows)
                         if not has_target:
@@ -6065,27 +6921,35 @@ async def startup():
                     finally:
                         if local_db is not None:
                             local_db.close()
+                # Chunked instead of one giant pool.map(): with thousands of tickers this
+                # can run for 20-30+ minutes, and the 3 worker threads (JSON parsing,
+                # df.iterrows(), dict construction) compete with the asyncio event loop
+                # for the GIL the whole time. `await asyncio.sleep()` between chunks is a
+                # genuine yield point so pending HTTP/WS requests get scheduled — same
+                # tickers, same worker count, same per-ticker logic, just batched.
                 loop = asyncio.get_event_loop()
-                def _run_prefill():
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                        return list(pool.map(_fetch_daily, missing))
-                results = await loop.run_in_executor(_bg_executor, _run_prefill)
+                _PREFILL_CHUNK = 50
+                results = []
+                for i in range(0, len(missing), _PREFILL_CHUNK):
+                    chunk = missing[i:i + _PREFILL_CHUNK]
+                    def _run_chunk(_chunk=chunk):
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                            return list(pool.map(_fetch_daily, _chunk))
+                    results.extend(await loop.run_in_executor(_bg_executor, _run_chunk))
+                    if i + _PREFILL_CHUNK < len(missing):
+                        await asyncio.sleep(0.5)
                 ok = sum(1 for r in results if r)
                 fail = len(missing) - ok
-                # Sync stock_metadata base_price with latest 1D close prices
+                # Sync stock_metadata base_price with latest 1D close prices.
+                # EVENT-LOOP-LAG fix (root cause #2): this query does a
+                # parallel sequential scan + external disk sort over the
+                # whole `candles` table (measured ~3s locally, worse in
+                # production) -- moved off the event loop via
+                # asyncio.to_thread, using its own fresh session (never
+                # db_df, which stays owned by this coroutine/thread).
                 try:
-                    db_df.execute(sa_text("""
-                        UPDATE stock_metadata sm
-                        SET base_price = latest.close
-                        FROM (
-                            SELECT DISTINCT ON (ticker) ticker, close
-                            FROM candles
-                            WHERE timeframe = '1D' AND close > 0
-                            ORDER BY ticker, timestamp DESC
-                        ) latest
-                        WHERE sm.ticker = latest.ticker;
-                    """))
-                    db_df.commit()
+                    base_price_ms = await asyncio.to_thread(_sync_daily_base_price)
+                    print(f"[DailyPreFill] base_price sync completed in {base_price_ms}ms")
                     global _all_stocks_cache
                     _all_stocks_cache = None
                 except Exception as _sync_err:
@@ -6094,12 +6958,21 @@ async def startup():
                 last_run_date = today
                 elapsed = time.time() - before
                 print(f"[DailyPreFill] Done: {ok} added, {fail} failed in {elapsed:.1f}s")
+                _prefill_state["last_run_ok"] = True
             except Exception as e:
                 print(f"[DailyPreFill] Error: {e}")
+                _prefill_state["last_run_ok"] = False
             finally:
                 db_df.close()
-    prefill_task = asyncio.create_task(_daily_prefill_all())
-    prefill_task.add_done_callback(_log_task_error)
+                _prefill_state["running"] = False
+                _prefill_state["last_completed_at"] = database.get_ist_now().isoformat()
+                _prefill_state["last_duration_sec"] = round(time.time() - _prefill_started_ts, 1)
+    # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control (see ELL_DISABLE_RETENTION above).
+    if os.getenv("ELL_DISABLE_DAILY_PREFILL") != "1":
+        prefill_task = _track_task(asyncio.create_task(_daily_prefill_all()))
+        prefill_task.add_done_callback(_log_task_error)
+    else:
+        print("[ELLInvestigation] Daily 1D prefill disabled via ELL_DISABLE_DAILY_PREFILL")
 
     # ── 5m intraday prefill: fill missed candles once per market close ──────────
     # Runs at/after 16:30 IST each NSE trading day (1 hour after close grace).
@@ -6125,8 +6998,12 @@ async def startup():
             except Exception as _e:
                 print(f"[IntradayPrefill] Scheduler error: {_e}")
 
-    intraday_prefill_task = asyncio.create_task(_intraday_prefill_scheduler())
-    intraday_prefill_task.add_done_callback(_log_task_error)
+    # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control (see ELL_DISABLE_RETENTION above).
+    if os.getenv("ELL_DISABLE_INTRADAY_PREFILL") != "1":
+        intraday_prefill_task = _track_task(asyncio.create_task(_intraday_prefill_scheduler()))
+        intraday_prefill_task.add_done_callback(_log_task_error)
+    else:
+        print("[ELLInvestigation] 5m intraday prefill scheduler disabled via ELL_DISABLE_INTRADAY_PREFILL")
 
     # ── Startup recovery pipeline (runs once per boot, fully in background) ──────
     # Step 1 — Phantom cleanup:   delete any 15:30 IST candles (snap bug artifact)
@@ -6134,7 +7011,18 @@ async def startup():
     #           are still missing 5m data (skips automatically once complete)
     # Step 3 — 7-day catchup:     fill any trading days missed during recent downtime
     async def _intraday_prefill_catchup():
-        await asyncio.sleep(30)   # let AngelOne login and instrument load settle
+        # EVENT-LOOP-LAG fix (Category B, startup GIL contention): this used
+        # to sleep the same 30s as _daily_prefill_all above, so both jobs'
+        # first (heaviest) run started at the exact same moment -- two
+        # CPU-bound background threads (yfinance/pandas parsing here,
+        # df.iterrows()-turned-itertuples() there) landing simultaneously
+        # was a concrete, deterministic contributor to the measured startup
+        # event-loop stalls. 75s keeps this comfortably clear of both that
+        # 30s anchor and _dashboard_index_backfill's existing 120s one below,
+        # while still running well within the same "settle after startup"
+        # window the original 30s comment intended -- AngelOne login/
+        # instrument load is long since done by 75s.
+        await asyncio.sleep(75)   # let AngelOne login and instrument load settle; staggered off _daily_prefill_all's 30s start
         try:
             from intraday_prefill import (
                 cleanup_phantom_slot_candles,
@@ -6152,8 +7040,14 @@ async def startup():
         except Exception as _e:
             print(f"[IntradayPrefill] Startup recovery error: {_e}")
 
-    catchup_task = asyncio.create_task(_intraday_prefill_catchup())
-    catchup_task.add_done_callback(_log_task_error)
+    # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control -- same flag as the
+    # scheduler above; the matrix in the residual-lag investigation treats
+    # "5m intraday prefill/catchup" as one combined workload.
+    if os.getenv("ELL_DISABLE_INTRADAY_PREFILL") != "1":
+        catchup_task = _track_task(asyncio.create_task(_intraday_prefill_catchup()))
+        catchup_task.add_done_callback(_log_task_error)
+    else:
+        print("[ELLInvestigation] 5m intraday prefill catchup disabled via ELL_DISABLE_INTRADAY_PREFILL")
 
     # ── Dashboard index intraday backfill ─────────────────────────────────────
     # NIFTY/SENSEX/BANKNIFTY/FINNIFTY are indices not in stock_metadata, so
@@ -6196,8 +7090,16 @@ async def startup():
         except Exception as _e:
             print(f"[DashboardIdx] Backfill failed: {_e}")
 
-    idx_task = asyncio.create_task(_dashboard_index_backfill())
-    idx_task.add_done_callback(_log_task_error)
+    # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control: dashboard-index
+    # backfill isn't one of the 3 named workloads in the isolation matrix
+    # (daily prefill / intraday prefill / retention) -- disabled alongside
+    # PricePoller/CriticalIndexPoller below via the same flag so those
+    # experiments cleanly isolate just the 3 named jobs.
+    if os.getenv("ELL_DISABLE_OTHER_BG") != "1":
+        idx_task = _track_task(asyncio.create_task(_dashboard_index_backfill()))
+        idx_task.add_done_callback(_log_task_error)
+    else:
+        print("[ELLInvestigation] Dashboard index backfill disabled via ELL_DISABLE_OTHER_BG")
 
     # ── 1W / 1M tier backfill ─────────────────────────────────────────────────
     # Runs 90s after boot (after the 5m prefill starts).
@@ -6213,7 +7115,7 @@ async def startup():
         except Exception as _e:
             print(f"[1W/1M Backfill] Startup error: {_e}")
 
-    wm_task = asyncio.create_task(_weekly_monthly_backfill())
+    wm_task = _track_task(asyncio.create_task(_weekly_monthly_backfill()))
     wm_task.add_done_callback(_log_task_error)
 
     # ── TP/SL Execution Engine ─────────────────────────────────────────────────
@@ -6221,16 +7123,148 @@ async def startup():
     # and closes positions when TP or SL trigger prices are hit.
     # Must start AFTER all other startup tasks so AngelOne WS + aggregator are live.
     from execution_engine import start_execution_engine
-    engine_task = asyncio.create_task(start_execution_engine())
+    engine_task = _track_task(asyncio.create_task(start_execution_engine()))
     engine_task.add_done_callback(_log_task_error)
     print("[Startup] TP/SL Execution Engine wired — monitoring PENDING orders every 2s")
 
+# ── Phase 14: event-loop lag probe lifecycle ──
+@app.on_event("startup")
+async def start_event_loop_probe():
+    global _event_loop_probe_task
+    # Guard against duplicate tasks: if this ever fired twice (e.g. a test
+    # harness re-running startup handlers) a live task would just be
+    # replaced without being cancelled, leaking one -- check first.
+    if _event_loop_probe_task is None or _event_loop_probe_task.done():
+        _event_loop_probe_task = asyncio.create_task(_event_loop_lag_probe())
+        print("[Monitor] Event loop lag probe started")
+
+
+_shutdown_started = False  # idempotency guard -- see shutdown_flush() docstring
+
+
+async def _close_all_client_websockets() -> int:
+    """Send a real close frame (1001 'going away') to every open dashboard
+    and user WebSocket instead of letting the process exit drop them
+    silently -- frontends see a clean close and can reconnect immediately
+    rather than waiting out their own read-timeout. Best-effort per
+    connection: one stuck socket must never block closing the rest."""
+    closed = 0
+    for ws in list(manager.active_connections.values()):
+        try:
+            await asyncio.wait_for(ws.close(code=1001), timeout=2)
+            closed += 1
+        except Exception:
+            pass
+    for conns in list(user_ws_manager.active_connections.values()):
+        for ws in list(conns):
+            try:
+                await asyncio.wait_for(ws.close(code=1001), timeout=2)
+                closed += 1
+            except Exception:
+                pass
+    return closed
+
+
 @app.on_event("shutdown")
 async def shutdown_flush():
-    """Flush all forming intraday_candles_5min to DB on graceful shutdown."""
+    """Production-grade graceful shutdown (Batch 2 of the pre-AWS hardening
+    pass). The previous version of this handler only knew about ONE
+    background task (_event_loop_probe_task) out of ~22 spawned at startup,
+    never closed client WebSocket connections, and never disposed the
+    SQLAlchemy engine -- every restart was an uncoordinated teardown.
+
+    Order matters and mirrors dependency direction (consumers before the
+    resources they depend on):
+      1. Cancel + await every tracked background task (retention, prefill,
+         broadcast loops, etc.) so nothing new happens while the rest of
+         shutdown proceeds.
+      2. Stop the AngelOne broker feed -- no new ticks once we start
+         tearing down candle state.
+      3. Flush in-flight candle aggregation to DB (must happen before the
+         engine is disposed in step 5).
+      4. Close client-facing WebSocket connections with a real close frame.
+      5. Dispose the SQLAlchemy engine, releasing every pooled connection.
+
+    Idempotent (a second call is a no-op) and every phase is independently
+    time-boxed so one stuck task/socket can't make shutdown hang past
+    Gunicorn's graceful_timeout=30 (gunicorn.conf.py) -- worst case here is
+    ~10s (tasks) + ~8s (websockets) plus the fixed steps, comfortably inside
+    that budget.
+    """
+    global _shutdown_started
+    if _shutdown_started:
+        print("[Shutdown] Already shut down, ignoring duplicate shutdown event")
+        return
+    _shutdown_started = True
+
+    user_ws_count = sum(len(c) for c in user_ws_manager.active_connections.values())
+    print(f"[Shutdown] Starting graceful shutdown: {len(_background_tasks)} tracked background "
+          f"task(s), {len(manager.active_connections)} dashboard WS, {user_ws_count} user WS")
+
+    # 1. Cancel + await every tracked background task (bounded wait).
+    pending = [t for t in _background_tasks if t is not None and not t.done()]
+    for t in pending:
+        t.cancel()
+    if pending:
+        try:
+            await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=10)
+        except asyncio.TimeoutError:
+            still_running = sum(1 for t in pending if not t.done())
+            print(f"[Shutdown] {still_running} background task(s) did not stop within 10s -- proceeding anyway")
+
+    # Event-loop lag probe (Phase 14) keeps its own handle/guard, unchanged.
+    if _event_loop_probe_task is not None and not _event_loop_probe_task.done():
+        _event_loop_probe_task.cancel()
+        try:
+            await _event_loop_probe_task
+        except asyncio.CancelledError:
+            pass
+        print("[Monitor] Event loop lag probe stopped")
+
+    # 2. Stop the AngelOne broker feed so no new ticks arrive mid-teardown.
+    # SMOKE-01 fix: a real production smoke test caught two bugs here.
+    # (a) SmartWebSocketV2 has no .close() method (confirmed via
+    #     dir(SmartWebSocketV2) against the actual installed package -- the
+    #     real method is close_connection()); the wrong name raised an
+    #     AttributeError every time.
+    # (b) that AttributeError was inside the SAME try as logout(), so the
+    #     single except swallowed it and logout() never ran at all -- each
+    #     step now gets its own try/except so one failing doesn't skip the
+    #     other.
+    try:
+        if angelone_service.sws:
+            angelone_service.sws.close_connection()
+    except Exception as e:
+        print(f"[Shutdown] AngelOne WS close failed (non-fatal): {e}")
+    try:
+        angelone_service.logout()
+        print("[Shutdown] AngelOne session closed")
+    except Exception as e:
+        print(f"[Shutdown] AngelOne logout failed (non-fatal): {e}")
+
+    # 3. Flush any in-flight candle aggregation before the engine goes away.
     print("[Shutdown] Flushing forming intraday_candles_5min...")
-    candle_aggregator.flush_all_forming()
-    print("[Shutdown] Flush complete")
+    try:
+        candle_aggregator.flush_all_forming()
+        print("[Shutdown] Flush complete")
+    except Exception as e:
+        print(f"[Shutdown] Candle flush failed: {e}")
+
+    # 4. Close client-facing WebSocket connections with a real close frame.
+    try:
+        closed = await asyncio.wait_for(_close_all_client_websockets(), timeout=8)
+        print(f"[Shutdown] Closed {closed} client WebSocket connection(s)")
+    except asyncio.TimeoutError:
+        print("[Shutdown] Closing client WebSockets timed out -- proceeding anyway")
+
+    # 5. Dispose the SQLAlchemy engine -- releases every pooled connection.
+    try:
+        database.engine.dispose()
+        print("[Shutdown] Database engine disposed")
+    except Exception as e:
+        print(f"[Shutdown] Engine dispose failed: {e}")
+
+    print("[Shutdown] Graceful shutdown complete")
 
 import atexit
 atexit.register(lambda: candle_aggregator.flush_all_forming())
@@ -6341,7 +7375,7 @@ async def warmup_market_news_cache():
             print("[Startup] Market news cache warmed.")
         except Exception as e:
             print(f"[Startup] News warmup failed (non-fatal): {e}")
-    asyncio.create_task(_warm())
+    _track_task(asyncio.create_task(_warm()))
 
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):

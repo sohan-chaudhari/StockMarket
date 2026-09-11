@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>LEVERAGE - All 112 Tools Automated QA Harness</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #0A0A0B;
+            color: #d1d4dc;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        h1 {
+            color: #fff;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            color: #787b86;
+            margin-bottom: 20px;
+        }
+        #chart {
+            display: none;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #2a2e39;
+        }
+        th {
+            background-color: #131722;
+            color: #fff;
+        }
+        tr:hover {
+            background-color: #1e222d;
+        }
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+        .badge-pass {
+            background-color: #089981;
+            color: #fff;
+        }
+        .badge-fail {
+            background-color: #f23645;
+            color: #fff;
+        }
+        .badge-info {
+            background-color: #2962ff;
+            color: #fff;
+        }
+        .summary-box {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .card {
+            background: #131722;
+            padding: 15px 25px;
+            border-radius: 6px;
+            border: 1px solid #2a2e39;
+            flex: 1;
+            text-align: center;
+        }
+        .card-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>LEVERAGE All 112 Tools Automated QA</h1>
+    <div class="subtitle">Real-time browser-based lifecycle verification harness for drawing tools.</div>
+
+    <div class="summary-box">
+        <div class="card">
+            <div>Total Tools Discovered</div>
+            <div class="card-value" id="total-tools">0</div>
+        </div>
+        <div class="card">
+            <div>Passed Sanity</div>
+            <div class="card-value" style="color: #089981;" id="passed-tools">0</div>
+        </div>
+        <div class="card">
+            <div>Failed Sanity</div>
+            <div class="card-value" style="color: #f23645;" id="failed-tools">0</div>
+        </div>
+    </div>
+
+    <div id="chart"></div>
+    <div id="drawing-canvas-container" style="display:none;"><canvas id="drawing-canvas"></canvas></div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Name</th>
+                <th>Category</th>
+                <th>Points</th>
+                <th>Lifecycle Status</th>
+                <th>Details / Error</th>
+            </tr>
+        </thead>
+        <tbody id="results-body">
+            <tr>
+                <td colspan="6" style="text-align: center;">Running tests...</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <script src="lightweight-charts.js"></script>
+    <script src="drawing-core.js"></script>
+    <script src="drawings.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Mock chart
+            const chartDiv = document.getElementById('chart');
+            const chart = LightweightCharts.createChart(chartDiv, { width: 100, height: 100 });
+            const series = chart.addCandlestickSeries();
+            series.setData([{ time: 1700000000, open: 100, high: 110, low: 90, close: 105 }]);
+            
+            window.bigChart = chart;
+            window.bigCandleSeries = series;
+            window.coordinateMapper = new CoordinateMapper();
+            
+            const chartState = {
+                coordToPixel: (c) => ({ x: (c.logical || 0) * 10, y: (c.price || 0) * 2 }),
+                pixelToCoord: (x, y) => ({ logical: Math.round(x / 10), price: y / 2 }),
+                xToLogical: (x) => Math.round(x / 10),
+                priceToY: (p) => p * 2,
+                yToPrice: (y) => y / 2,
+                viewport: { width: 800, height: 500 },
+                dpr: 1
+            };
+
+            const ToolDefinitions = window.__ToolDefinitions;
+            if (!ToolDefinitions) {
+                document.getElementById('results-body').innerHTML = '<tr><td colspan="6" style="text-align:center;color:#f23645;">ToolDefinitions not found!</td></tr>';
+                return;
+            }
+
+            const keys = Object.keys(ToolDefinitions);
+            document.getElementById('total-tools').textContent = keys.length;
+
+            const tbody = document.getElementById('results-body');
+            tbody.innerHTML = '';
+
+            let passCount = 0;
+            let failCount = 0;
+
+            const canvas = document.getElementById('drawing-canvas');
+            const ctx = canvas.getContext('2d');
+
+            keys.forEach(key => {
+                const def = ToolDefinitions[key];
+                const tr = document.createElement('tr');
+                
+                let isPass = true;
+                let details = 'All checks passed successfully.';
+                let badgeClass = 'badge-pass';
+
+                if (def.type === 'cursor' || def.type === 'action') {
+                    tr.innerHTML = `
+                        <td><code>${key}</code></td>
+                        <td>${def.name}</td>
+                        <td>${def.group || 'unknown'}</td>
+                        <td>-</td>
+                        <td><span class="badge badge-info">system</span></td>
+                        <td style="color: #787b86;">System cursor / action</td>
+                    `;
+                    tbody.appendChild(tr);
+                    passCount++;
+                    return;
+                }
+
+                try {
+                    const ToolClass = def.class;
+                    if (!ToolClass) {
+                        throw new Error("Class not registered under ToolDefinitions");
+                    }
+
+                    // Instantiation
+                    const startPos = { x: 100, y: 200 };
+                    const inst = new ToolClass(startPos, chartState, Object.assign({}, def.defaults || {}));
+
+                    // Add Points
+                    const ptsCount = def.points || 1;
+                    for (let i = 1; i < ptsCount; i++) {
+                        const nextPos = { x: 100 + i * 50, y: 200 + (i % 2 === 0 ? 20 : -20) };
+                        if (typeof inst.addPoint === 'function') {
+                            inst.addPoint(nextPos, chartState);
+                        } else {
+                            inst.coords.push(chartState.pixelToCoord(nextPos.x, nextPos.y));
+                        }
+                    }
+
+                    // Render check
+                    inst.draw(ctx, chartState, true, false);
+
+                    // Resize check
+                    const handles = inst.getAnchorPoints ? inst.getAnchorPoints(inst.getPixels ? inst.getPixels(chartState) : []) : [];
+                    if (handles.length > 0) {
+                        inst.updateHandle({ handleIndex: 0, hitType: 'anchor' }, 105.0, chartState, 110);
+                    }
+
+                    // Translate check
+                    inst.translate(10, -10, chartState);
+
+                } catch (e) {
+                    isPass = false;
+                    details = e.message;
+                    badgeClass = 'badge-fail';
+                }
+
+                if (isPass) passCount++; else failCount++;
+
+                tr.innerHTML = `
+                    <td><code>${key}</code></td>
+                    <td>${def.name}</td>
+                    <td>${def.group || 'unknown'}</td>
+                    <td>${def.points || 1}</td>
+                    <td><span class="badge ${badgeClass}">${isPass ? 'pass' : 'fail'}</span></td>
+                    <td style="color: ${isPass ? '#787b86' : '#f23645'};">${details}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('passed-tools').textContent = passCount;
+            document.getElementById('failed-tools').textContent = failCount;
+        });
+    </script>
+</body>
+</html>
