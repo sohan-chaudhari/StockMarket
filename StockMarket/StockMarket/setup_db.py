@@ -51,7 +51,7 @@ def main():
     stock_env = load_env_file(os.path.join(STOCK_DIR, ".env"))
     news_env = load_env_file(os.path.join(NEWS_DIR, ".env"))
     
-    db_password = stock_env.get("DB_PASSWORD", "medikart@3145")
+    db_password = stock_env.get("DB_PASSWORD", "YOUR_POSTGRES_PASSWORD")
     
     # Try connecting to postgres default db
     print("Testing connection to PostgreSQL...")
@@ -83,7 +83,7 @@ def main():
             print("\nPlease follow these steps to reset your password:")
             print("1. Open an Administrator Command Prompt.")
             print("2. Run: psql -U postgres")
-            print("3. Enter SQL: ALTER USER postgres WITH PASSWORD 'medikart@3145';")
+            print("3. Enter SQL: ALTER USER postgres WITH PASSWORD 'YOUR_POSTGRES_PASSWORD';")
             print("4. Restart this setup script.")
             sys.exit(1)
             

@@ -1,0 +1,361 @@
+<title>5m Ingestion Recovery</title>
+<style>
+:root{
+  --ground:#FAF9F6; --surface:#FFFFFF; --surface-2:#F2F0EA; --line:#DCD8CF; --line-soft:#E9E6DE;
+  --ink:#14171A; --ink-2:#3C4448; --ink-3:#6A7276;
+  --accent:#1D5F73; --accent-soft:#E2EFF3; --accent-ink:#124454;
+  --crit:#B3352B; --crit-soft:#F8E7E4; --warn:#A05C10; --warn-soft:#FAEDDD;
+  --ok:#1E6B4F; --ok-soft:#E3EFE9; --neutral:#5A6470; --neutral-soft:#ECEEF1;
+  --shadow:0 1px 2px rgba(20,23,26,.05),0 6px 18px -10px rgba(20,23,26,.18);
+  --serif:Charter,"Bitstream Charter","Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#0F1315; --surface:#161A1D; --surface-2:#1D2225; --line:#2C3337; --line-soft:#232A2D;
+  --ink:#E8EBEC; --ink-2:#B3BABD; --ink-3:#828A8E;
+  --accent:#64B8CE; --accent-soft:#152E37; --accent-ink:#96D3E4;
+  --crit:#E8877C; --crit-soft:#33201E; --warn:#DDA45F; --warn-soft:#2F2417;
+  --ok:#5FBF95; --ok-soft:#152E24; --neutral:#9AA6B2; --neutral-soft:#20262B;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  --ground:#0F1315; --surface:#161A1D; --surface-2:#1D2225; --line:#2C3337; --line-soft:#232A2D;
+  --ink:#E8EBEC; --ink-2:#B3BABD; --ink-3:#828A8E;
+  --accent:#64B8CE; --accent-soft:#152E37; --accent-ink:#96D3E4;
+  --crit:#E8877C; --crit-soft:#33201E; --warn:#DDA45F; --warn-soft:#2F2417;
+  --ok:#5FBF95; --ok-soft:#152E24; --neutral:#9AA6B2; --neutral-soft:#20262B;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--serif);
+  font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:0 24px 90px}
+h1,h2,h3,h4{font-family:var(--sans);text-wrap:balance;margin:0}
+h1{font-size:clamp(29px,4.6vw,41px);font-weight:750;letter-spacing:-.024em;line-height:1.12}
+h2{font-size:clamp(20px,2.5vw,26px);font-weight:700;letter-spacing:-.015em}
+h3{font-size:16.5px;font-weight:680;letter-spacing:-.006em}
+p{margin:0}
+code,.mono{font-family:var(--mono);font-size:.86em;font-variant-numeric:tabular-nums}
+code{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;padding:.08em .34em}
+
+header.mast{padding:58px 0 30px;border-bottom:2px solid var(--ink);margin-bottom:32px}
+.eyebrow{font-family:var(--sans);font-size:11.5px;font-weight:660;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--accent-ink)}
+.mast .sub{margin-top:15px;font-size:18.5px;color:var(--ink-2);max-width:62ch}
+
+.headline{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--crit);
+  border-radius:7px;padding:24px 26px;box-shadow:var(--shadow)}
+.headline .lb{font-family:var(--sans);font-size:11.5px;font-weight:660;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3)}
+.headline .call{font-family:var(--sans);font-size:clamp(20px,3vw,27px);font-weight:730;
+  letter-spacing:-.018em;color:var(--crit);margin-top:6px;line-height:1.2}
+.headline p{margin-top:13px;color:var(--ink-2);max-width:68ch}
+
+section{margin-top:50px}
+.shead{display:flex;align-items:baseline;gap:13px;padding-bottom:10px;
+  border-bottom:1px solid var(--line);margin-bottom:22px}
+.shead .n{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600}
+.lede{color:var(--ink-2);max-width:72ch;margin-bottom:20px}
+
+.chain{display:flex;flex-direction:column;gap:0;background:var(--surface);border:1px solid var(--line);
+  border-radius:7px;padding:22px 24px;box-shadow:var(--shadow)}
+.step{display:grid;grid-template-columns:26px 1fr;gap:14px;padding:11px 0}
+.step + .step{border-top:1px solid var(--line-soft)}
+.step .k{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);padding-top:2px}
+.step .t{font-family:var(--sans);font-size:15.5px;font-weight:640;color:var(--ink);margin-bottom:4px}
+.step .d{font-size:15px;color:var(--ink-2)}
+.step.fatal .k{color:var(--crit)} .step.fatal .t{color:var(--crit)}
+
+.ev{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:5px;
+  padding:13px 15px;overflow-x:auto;margin-top:14px}
+.ev .evl{font-family:var(--sans);font-size:10.5px;font-weight:660;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:8px}
+.ev pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--ink-2);
+  white-space:pre;font-variant-numeric:tabular-nums}
+.ev .bad{color:var(--crit);font-weight:600} .ev .good{color:var(--ok);font-weight:600}
+.ev .wn{color:var(--warn);font-weight:600}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:16px 18px;
+  box-shadow:var(--shadow)}
+.kpi .v{font-family:var(--sans);font-size:26px;font-weight:730;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .l{font-family:var(--sans);font-size:11px;font-weight:640;letter-spacing:.07em;
+  text-transform:uppercase;color:var(--ink-3);margin-top:6px}
+.kpi.c .v{color:var(--crit)} .kpi.w .v{color:var(--warn)} .kpi.o .v{color:var(--ok)}
+.kpi.n .v{color:var(--ink)}
+
+.clock{background:var(--warn-soft);border:1px solid var(--warn);border-radius:7px;padding:20px 24px}
+.clock h3{color:var(--warn);margin-bottom:12px;font-size:14px;letter-spacing:.03em;text-transform:uppercase}
+.dl{display:grid;grid-template-columns:1fr auto;gap:8px 18px;align-items:baseline}
+.dl .n2{font-size:15.5px;color:var(--ink-2)}
+.dl .v2{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--warn);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:7px;background:var(--surface);
+  box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:600px;font-family:var(--sans);font-size:14px}
+th{text-align:left;font-size:10.5px;font-weight:680;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);
+  white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--line-soft);color:var(--ink-2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.mono{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:middle}
+.d-ok{background:var(--ok)} .d-c{background:var(--crit)} .d-w{background:var(--warn)}
+.d-n{background:var(--neutral)}
+
+.proof{display:flex;flex-direction:column;gap:12px}
+.pf{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--ok);
+  border-radius:6px;padding:16px 18px}
+.pf.risk{border-left-color:var(--warn)}
+.pf h4{font-size:15px;font-weight:680;margin-bottom:6px}
+.pf.risk h4{color:var(--warn)}
+.pf p{font-size:15px;color:var(--ink-2)}
+.pf .src{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-top:7px;display:block}
+
+ul.clean{margin:0;padding-left:20px;color:var(--ink-2)}
+ul.clean li{margin-bottom:7px}
+ul.clean li::marker{color:var(--accent)}
+
+.arch{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:22px 24px;
+  box-shadow:var(--shadow)}
+.arch h4{font-size:12.5px;font-weight:680;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--accent-ink);margin-bottom:12px}
+.arch + .arch{margin-top:12px}
+
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+@media (max-width:640px){
+  body{font-size:16px} .wrap{padding:0 17px 60px} header.mast{padding:38px 0 24px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">Root cause · recovery · non-interference proof</div>
+  <h1>5m Ingestion Recovery</h1>
+  <p class="sub">Why universe-wide 5-minute ingestion stopped on 2026-07-03, exactly what is missing, whether it can still be recovered, and what a sustainable replacement looks like under real provider limits.</p>
+</header>
+
+<div class="headline">
+  <div class="lb">Root cause</div>
+  <div class="call">A table rename silently decommissioned the only universe-wide intraday feed</div>
+  <p>Nothing crashed and nothing regressed. Universe-wide 5m data was produced by <code>backfill_intraday_5min.py</code> — a <b>manually run script that lives outside the application</b> and writes to <code>intraday_candles_5min</code>. The DB-09 refactor renamed that table to <code>deprecated_intraday_candles_5min</code>. The script's INSERT target no longer exists, so it can no longer run at all. Its last successful run covered through <b>2026-07-03</b>.</p>
+</div>
+
+<!-- 01 CAUSAL CHAIN -->
+<section>
+  <div class="shead"><span class="n">01</span><h2>The causal chain, proven</h2></div>
+  <div class="chain">
+    <div class="step"><div class="k">1</div><div><div class="t">Universe-wide 5m came from a manual script, never from the app</div>
+      <div class="d"><code>backfill_intraday_5min.py</code>: <code>CHUNK_DAYS = 60</code>, a <code>ThreadPoolExecutor</code> fan-out over all tickers, and a raw <code>INSERT INTO intraday_candles_5min</code>. No scheduler in the application ever invoked it.</div></div></div>
+    <div class="step"><div class="k">2</div><div><div class="t">The only scheduled ingestion job covers 1D, not intraday</div>
+      <div class="d"><code>_daily_prefill_all</code> runs at 19:00 IST over every ticker in <code>stock_metadata</code> — and 1D coverage held at ~3,150 tickers/session straight through the incident. <code>_startup_backfill</code> is not a candidate: it takes <code>.limit(50)</code> tickers and its own docstring says <i>"intraday not persisted to DB"</i> — it only warms the yfinance cache.</div></div></div>
+    <div class="step fatal"><div class="k">3</div><div><div class="t">DB-09 renamed the script's target table out from under it</div>
+      <div class="d">The refactor renamed the legacy tables to mark them dead. That silently broke the external script, which has no test, no monitor, and no owner inside the codebase.</div></div></div>
+    <div class="step"><div class="k">4</div><div><div class="t">The legacy table shows the identical cliff — so it happened before the unified migration</div>
+      <div class="d">This rules out the unified-table migration as the cause. The cliff was already present in the source.</div></div></div>
+    <div class="step"><div class="k">5</div><div><div class="t">The 2026-08-09 bulk copy faithfully reproduced the cliff</div>
+      <div class="d"><code>backfill_unified_from_legacy.py</code> wrote 4,782,790 rows for 3,279 tickers into <code>candles</code> in a single run — inheriting exactly the coverage the legacy table had, cliff included.</div></div></div>
+    <div class="step"><div class="k">6</div><div><div class="t">Since 2026-07-06, only two writers remain</div>
+      <div class="d">The live AngelOne websocket (~850 tickers, bounded by the 500-subscription cap with LRU rotation) and per-ticker on-demand gap-fill triggered when someone opens a chart. Both are demand-driven, so coverage tracks what users happen to view.</div></div></div>
+  </div>
+
+  <div class="ev"><div class="evl">Smoking gun — the script's INSERT target</div><pre>
+to_regclass('public.intraday_candles_5min')             → <span class="bad">NULL  (does not exist)</span>
+to_regclass('public.deprecated_intraday_candles_5min')  → <span class="good">exists</span>
+
+backfill_intraday_5min.py:77
+    INSERT INTO <span class="bad">intraday_candles_5min</span> (ticker, timestamp, open, high, low, close, volume)</pre></div>
+
+  <div class="ev"><div class="evl">The cliff is identical in both tables — legacy 5m and unified 5m, tickers per session</div><pre>
+              legacy    unified          1D (control)
+2026-07-02      3157       3157               <span class="good">3160</span>
+2026-07-03      <span class="good">3170</span>       <span class="good">3169</span>               <span class="good">3162</span>
+2026-07-06        <span class="bad">27</span>         <span class="bad">27</span>               <span class="good">3181</span>   <span class="bad">← cliff</span>
+2026-07-08        <span class="bad">27</span>          <span class="bad">5</span>               <span class="good">3137</span>
+2026-07-17         <span class="bad">?</span>          <span class="bad">1</span>               <span class="good">3139</span></pre></div>
+
+  <div class="ev"><div class="evl">Who still has 5m data past the cliff — and what that tells us</div><pre>
+NIFTY → 07-31   ARVINDFASN → 07-16   SENSEX → 07-15   REDINGTON → 07-13
+RBLBANK → 07-09   BANKNIFTY → 07-07   HDFCBANK → 07-06   INFY → 07-06
+
+Indices and liquid large-caps only — the exact profile of
+<span class="wn">on-demand, per-chart-view gap-fill</span>, not a bulk job.</pre></div>
+</section>
+
+<!-- 02 MATRIX -->
+<section>
+  <div class="shead"><span class="n">02</span><h2>The missing matrix</h2></div>
+  <p class="lede">Measured over 2026-07-06 → 2026-08-17. Universe defined as tickers holding 1D data in the window — i.e. instruments the platform demonstrably tracks and therefore should have intraday data for.</p>
+  <div class="kpis">
+    <div class="kpi n"><div class="v">31</div><div class="l">NSE sessions</div></div>
+    <div class="kpi n"><div class="v">3,276</div><div class="l">Universe tickers</div></div>
+    <div class="kpi c"><div class="v">90,139</div><div class="l">Missing ticker-sessions</div></div>
+    <div class="kpi c"><div class="v">88.8%</div><div class="l">Of window absent</div></div>
+    <div class="kpi c"><div class="v">2,429</div><div class="l">Tickers with zero 5m</div></div>
+    <div class="kpi w"><div class="v">~6.76M</div><div class="l">Rows to restore</div></div>
+  </div>
+  <div class="ev"><div class="evl">Derivation</div><pre>
+expected ticker-sessions   = 31 sessions × 3,276 tickers   = 101,556
+present                                                    =  11,417   (11.2%)
+missing                                                    =  <span class="bad">90,139</span>   (88.8%)
+rows ≈ missing × 75 candles per full NSE session            ≈ <span class="bad">6,760,425</span>
+
+tickers with NO 5m anywhere in the window                   =   <span class="bad">2,429</span>  of 3,276
+tickers with partial coverage (the ~850 WS set + viewed)    =     847</pre></div>
+  <p class="lede" style="margin-top:18px">The shape matters for recovery planning: this is not scattered dropout. <b>2,429 tickers need the full 31 sessions</b>, and roughly 847 need partial top-ups. That makes the work highly parallel and uniform — a single date range applied across a known ticker list.</p>
+</section>
+
+<!-- 03 RECOVERABILITY -->
+<section>
+  <div class="shead"><span class="n">03</span><h2>Recoverability — and two clocks</h2></div>
+  <p class="lede">Fully recoverable today. But two independent deadlines are running, and they expire at different times for different reasons.</p>
+  <div class="clock">
+    <h3>Deadline 1 — yfinance 60-day intraday horizon</h3>
+    <div class="dl">
+      <div class="n2">Today</div><div class="v2">2026-08-17</div>
+      <div class="n2">Earliest 5m yfinance will serve</div><div class="v2">2026-06-18</div>
+      <div class="n2">Gap start 2026-07-06 exits the window</div><div class="v2">2026-09-04</div>
+      <div class="n2"><b>Days remaining</b></div><div class="v2"><b>18</b></div>
+    </div>
+    <p style="margin-top:13px;font-size:15px;color:var(--ink-2)">After 2026-09-04 the oldest gap sessions fall permanently outside yfinance's 5m range, and one further session is lost each day thereafter.</p>
+  </div>
+  <div class="clock" style="margin-top:14px">
+    <h3>Deadline 2 — retention promotion boundary</h3>
+    <div class="dl">
+      <div class="n2">Current 5m→15m cutoff (60 sessions back)</div><div class="v2">2026-05-25</div>
+      <div class="n2">Gap window starts</div><div class="v2">2026-07-06</div>
+      <div class="n2"><b>Headroom before the gap is promoted</b></div><div class="v2"><b>28 sessions</b></div>
+    </div>
+    <p style="margin-top:13px;font-size:15px;color:var(--ink-2)">Retention promotes <i>what exists</i>. If the 5m rows are still missing when the boundary reaches them, no 15m rows are created for those sessions — the hole is inherited by 15m, then 30m at 120 sessions, then 1h at 180. At that point it is permanent in the pyramid.</p>
+  </div>
+
+  <div class="tw" style="margin-top:20px"><table>
+    <tr><th>Recovery path</th><th>Reach</th><th>Constraint</th><th>Verdict</th></tr>
+    <tr><td>AngelOne <code>getCandleData</code></td><td class="mono">Multi-year</td><td>~30 days/request for FIVE_MINUTE; ~3 req/s</td><td><span class="dot d-ok"></span><b>Primary</b> — no 60-day cliff</td></tr>
+    <tr><td>yfinance 5m</td><td class="mono">60 days</td><td>Hard horizon; 18 days left</td><td><span class="dot d-w"></span>Fallback, expiring</td></tr>
+    <tr><td>Resample from finer stored tier</td><td class="mono">n/a</td><td>5m <i>is</i> the finest tier</td><td><span class="dot d-c"></span>Impossible</td></tr>
+    <tr><td>Legacy tables</td><td class="mono">to 2026-07-03</td><td>Same cliff — already copied</td><td><span class="dot d-c"></span>Exhausted</td></tr>
+  </table></div>
+
+  <div class="ev"><div class="evl">Blocker in the current fetch path</div><pre>
+historical_service.get_historical_candles()
+  · single getCandleData() call for the whole from→to range
+  · <span class="bad">no chunking</span>      — a &gt;30-day FIVE_MINUTE request will be rejected or truncated
+  · <span class="bad">no rate limiting</span> — no sleep, no token bucket; a 3,276-ticker loop would
+                          hit AngelOne's per-second cap almost immediately
+  · <span class="good">filters weekends</span> (ts.weekday() &gt;= 5 → skip)  ✓ good</pre></div>
+  <p class="lede" style="margin-top:16px"><b>Verdict: recoverable, but not with the code as it stands.</b> Chunking and throttling must be added to the fetch path before any universe-wide run. Recovering via AngelOne removes the 18-day cliff; yfinance should be the per-ticker fallback only.</p>
+</section>
+
+<!-- 04 ARCHITECTURE -->
+<section>
+  <div class="shead"><span class="n">04</span><h2>Sustainable ingestion architecture</h2></div>
+  <p class="lede">The design constraint is not throughput — it is that <b>ingestion must live inside the application and be observable</b>. The failure here was not technical; it was that a critical path lived in an unowned script with no monitor. Every element below already exists in the codebase in some form.</p>
+
+  <div class="arch">
+    <h4>Shape — mirror the one job that never broke</h4>
+    <ul class="clean">
+      <li><b>Scheduled in-app, not external.</b> An <code>_intraday_prefill_all</code> task alongside <code>_daily_prefill_all</code>, running post-close (≈18:30 IST, ahead of the 19:00 daily job).</li>
+      <li><b>Universe from <code>stock_metadata</code></b>, the same source <code>_daily_prefill_all</code> uses — so the two feeds can never drift apart.</li>
+      <li><b>Per-ticker job rows</b> reusing the <code>migration_jobs</code> pattern (<code>status</code>, <code>retry_count</code>, <code>rows_inserted</code>) already proven in the 1D migration, giving resumability and a queryable audit trail.</li>
+      <li><b>Idempotent, fill-only writes</b> — <code>ON CONFLICT DO NOTHING</code>, never <code>DO UPDATE</code> (see §05).</li>
+    </ul>
+  </div>
+
+  <div class="arch">
+    <h4>Provider budget</h4>
+    <div class="ev" style="margin-top:0"><div class="evl">Steady-state nightly run</div><pre>
+tickers                        3,276
+window per night               1 session  →  1 request each
+requests                       3,276
+at ~3 req/s (AngelOne cap)     ≈ 18 minutes
+
+One-time backfill of the 31-session gap
+window 31 days → 2 chunks of ≤30 days   →  2 requests each
+requests                       6,552
+at ~3 req/s                    ≈ 36 minutes   (single off-hours run)</pre></div>
+    <p style="margin-top:12px;font-size:15px;color:var(--ink-2)">Both fit comfortably in a nightly window. Throughput was never the obstacle.</p>
+  </div>
+
+  <div class="arch">
+    <h4>Isolation — use the primitives that already exist</h4>
+    <ul class="clean">
+      <li><code>_bg_executor</code> (4 workers, <code>thread_name_prefix="bgjob"</code>) — never the default executor, which request handlers share via <code>asyncio.to_thread</code>.</li>
+      <li><code>_yf_bg_semaphore</code> (10) for any yfinance fallback — separate from <code>_yf_semaphore</code>, which serves user requests.</li>
+      <li>Open the DB session immediately before each write, never across a provider call — the pool is 20+30 and this is the documented cause of past stalls.</li>
+    </ul>
+  </div>
+
+  <div class="arch">
+    <h4>Observability — the actual missing capability</h4>
+    <p style="font-size:15px;color:var(--ink-2)">A coverage check that compares distinct tickers with 5m data per session against the 1D universe would have flagged this on 2026-07-06 instead of six weeks later. That single query is the highest-leverage addition in this whole document: it is the difference between a one-day gap and a 90,139-cell hole.</p>
+  </div>
+</section>
+
+<!-- 05 NON-INTERFERENCE -->
+<section>
+  <div class="shead"><span class="n">05</span><h2>Non-interference proof</h2></div>
+  <p class="lede">Each claim below is grounded in a specific code path, with the residual risks stated rather than glossed.</p>
+
+  <h3 style="margin-bottom:12px">Against live WebSocket infrastructure</h3>
+  <div class="proof">
+    <div class="pf"><h4>Backfill never touches subscription state</h4>
+      <p>The historical path contains no <code>viewed_ticker_mgr</code> or <code>subscribe</code> call. The only writer of execution ref-counts is the execution engine.</p>
+      <span class="src">verified: grep over perform_on_demand_backfill → no WS calls · only caller of set_execution_ref_counts is execution_engine.py:74</span></div>
+    <div class="pf"><h4>REST fetches consume no subscription slots</h4>
+      <p><code>getCandleData</code> is a REST call. The 500-subscription cap and its LRU eviction govern the websocket only, so backfill cannot displace a viewed or execution-pinned ticker.</p>
+      <span class="src">ViewedTickerManager, main.py:166 — cap applies to WS subscribe/unsubscribe exclusively</span></div>
+    <div class="pf"><h4>Thread and connection isolation already exists</h4>
+      <p><code>_bg_executor</code> and <code>_yf_bg_semaphore</code> are distinct from <code>_live_executor</code> and <code>_yf_semaphore</code>. Live price resolution cannot be starved by background fetching provided the background primitives are used.</p>
+      <span class="src">main.py:340-342 (semaphores), 1219 / 1226 (executors)</span></div>
+    <div class="pf risk"><h4>Residual risk — shared AngelOne session</h4>
+      <p>REST historical and the live websocket authenticate through the same AngelOne session. Un-throttled REST could trigger provider-side rate limiting that degrades the live feed. This makes throttling a <b>live-safety requirement</b>, not merely good manners — and it is the single strongest argument for adding the token bucket before any bulk run.</p>
+      <span class="src">historical_service uses angelone_service.get_token(); _angel_auth_refresh shares the session</span></div>
+  </div>
+
+  <h3 style="margin:26px 0 12px">Against the retention / promotion pipeline</h3>
+  <div class="proof">
+    <div class="pf"><h4>The gap window sits safely inside the 5m retention window</h4>
+      <p>Retention only selects rows older than the cutoff, currently 2026-05-25. The recovery window starts 2026-07-06 — 28 sessions of headroom. Restored rows will not be promoted or deleted on the next cycle.</p>
+      <span class="src">RetentionService._session_cutoff(60, now) → 2026-05-25 · retention_service.py:209,231</span></div>
+    <div class="pf"><h4>Retention only consumes completed candles</h4>
+      <p>Both the ticker scan and the row scan filter <code>is_completed == True</code>. Backfilled historical rows are written completed, so they are eligible in the ordinary way — no special casing, no partial-candle hazard.</p>
+      <span class="src">retention_service.py:209, 231</span></div>
+    <div class="pf"><h4>Concurrency is already guarded</h4>
+      <p>Retention holds a <code>_running</code> flag and a lock, and processes per-ticker with keyset pagination and per-batch commits. A concurrent backfill writing different (older, missing) rows cannot deadlock against it.</p>
+      <span class="src">retention_service.py — _running guard, per-ticker _process_ticker</span></div>
+    <div class="pf risk"><h4>Residual risk 1 — must write fill-only, never upsert</h4>
+      <p>The aggregator's conflict clause does <code>high=greatest, low=least, close=excluded, volume=excluded</code>, guarded only by <code>NOT (is_completed AND existing.volume &gt; new.volume AND close &ne; new.close)</code>. A backfill reusing that path could overwrite a live-built candle with lower-quality provider data. <b>Use <code>ON CONFLICT DO NOTHING</code></b> — then interference is structurally impossible rather than merely unlikely.</p>
+      <span class="src">aggregator.py:683-691</span></div>
+    <div class="pf risk"><h4>Residual risk 2 — fix the batch-boundary bug first</h4>
+      <p>Restoring ~6.76M rows and then letting retention promote them will run the known batch-boundary defect over the whole restored dataset, corrupting roughly one bucket per 100 source rows and deleting the evidence. The ordering matters: <b>fix the bucketing before the restored data crosses the 60-session boundary</b>, not after.</p>
+      <span class="src">retention_service._process_ticker — batch_size=100 vs 3 rows per 15m bucket</span></div>
+  </div>
+</section>
+
+<!-- 06 ORDER -->
+<section>
+  <div class="shead"><span class="n">06</span><h2>Execution order</h2></div>
+  <p class="lede">Sequenced by deadline and dependency. Steps 1–2 are the ones with a clock on them.</p>
+  <div class="tw"><table>
+    <tr><th>#</th><th>Action</th><th>Why this position</th><th>Clock</th></tr>
+    <tr><td class="mono">1</td><td>Add chunking (≤30d) + token-bucket throttle to <code>get_historical_candles</code></td><td>Nothing else can run safely without it; also protects the live WS session</td><td class="mono">—</td></tr>
+    <tr><td class="mono">2</td><td>One-time backfill 2026-07-06 → present, fill-only, via AngelOne</td><td>Closes the 90,139-cell hole while both clocks still allow it</td><td class="mono"><span class="dot d-w"></span>18d / 28 sess</td></tr>
+    <tr><td class="mono">3</td><td>Fix the retention batch-boundary bucketing</td><td>Must precede promotion of the restored rows</td><td class="mono"><span class="dot d-w"></span>28 sessions</td></tr>
+    <tr><td class="mono">4</td><td>Add <code>_intraday_prefill_all</code>, scheduled, universe-wide</td><td>Stops the gap reopening tomorrow night</td><td class="mono">—</td></tr>
+    <tr><td class="mono">5</td><td>Add per-session coverage monitoring + alert</td><td>Turns a six-week silent failure into a next-morning one</td><td class="mono">—</td></tr>
+    <tr><td class="mono">6</td><td>Delete or repoint the dead <code>backfill_intraday_*.py</code> scripts</td><td>They now write to tables that do not exist</td><td class="mono">—</td></tr>
+  </table></div>
+</section>
+
+<footer>
+  5m ingestion recovery analysis · 2026-08-17 · read-only verification against live PostgreSQL · no writes performed
+</footer>
+
+</div>

@@ -49,7 +49,7 @@ psql -U postgres
 - Try pressing **Enter** (empty password)
 - Try: `postgres`
 - Try: `admin`  
-- Try: `medikart@3145`
+- Try: `YOUR_POSTGRES_PASSWORD`
 
 #### Step 4: Create Database
 
@@ -132,7 +132,7 @@ This lists all databases. You should see `stock_data` in the list.
 
 5. **Set New Password**
    ```sql
-   ALTER USER postgres WITH PASSWORD 'medikart@3145';
+   ALTER USER postgres WITH PASSWORD 'YOUR_POSTGRES_PASSWORD';
    \q
    ```
 
@@ -151,7 +151,7 @@ cd "C:\Program Files\PostgreSQL\18\bin"
 psql -U postgres -h localhost -d stock_data
 ```
 
-Password: `medikart@3145`
+Password: `YOUR_POSTGRES_PASSWORD`
 
 If you see `stock_data=#`, success! ✅
 
@@ -164,7 +164,7 @@ Type `\q` to exit.
 Once database is created:
 
 1. ✅ Database created: `stock_data`
-2. ✅ Password set: `medikart@3145`
+2. ✅ Password set: `YOUR_POSTGRES_PASSWORD`
 3. ✅ Configuration file ready: `backend\.env`
 
 Now you can:

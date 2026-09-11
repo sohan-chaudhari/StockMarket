@@ -1,0 +1,476 @@
+<title>LEVERAGE Platform Audit</title>
+<style>
+:root{
+  --ground:#FBFAF7; --surface:#FFFFFF; --surface-2:#F3F1EC; --line:#DFDBD2; --line-soft:#EBE8E1;
+  --ink:#14181A; --ink-2:#3E4649; --ink-3:#6C7477;
+  --accent:#1B6B5A; --accent-soft:#E4EFEA; --accent-ink:#0E4A3E;
+  --p0:#B3352B; --p0-soft:#F8E7E4; --p1:#A65E12; --p1-soft:#FAEEDF;
+  --p2:#5A6470; --p2-soft:#ECEEF1; --ok:#1B6B5A; --ok-soft:#E4EFEA;
+  --wd:#5B4B8A; --wd-soft:#EEEAF6;
+  --shadow:0 1px 2px rgba(20,24,26,.05),0 6px 18px -10px rgba(20,24,26,.18);
+  --serif:Charter,"Bitstream Charter","Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Mono","Segoe UI Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#101414; --surface:#161B1B; --surface-2:#1D2323; --line:#2C3434; --line-soft:#242B2B;
+  --ink:#E9ECEA; --ink-2:#B4BCB9; --ink-3:#828C89;
+  --accent:#5FBFA6; --accent-soft:#16302A; --accent-ink:#8FD8C3;
+  --p0:#E8877C; --p0-soft:#33201E; --p1:#DFA765; --p1-soft:#302518;
+  --p2:#9AA6B2; --p2-soft:#20262B; --ok:#5FBFA6; --ok-soft:#16302A;
+  --wd:#A99AD6; --wd-soft:#231E33;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
+}}
+:root[data-theme="dark"]{
+  --ground:#101414; --surface:#161B1B; --surface-2:#1D2323; --line:#2C3434; --line-soft:#242B2B;
+  --ink:#E9ECEA; --ink-2:#B4BCB9; --ink-3:#828C89;
+  --accent:#5FBFA6; --accent-soft:#16302A; --accent-ink:#8FD8C3;
+  --p0:#E8877C; --p0-soft:#33201E; --p1:#DFA765; --p1-soft:#302518;
+  --p2:#9AA6B2; --p2-soft:#20262B; --ok:#5FBFA6; --ok-soft:#16302A;
+  --wd:#A99AD6; --wd-soft:#231E33;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--serif);
+  font-size:17px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px 96px}
+h1,h2,h3,h4{font-family:var(--sans);text-wrap:balance;margin:0}
+h1{font-size:clamp(30px,5vw,44px);font-weight:760;letter-spacing:-.024em;line-height:1.1}
+h2{font-size:clamp(21px,2.6vw,27px);font-weight:700;letter-spacing:-.016em}
+h3{font-size:17px;font-weight:680;letter-spacing:-.008em}
+p{margin:0}
+code,.mono{font-family:var(--mono);font-size:.86em;font-variant-numeric:tabular-nums}
+code{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:4px;padding:.08em .34em}
+
+header.mast{padding:64px 0 34px;border-bottom:2px solid var(--ink);margin-bottom:34px}
+.eyebrow{font-family:var(--sans);font-size:11.5px;font-weight:660;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--accent-ink)}
+.mast .sub{margin-top:16px;font-size:19px;color:var(--ink-2);max-width:62ch}
+.meta{display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:22px;font-family:var(--mono);
+  font-size:12px;color:var(--ink-3)}
+.meta b{color:var(--ink-2);font-weight:500}
+
+.verdict{background:var(--surface);border:1px solid var(--line);border-left:5px solid var(--p0);
+  border-radius:7px;padding:26px 28px;box-shadow:var(--shadow);margin-bottom:14px}
+.verdict .label{font-family:var(--sans);font-size:11.5px;font-weight:660;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3)}
+.verdict .call{font-family:var(--sans);font-size:clamp(22px,3.4vw,31px);font-weight:740;
+  letter-spacing:-.02em;color:var(--p0);margin-top:7px;line-height:1.15}
+.verdict p{margin-top:14px;color:var(--ink-2);max-width:68ch}
+
+section{margin-top:54px}
+.shead{display:flex;align-items:baseline;gap:14px;padding-bottom:11px;
+  border-bottom:1px solid var(--line);margin-bottom:24px}
+.shead .n{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:600}
+.lede{color:var(--ink-2);max-width:72ch;margin-bottom:22px}
+.stack{display:flex;flex-direction:column;gap:18px}
+
+.find{background:var(--surface);border:1px solid var(--line);border-radius:7px;
+  box-shadow:var(--shadow);overflow:hidden;display:flex}
+.stripe{width:5px;flex:none}
+.s-p0{background:var(--p0)} .s-p1{background:var(--p1)} .s-p2{background:var(--p2)}
+.s-ok{background:var(--ok)} .s-wd{background:var(--wd)}
+.find-body{padding:20px 24px;flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+.find-head{display:flex;flex-wrap:wrap;align-items:center;gap:9px}
+.chip{font-family:var(--sans);font-size:10.5px;font-weight:680;letter-spacing:.08em;
+  text-transform:uppercase;padding:3.5px 8px;border-radius:4px;white-space:nowrap}
+.c-p0{background:var(--p0-soft);color:var(--p0)} .c-p1{background:var(--p1-soft);color:var(--p1)}
+.c-p2{background:var(--p2-soft);color:var(--p2)} .c-ok{background:var(--ok-soft);color:var(--ok)}
+.c-wd{background:var(--wd-soft);color:var(--wd)}
+.fid{font-family:var(--mono);font-size:11.5px;color:var(--ink-3)}
+.find h3{flex-basis:100%}
+.find p{color:var(--ink-2);font-size:16px}
+.ev{background:var(--surface-2);border:1px solid var(--line-soft);border-radius:5px;
+  padding:13px 15px;overflow-x:auto}
+.ev .evl{font-family:var(--sans);font-size:10.5px;font-weight:660;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:8px}
+.ev pre{margin:0;font-family:var(--mono);font-size:12.5px;line-height:1.55;color:var(--ink-2);
+  white-space:pre;font-variant-numeric:tabular-nums}
+.ev .bad{color:var(--p0);font-weight:600} .ev .good{color:var(--ok);font-weight:600}
+.ev .warn{color:var(--p1);font-weight:600}
+.fix{border-top:1px dashed var(--line);padding-top:12px;font-size:15.5px;color:var(--ink-2)}
+.fix b{font-family:var(--sans);font-size:11px;font-weight:660;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink-3);display:block;margin-bottom:5px}
+
+.cycles{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.cyc{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:20px 22px;
+  box-shadow:var(--shadow)}
+.cyc h4{font-size:13px;font-weight:680;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--accent-ink);margin-bottom:14px}
+.chain{display:flex;flex-direction:column;gap:5px;align-items:flex-start}
+.ct{font-family:var(--mono);font-size:13px;padding:6px 12px;border-radius:5px;
+  background:var(--accent-soft);color:var(--accent-ink);font-weight:600;border:1px solid var(--accent)}
+.ct.dead{background:var(--p0-soft);color:var(--p0);border-color:var(--p0)}
+.ct.thin{background:var(--p1-soft);color:var(--p1);border-color:var(--p1)}
+.cd{font-family:var(--mono);font-size:12px;color:var(--ink-3);padding-left:14px}
+.cyc .note-s{margin-top:13px;font-size:14px;color:var(--ink-3);line-height:1.5}
+
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:7px;background:var(--surface);
+  box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;min-width:620px;font-family:var(--sans);font-size:14px}
+th{text-align:left;font-size:10.5px;font-weight:680;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--ink-3);padding:12px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);
+  white-space:nowrap}
+td{padding:11px 14px;border-bottom:1px solid var(--line-soft);color:var(--ink-2);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.mono{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:7px;vertical-align:middle}
+.d-ok{background:var(--ok)} .d-p0{background:var(--p0)} .d-p1{background:var(--p1)}
+.d-p2{background:var(--p2)} .d-no{background:var(--ink-3)}
+
+ul.clean{margin:0;padding-left:20px;color:var(--ink-2)}
+ul.clean li{margin-bottom:7px}
+ul.clean li::marker{color:var(--accent)}
+.ok-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px}
+.ok-card{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--ok);
+  border-radius:6px;padding:15px 17px}
+.ok-card h4{font-size:14.5px;font-weight:680;margin-bottom:6px}
+.ok-card p{font-size:14px;color:var(--ink-3);line-height:1.55}
+
+.phase{display:flex;flex-direction:column;gap:12px}
+.ph{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:18px 20px;
+  box-shadow:var(--shadow)}
+.ph h4{font-size:12.5px;font-weight:680;letter-spacing:.09em;text-transform:uppercase;margin-bottom:11px}
+.ph.now h4{color:var(--p0)} .ph.next h4{color:var(--p1)} .ph.later h4{color:var(--accent-ink)}
+.ph.never h4{color:var(--ink-3)}
+.ph ul{margin:0;padding-left:19px}
+.ph li{margin-bottom:6px;font-size:15px;color:var(--ink-2)}
+
+.note{background:var(--wd-soft);border:1px solid var(--wd);border-radius:7px;padding:18px 22px;
+  color:var(--ink-2);font-size:15.5px}
+.note b{font-family:var(--sans);color:var(--wd);display:block;margin-bottom:6px;font-size:13.5px}
+footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);
+  font-family:var(--mono);font-size:12px;color:var(--ink-3)}
+@media (max-width:680px){
+  body{font-size:16px} .wrap{padding:0 17px 64px} header.mast{padding:40px 0 26px}
+  .find-body{padding:17px 18px} .cycles{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">Corrected re-audit · Platform Engineering</div>
+  <h1>LEVERAGE Platform Audit</h1>
+  <p class="sub">Re-verified against the live database after an architecture correction. The retention design is sound and correctly implemented — but the pipeline that feeds it stopped working six weeks ago.</p>
+  <div class="meta">
+    <span><b>Date</b> 2026-08-17</span>
+    <span><b>Revision</b> 2 — corrected</span>
+    <span><b>Tree</b> <code>StockMarket/StockMarket/StockMarket</code></span>
+    <span><b>DB</b> 9.67 GB</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="label">Production readiness</div>
+  <div class="call">No — intraday ingestion is broken, not the architecture</div>
+  <p>Your correction was right and my previous P0 was wrong. The two-cycle promotion model is implemented correctly, and the sparse higher-timeframe history I flagged is <b>expected retention behaviour</b>. Re-verifying properly surfaced a different and more serious problem: <b>universe-wide intraday ingestion collapsed on 2026-07-06 and has never recovered.</b> The retention chain is healthy and will faithfully promote six weeks of holes into permanent history.</p>
+</div>
+
+<div class="note">
+  <b>What I got wrong in revision 1</b>
+  I claimed the tiers "tile rather than overlap" and called it a P0 architectural blocker. That was wrong on both counts. The tiers <i>do</i> overlap — every intraday timeframe extends to the present, with only the <i>start</i> date growing coarser as data ages, exactly as you described. I also generalised a 115-day gap from RELIANCE alone; measured across 300 tickers it affects <b>4</b>. That is the precise error the original brief warned against, and I made it.
+</div>
+
+<!-- 01 ARCHITECTURE -->
+<section>
+  <div class="shead"><span class="n">01</span><h2>The two cycles, as implemented</h2></div>
+  <p class="lede">Verified against <code>config/retention_policy.py</code> (the only policy the app loads — the <code>.yaml</code> is dead config), <code>retention_service.py</code>, and the live <code>candles</code> table. The chains are genuinely independent: there is no <code>4h→1D</code> and no <code>1h→1D</code> rule anywhere in the code.</p>
+  <div class="cycles">
+    <div class="cyc">
+      <h4>Intraday cycle</h4>
+      <div class="chain">
+        <span class="ct">5m</span><span class="cd">↓ after 60 sessions</span>
+        <span class="ct">15m</span><span class="cd">↓ after 120 sessions</span>
+        <span class="ct">30m</span><span class="cd">↓ after 180 sessions</span>
+        <span class="ct thin">1h</span><span class="cd">↓ after 365 sessions</span>
+        <span class="ct dead">4h — terminal, 0 rows exist</span>
+      </div>
+      <p class="note-s">Terminal at 4h by design. Verified: no rule anywhere promotes 4h onward. The <code>1h→4h</code> rule has never fired — 1h history only reaches 2025-11-03, short of the 365-session threshold.</p>
+    </div>
+    <div class="cyc">
+      <h4>Long-term cycle</h4>
+      <div class="chain">
+        <span class="ct">1D</span><span class="cd">↓ after 730 calendar days</span>
+        <span class="ct">1W</span><span class="cd">↓ after 1825 calendar days</span>
+        <span class="ct">1M — terminal, retained indefinitely</span>
+      </div>
+      <p class="note-s">Fully independent, and observed working live: this session's cycle promoted 4,958 daily rows into 1W and 524 weekly into 1M. Uses calendar days, not sessions — deliberate and documented.</p>
+    </div>
+  </div>
+  <p class="lede" style="margin-top:20px"><b>Boundary between the cycles (section 8 of your brief):</b> there is none, and that is correct. 4h and 1D never touch. 1D is sourced entirely independently — by <code>_daily_prefill_all</code>, an automated 19:00 IST job that fetches daily candles for every ticker in <code>stock_metadata</code>. That is why the long-term chain is healthy while the intraday chain is starving: <b>1D has an automated universe-wide feed and intraday does not.</b></p>
+</section>
+
+<!-- 02 RECLASSIFICATION -->
+<section>
+  <div class="shead"><span class="n">02</span><h2>Reclassified findings</h2></div>
+  <p class="lede">Every revision-1 finding about missing timeframe data, re-tested against physical storage <i>and</i> user-visible history, using your taxonomy.</p>
+  <div class="tw"><table>
+    <tr><th>Revision 1 claim</th><th>Corrected classification</th><th>Evidence</th></tr>
+    <tr><td>Tiers tile into non-overlapping windows</td><td><span class="dot d-no"></span><b>FALSE POSITIVE</b></td><td class="mono">All tiers reach 2026-08-17. Only start dates differ.</td></tr>
+    <tr><td>15m/30m/1h lack historical rows</td><td><span class="dot d-ok"></span><b>EXPECTED RETENTION</b></td><td class="mono">Populated by promotion as 5m ages. Working as designed.</td></tr>
+    <tr><td>30m has a 115-day hole (P0)</td><td><span class="dot d-p2"></span><b>DATA GAP — P2</b></td><td class="mono">4 of 300 tickers, not systemic. RELIANCE is one of them.</td></tr>
+    <tr><td>Read path can't fill holes</td><td><span class="dot d-p1"></span><b>IMPLEMENTATION GAP</b></td><td class="mono">On-the-fly resample fires only on tip gaps, never interior.</td></tr>
+    <tr><td>Retention batch corruption</td><td><span class="dot d-p1"></span><b>RETENTION BUG — stands</b></td><td class="mono">Reproduced: high 206→204, close 202→200, vol 30→10.</td></tr>
+    <tr><td>4h offset wrong</td><td><span class="dot d-p1"></span><b>RESAMPLING BUG — stands</b></td><td class="mono">555 % 240 = 75, not 15. Latent; 0 rows exist.</td></tr>
+    <tr><td>15:30 phantom candles</td><td><span class="dot d-p1"></span><b>RESAMPLING BUG — stands</b></td><td class="mono">Now stronger: 2 RELIANCE sessions have 76 candles, not 75.</td></tr>
+    <tr><td>Zero holidays loaded</td><td><span class="dot d-p1"></span><b>IMPLEMENTATION GAP — stands</b></td><td class="mono">Runtime: "Loaded 0 NSE holidays".</td></tr>
+    <tr><td>stock_data vs candles</td><td><span class="dot d-p2"></span><b>Partly intentional — see §05</b></td><td class="mono">Two sources, different roles, inconsistent precedence.</td></tr>
+  </table></div>
+</section>
+
+<!-- 03 THE REAL P0 -->
+<section>
+  <div class="shead"><span class="n">03</span><h2>The actual blocker</h2></div>
+  <div class="stack">
+    <div class="find"><div class="stripe s-p0"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p0">P0 · Implementation gap</span><span class="fid">FEED-01</span></div>
+      <h3>Universe-wide intraday ingestion collapsed on 2026-07-06</h3>
+      <p>Through June, roughly 3,200 tickers received 5m candles every session. On 2026-07-06 that fell to 31 and has never recovered. 1h ingestion died a week later and is now effectively dead.</p>
+      <div class="ev"><div class="evl">Distinct tickers with candles, per session</div><pre>
+date          5m     15m    30m     1h     1D
+2026-07-02  <span class="good">3157</span>      10      7   <span class="good">3131</span>   <span class="good">3160</span>
+2026-07-03  <span class="good">3170</span>      11      7   <span class="good">3144</span>   <span class="good">3162</span>
+2026-07-06    <span class="bad">31</span>      11      7   <span class="good">3167</span>   <span class="good">3181</span>   <span class="bad">← 5m collapse</span>
+2026-07-10   <span class="bad">189</span>       9      6   <span class="good">3125</span>   <span class="good">3134</span>
+2026-07-13   <span class="bad">197</span>       9      6      <span class="bad">7</span>   <span class="good">3148</span>   <span class="bad">← 1h collapse</span>
+2026-07-17   <span class="bad">850</span>       4      3      <span class="bad">5</span>   <span class="good">3139</span>
+2026-08-17     <span class="bad">1</span>       —      —      —   <span class="good">3130</span></pre></div>
+      <div class="ev"><div class="evl">Root cause — 5m rows by data_source and month</div><pre>
+2026-05   BACKFILL   3087 tickers    662,469 rows
+2026-06   BACKFILL   3279 tickers  3,597,507 rows
+2026-07   BACKFILL   3222 tickers    522,814 rows   <span class="warn">← tapers off</span>
+2026-07   ANGELONE    853 tickers    301,352 rows
+2026-08   ANGELONE    847 tickers    125,585 rows   <span class="bad">← BACKFILL gone entirely</span></pre></div>
+      <p>Universe-wide 5m coverage was never automated. It came from <b>manually run backfill scripts</b> (<code>backfill_intraday_5min.py</code> and siblings, among the 155 loose scripts in <code>backend/</code>). When those stopped being run, all that remained was the live AngelOne websocket — capped at 500 subscriptions with LRU rotation, reaching roughly 850 tickers. Compare <code>_daily_prefill_all</code>, which schedules itself daily at 19:00 IST for every ticker in <code>stock_metadata</code>: that is why 1D never wavered.</p>
+      <div class="fix"><b>Fix</b> The intraday chain needs the equivalent of <code>_daily_prefill_all</code> — a scheduled, universe-wide 5m fetch after market close, driven by the same <code>stock_metadata</code> list, with per-ticker job tracking. This is the single highest-value change in the platform. Until it exists, retention is compressing an incomplete dataset.</div>
+    </div></div>
+
+    <div class="find"><div class="stripe s-p0"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p0">P0 · Consequence</span><span class="fid">FEED-02</span></div>
+      <h3>Retention will promote the holes into permanent history</h3>
+      <p>This is the part that makes FEED-01 urgent rather than merely bad. Retention is working correctly — which is precisely the problem. It faithfully compresses whatever 5m data exists at the 60-session boundary. The July–August window currently sits at 4–27% universe coverage, and it is now roughly 30 sessions old.</p>
+      <div class="ev"><div class="evl">Timeline</div><pre>
+2026-07-06   5m coverage collapses to ~26% of universe
+     now     that window is ~30 sessions old — still inside 5m retention
+  ~Oct 26    it crosses 60 sessions → promoted to 15m, 5m rows <span class="bad">deleted</span>
+             the gaps become permanent and unrecoverable in-system</pre></div>
+      <p>There is a window — roughly 30 sessions — in which backfilling from the provider still repairs this cleanly. After that the source rows are gone and only the provider's own history could rebuild it, subject to AngelOne and yfinance retention limits.</p>
+      <div class="fix"><b>Fix</b> Backfill 2026-07-06 → present at 5m for the full universe <i>before</i> the retention boundary reaches it. Consider pausing the <code>5m→15m</code> rule until coverage is restored.</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 04 USER-VISIBLE -->
+<section>
+  <div class="shead"><span class="n">04</span><h2>Physical storage vs. user-visible history</h2></div>
+  <p class="lede">The distinction you asked for, measured per timeframe. "User-visible" reflects what the API can actually return, including temporary resampling.</p>
+  <div class="tw"><table>
+    <tr><th>TF</th><th>Intended source</th><th>Physical storage</th><th>User-visible history</th><th>Temp resample</th><th>Verified</th></tr>
+    <tr><td class="mono">5m</td><td>Live WS + backfill</td><td class="mono">2026-05-25 → now</td><td class="mono">~60 sessions</td><td>No</td><td><span class="dot d-p0"></span>Coverage 26%</td></tr>
+    <tr><td class="mono">15m</td><td>Promotion from 5m</td><td class="mono">2026-03-02 → now</td><td class="mono">~120 sessions</td><td>Tip only</td><td><span class="dot d-ok"></span>As designed</td></tr>
+    <tr><td class="mono">30m</td><td>Promotion from 15m</td><td class="mono">2026-01-01 → now</td><td class="mono">~180 sessions</td><td>Tip only</td><td><span class="dot d-p2"></span>4 tickers gapped</td></tr>
+    <tr><td class="mono">1h</td><td>Promotion from 30m</td><td class="mono">2025-11-03 → now</td><td class="mono">~365 sessions</td><td>Tip only</td><td><span class="dot d-p0"></span>Ingest dead</td></tr>
+    <tr><td class="mono">4h</td><td>Promotion from 1h</td><td class="mono"><b>0 rows</b></td><td class="mono"><b>None — API rejects 4h</b></td><td>No</td><td><span class="dot d-p1"></span>Unreachable</td></tr>
+    <tr><td class="mono">1D</td><td>Daily prefill (yfinance)</td><td class="mono">2024-08-19 → now</td><td class="mono">11 yrs via stock_data</td><td>No</td><td><span class="dot d-ok"></span>Healthy</td></tr>
+    <tr><td class="mono">1W</td><td>Promotion from 1D</td><td class="mono">2021-08 → 2024-08</td><td class="mono">Continuous w/ 1D</td><td>Yes</td><td><span class="dot d-ok"></span>Working</td></tr>
+    <tr><td class="mono">1M</td><td>Promotion from 1W</td><td class="mono">2016-08 → 2021-08</td><td class="mono">Continuous w/ 1W</td><td>Yes</td><td><span class="dot d-ok"></span>Working</td></tr>
+  </table></div>
+  <p class="lede" style="margin-top:18px"><b>On temporary resampling:</b> it exists, it is mathematically valid, and it is <i>not</i> accidentally persisted — verified. <code>chart_service</code> resamples in memory and caches the result; the paginated endpoint appends resampled candles to the response without writing them. The limitation is scope, not correctness: it only extends the <i>tip</i> (<code>timestamp &gt; last_dt</code>), so it can never fill an interior hole. That is the honest version of my revision-1 claim.</p>
+</section>
+
+<!-- 05 DAILY SOURCE -->
+<section>
+  <div class="shead"><span class="n">05</span><h2>Daily source of truth</h2></div>
+  <div class="stack">
+    <div class="find"><div class="stripe s-p2"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p2">P2 · Inconsistent precedence</span><span class="fid">SRC-01</span></div>
+      <h3>Two daily stores with different roles and no declared precedence</h3>
+      <p>Both hold daily data, and the split is defensible — but which one wins depends on which code path you enter through, and that is not intentional.</p>
+      <div class="ev"><div class="evl">RELIANCE daily</div><pre>
+stock_data    2,833 rows   2015-01-01 → 2026-06-25   <span class="warn">deep history, stale tail</span>
+candles/1D      485 rows   2024-08-19 → 2026-08-17   <span class="good">fresh, 2-yr window</span>
+
+reader                          uses          consequence
+ChartService "1D"               stock_data    ends 2026-06-25 (53d stale)
+/api/stock-data/range/paginated stock_data    same
+retention Chain B (1D→1W)       candles       archive built from 2 yrs only</pre></div>
+      <p>The roles are coherent: <code>stock_data</code> is the deep import archive, <code>candles/1D</code> the live rolling window. The bug is that no reader unions them, so the chart shows a stale tail while fresh data sits one table over, and the weekly/monthly archive is built from the shallow source rather than the deep one.</p>
+      <div class="fix"><b>Fix</b> Declare <code>candles</code> canonical for reads, backfill <code>stock_data</code>'s pre-2024 history into it at <code>timeframe='1D'</code>, and keep <code>stock_data</code> as an immutable import record. Chain B then has eleven years to work with instead of two.</div>
+    </div></div>
+
+    <div class="find"><div class="stripe s-p1"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p1">P1 · Reliability</span><span class="fid">MIG-01</span></div>
+      <h3>The 1D migration's checksum gate does not gate anything</h3>
+      <p><code>migration_jobs</code> is the mechanism your brief called <code>migration_progress</code>, and it implements the exact states you named. But its verification columns are inert.</p>
+      <div class="ev"><div class="evl">migration_jobs — 3,281 rows, all tier 6 / 1D</div><pre>
+KNOWN_ABSENCES  2240      DONE  932      FAILED  105      FETCHING  4
+
+checksum_src IS DISTINCT FROM checksum_db  →  <span class="bad">3,044 of 3,277 (93%)</span>
+                                              <span class="bad">including rows marked DONE</span>
+
+stuck in FETCHING since 2026-08-14/15, retry_count = 0:
+  DIVOPPBEES  DIVYADHAN  GKWLIMITED  GLAND</pre></div>
+      <p>Jobs are marked DONE while their two checksums disagree, so the comparison is either never enforced or the two values are computed over different domains. Either way it provides no integrity guarantee. Separately, four jobs have sat in FETCHING for two to three days with no retry — unlike <code>RetentionService</code>, which does implement checkpoint resume, this migration has no stuck-job recovery.</p>
+      <div class="fix"><b>Fix</b> Either enforce the checksum (fail the job on mismatch) or remove the columns so they stop implying a guarantee that is not there. Add a startup sweep that resets stale FETCHING jobs to PENDING.</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 06 STANDING BUGS -->
+<section>
+  <div class="shead"><span class="n">06</span><h2>Findings that survived re-verification</h2></div>
+  <div class="stack">
+    <div class="find"><div class="stripe s-p1"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p1">P1 · Retention bug</span><span class="fid">DATA-02</span></div>
+      <h3>Batch boundaries silently corrupt one candle per 100 rows</h3>
+      <p><code>_process_ticker</code> resamples in batches of 100. A 15m bucket needs three 5m rows and 100 is not divisible by 3, so every boundary splits a bucket. The partial is inserted first; the correct full bucket arrives next batch and <code>on_conflict_do_nothing</code> discards it.</p>
+      <div class="ev"><div class="evl">Reproduced against the real batching logic</div><pre>
+bucket 2026-01-06 11:15     truth → stored
+  high     206.0 → <span class="bad">204.0</span>      close  202.0 → <span class="bad">200.0</span>
+  volume      30 → <span class="bad">10</span>         (1 of 3 source candles)</pre></div>
+      <p>The checksum cannot catch it — it compares source against target <i>within one batch</i>, which always agrees. Source rows are deleted afterwards, so the loss is unrecoverable.</p>
+      <div class="fix"><b>Fix</b> Extend each batch to the next target-bucket boundary, or switch to <code>ON CONFLICT DO UPDATE</code> so a fuller bucket supersedes a partial one.</div>
+    </div></div>
+
+    <div class="find"><div class="stripe s-p1"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p1">P1 · Resampling bug</span><span class="fid">DATA-03</span></div>
+      <h3>4h offset is wrong, and 4h is unreachable anyway</h3>
+      <div class="ev"><div class="evl">NSE open 09:15 = 555 minutes</div><pre>
+555 %  15 =  0   <span class="good">15m — no offset      ✓</span>
+555 %  30 = 15   <span class="good">30m — offset 15min   ✓</span>
+555 %  60 = 15   <span class="good">1h  — offset 15min   ✓</span>
+555 % 240 = <span class="bad">75</span>   <span class="bad">4h  — needs 75min, code uses 15</span>
+
+5m→4h, one session: first bucket = <span class="bad">08:15</span>  (pre-market)</pre></div>
+      <p>Compounding it: <code>/api/stock-data/intraday/paginated</code> rejects any interval outside <code>1m/5m/15m/30m/1h</code>, so the terminal tier of your intraday cycle is write-only. Both are latent today — zero 4h rows exist — but both must land before the <code>1h→4h</code> rule fires.</p>
+      <div class="fix"><b>Fix</b> Derive the offset: <code>offset = f"{555 % bucket_minutes}min"</code>. Add 4h to the endpoint whitelist and the timeframe selector.</div>
+    </div></div>
+
+    <div class="find"><div class="stripe s-p1"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p1">P1 · Session bug</span><span class="fid">CAL-02</span></div>
+      <h3>Phantom 15:30 bucket</h3>
+      <p>Ticks between 15:30:00 and 15:44:59 snap to a 15:30 slot that is not a real NSE bucket — the last 5m bucket is 15:25. After 15:45 the grace branch correctly returns 15:25.</p>
+      <div class="ev"><div class="evl">Per-session candle counts, RELIANCE 5m (a full session is 75)</div><pre>
+75 candles → 45 sessions   <span class="good">correct</span>
+74 candles → 10 sessions
+<span class="bad">76 candles →  2 sessions   ← the phantom 15:30 bar</span>
+
+rows at 15:30 across the DB:  5m <span class="bad">956</span>   15m <span class="bad">13</span>   1m <span class="bad">7</span></pre></div>
+      <div class="fix"><b>Fix</b> Collapse the <code>ist_seconds &gt;= cl</code> branch into the grace branch so both return <code>slots - 1</code>, then delete the 976 phantom rows.</div>
+    </div></div>
+
+    <div class="find"><div class="stripe s-p1"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p1">P1 · Implementation gap</span><span class="fid">CAL-01</span></div>
+      <h3>No holiday calendar loaded</h3>
+      <p>Wiring is correct — startup reads <code>holidays</code> and feeds <code>nse_calendar</code>, the aggregator and special sessions. The table is empty, and so is <code>market_sessions</code>. Runtime confirms: <code>[Startup] Loaded 0 NSE holidays</code>.</p>
+      <p>Retention's <code>_session_cutoff</code> therefore counts holidays as trading sessions and trims ~10–14 days per year early; <code>get_next_trading_day</code> can queue an AMO onto a closed day. <b>Not</b> a trading-safety hole — on a holiday no ticks arrive, PriceProvider tiers 1–3 fail their staleness checks, tier 4 is gated on the market being closed, and the engine executes nothing.</p>
+      <div class="fix"><b>Fix</b> Populate <code>holidays</code>; scripts exist for 2024–2025 but not 2026. Register 2026-02-01 as a Budget special session — its 19,219 Sunday 1h rows are legitimate. The 1,988 Saturday rows on 2026-07-11 are a backfill artifact and should be deleted.</div>
+    </div></div>
+
+    <div class="find"><div class="stripe s-p2"></div><div class="find-body">
+      <div class="find-head"><span class="chip c-p2">P2 · Hygiene</span><span class="fid">DB-01</span></div>
+      <h3>579 MB of abandoned backup tables</h3>
+      <p>Eighteen <code>*_backup_20260703_*</code> tables from a single day's work, plus two negative-volume rows (MANCREDIT) and 2,564 orphaned <code>1m</code> rows for one ticker with timestamps running to 19:58 — a timeframe that appears in neither the registry nor the retention policy.</p>
+      <div class="ev"><div class="evl">Storage</div><pre>
+database total   9,668 MB
+  candles        4,702 MB
+  stock_data       174 MB
+  backup tables    <span class="warn">579 MB</span>   <span class="warn">6% of the database, zero value</span></pre></div>
+      <p>Worth naming because retention exists to control storage. Six percent of the database is dead weight from one afternoon.</p>
+      <div class="fix"><b>Fix</b> Drop the backup tables, the orphaned 1m rows, and add a volume guard (<code>&gt;= 0</code>) beside the existing <code>validate_ohlc</code>.</div>
+    </div></div>
+  </div>
+</section>
+
+<!-- 07 VERIFIED -->
+<section>
+  <div class="shead"><span class="n">07</span><h2>Verified working — do not change</h2></div>
+  <div class="ok-grid">
+    <div class="ok-card"><h4>Two-cycle retention model</h4><p>Independent intraday and long-term chains, no cross-promotion, terminal tiers correct. Atomic insert→verify→delete, keyset pagination, per-ticker isolation, live-window protection, checkpoint resume. The design is right.</p></div>
+    <div class="ok-card"><h4>OHLC aggregation math</h4><p>first/max/min/last/sum verified for every transition. 15m, 30m and 1h all bucket from 09:15 correctly. <code>W-MON</code> yields Monday-anchored weeks, <code>MS</code> month starts. Only 4h is wrong.</p></div>
+    <div class="ok-card"><h4>Session snapping</h4><p><code>snap_to_nse_session</code> computes the IST day boundary properly and handles pre-open, mid-session and post-close. The UTC-midnight class of bug is genuinely absent apart from the 15:30 edge.</p></div>
+    <div class="ok-card"><h4>Coordinate engine</h4><p>225/225 exact bar round-trips. Out-of-range times extrapolate via a median edge interval; weekend gaps interpolate proportionally. The bar-index-as-timestamp bug is fixed in the core.</p></div>
+    <div class="ok-card"><h4>Drawing tool registry</h4><p>108 tools: zero registry entries missing a class, zero declared-vs-actual point-count mismatches, zero orphans. Clean base-class hierarchy across lines, channels, pitchforks, Fibonacci, Gann, waves and patterns.</p></div>
+    <div class="ok-card"><h4>Execution engine</h4><p><code>SELECT … FOR UPDATE</code> locks, trigger evaluation inside the transaction, an <code>EXECUTING</code> state surviving crash-restart, and a market-hours guard that fails closed.</p></div>
+    <div class="ok-card"><h4>Price resolution</h4><p>Four tiers with staleness ceilings (30s tick, 420s derived). Daily close reachable only when the market is closed. Degrades to no-price rather than a wrong price.</p></div>
+    <div class="ok-card"><h4>Subscription management</h4><p>ADR-011 execution-pinned subscriptions with viewer and execution ref counts, DB-authoritative reconciliation, LRU eviction at 500 that never evicts a ticker with a live order.</p></div>
+    <div class="ok-card"><h4>Daily prefill</h4><p>The one intraday-adjacent job that <i>is</i> automated, and it shows: 1D held ~3,150 tickers per session throughout the collapse. This is the pattern the 5m pipeline should copy.</p></div>
+    <div class="ok-card"><h4>Auth &amp; tests</h4><p>bcrypt, 5-attempt lockout, CSRF, rate limiting, audit log; <code>.env</code> gitignored and absent from history. 475 tests pass in 10.6s. Zero TODO/FIXME/HACK in core modules.</p></div>
+  </div>
+</section>
+
+<!-- 08 ROADMAP -->
+<section>
+  <div class="shead"><span class="n">08</span><h2>Phased roadmap</h2></div>
+  <div class="phase">
+    <div class="ph now"><h4>Fix now — before the retention boundary moves</h4>
+      <ul>
+        <li><b>Restore universe-wide 5m ingestion</b> — a scheduled post-close job over <code>stock_metadata</code>, mirroring <code>_daily_prefill_all</code>. Everything else depends on this.</li>
+        <li><b>Backfill 2026-07-06 → present at 5m</b> while the window is still inside the 60-session retention period. Consider pausing <code>5m→15m</code> until coverage is restored.</li>
+        <li><b>Restore 1h ingestion</b> — dead since 2026-07-13.</li>
+        <li><b>Fix the retention batch boundary</b> — every cycle corrupts more candles and deletes the evidence.</li>
+      </ul>
+    </div>
+    <div class="ph next"><h4>Improve next</h4>
+      <ul>
+        <li>Populate the holiday calendar including 2026; register the Feb 1 special session.</li>
+        <li>Fix the 15:30 phantom bucket and purge the 976 rows.</li>
+        <li>Correct the 4h offset and expose 4h through the API — both before the <code>1h→4h</code> rule fires.</li>
+        <li>Declare <code>candles</code> canonical for daily; migrate <code>stock_data</code> history in so Chain B has real depth.</li>
+        <li>Enforce or remove the migration checksum; add stale-<code>FETCHING</code> recovery.</li>
+        <li>Extend on-the-fly resampling to interior holes, not just the tip.</li>
+      </ul>
+    </div>
+    <div class="ph later"><h4>New capability — highest professional value</h4>
+      <ul>
+        <li><b>Data-coverage transparency.</b> Surface, per timeframe, the range actually available and mark discontinuities on the chart. Given that resolution legitimately varies with age, a trader needs to see which resolution they are looking at. This turns a correct-but-opaque architecture into a trustworthy one.</li>
+        <li>Ingestion health monitoring — an alert when per-session ticker coverage drops below a threshold would have caught FEED-01 on 2026-07-06 instead of six weeks later.</li>
+        <li>Decide instrument identity (symbol vs. symbol+exchange) before BSE ingestion or options work begins. 2,278 symbols are dual-listed; candle tables have no exchange column.</li>
+      </ul>
+    </div>
+    <div class="ph never"><h4>Do not change</h4>
+      <ul>
+        <li>The two-cycle retention architecture. It is correct, deliberate, and my revision-1 criticism of it was wrong.</li>
+        <li>Terminal tiers at 4h and 1M. No <code>4h→1D</code> promotion should be added.</li>
+        <li>The coordinate engine, tool registry, execution engine, PriceProvider and subscription manager.</li>
+        <li>Do not respond to this report by storing every timeframe at full resolution forever. The gaps are an ingestion failure, not evidence against retention.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 09 FUTURE -->
+<section>
+  <div class="shead"><span class="n">09</span><h2>Future integration — not current scope</h2></div>
+  <ul class="clean">
+    <li><b>Options analytics</b> — not implemented. No chain, strike or open-interest model, endpoint or table.</li>
+    <li><b>Stock recommendations</b> — not implemented. Zero matches in the tree.</li>
+    <li><b>Mutual fund intelligence</b> — <code>mf.html</code> is a 71-line static page with zero API calls.</li>
+    <li><b>Portfolio intelligence</b> — CRUD exists and works; no analytics layer.</li>
+    <li><b>ETFs, IPOs, calendar</b> — static placeholders (0–1 API references each).</li>
+  </ul>
+</section>
+
+<!-- 10 TRADER -->
+<section>
+  <div class="shead"><span class="n">10</span><h2>The professional trader's view</h2></div>
+  <div class="tw"><table>
+    <tr><th>Question</th><th>Answer today</th></tr>
+    <tr><td>Can I trust the live price?</td><td><span class="dot d-ok"></span>Yes — for the ~850 tickers on the live feed. Staleness is enforced and it degrades to no-price.</td></tr>
+    <tr><td>Can I trust the candles on a liquid stock?</td><td><span class="dot d-p1"></span>Mostly. RELIANCE showed 59/59 sessions, 45 of them exactly complete.</td></tr>
+    <tr><td>Can I trust them on the wider universe?</td><td><span class="dot d-p0"></span><b>No.</b> Since 2026-07-06 most tickers have no recent intraday data at all.</td></tr>
+    <tr><td>Does older data legitimately get coarser?</td><td><span class="dot d-ok"></span>Yes — by design, and correctly implemented. But nothing tells the trader this.</td></tr>
+    <tr><td>Can I switch timeframes safely?</td><td><span class="dot d-p2"></span>Generally yes. Interior holes affect few tickers; resolution changes are expected.</td></tr>
+    <tr><td>Will my drawings stay geometrically correct?</td><td><span class="dot d-ok"></span>Yes. Anchoring is timestamp-canonical and verified exact.</td></tr>
+    <tr><td>Is it safe to hold an open order?</td><td><span class="dot d-ok"></span>Yes. Row-locked, crash-recoverable, subscription-pinned, fails closed.</td></tr>
+  </table></div>
+  <p class="lede" style="margin-top:20px">The architecture is more trustworthy than revision 1 suggested; the <i>data flowing through it</i> is less so. A trader on RELIANCE would see a good platform. A trader on the other 2,300 tickers would find the last six weeks largely empty — and nothing in the interface would explain why.</p>
+</section>
+
+<footer>
+  LEVERAGE platform audit · revision 2 · 2026-08-17 · re-verified against live PostgreSQL · scope limited to core Platform Engineering
+</footer>
+
+</div>

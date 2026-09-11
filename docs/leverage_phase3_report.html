@@ -1,0 +1,287 @@
+<title>LEVERAGE — Phase 3: Canonical Candles Architecture</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+}
+:root[data-theme="dark"]{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+:root[data-theme="light"]{ --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7; }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1360px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.78rem;padding:.2rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:980px}
+header.hero{margin-bottom:2.2rem;padding-bottom:1.8rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:.98rem;max-width:68ch}
+.statusbar{display:flex;gap:.5rem;margin-top:1.2rem;flex-wrap:wrap;font-family:var(--mono);font-size:.68rem}
+.statusbar span{padding:.28rem .6rem;border-radius:99px;border:1px solid var(--border);color:var(--text-dim)}
+.statusbar span.go{border-color:var(--low);color:var(--low);font-weight:600}
+.statusbar span.stop{border-color:var(--crit);color:var(--crit);font-weight:600}
+section{margin:2.5rem 0}
+section > h2{font-family:var(--serif);font-size:1.28rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:.95rem}
+section > .lede{color:var(--text-dim);margin-bottom:1rem;font-size:.9rem;max-width:72ch}
+h3{font-family:var(--serif);font-size:1.02rem;margin:1.1rem 0 .4rem;font-weight:600}
+h4{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin:1rem 0 .35rem;font-weight:600}
+p{margin:.55rem 0}
+code{font-family:var(--mono);font-size:.82em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.chip{display:inline-flex;align-items:center;gap:.35em;font-family:var(--mono);font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;padding:.18em .5em;border-radius:99px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-soft);color:var(--crit)} .chip.high{background:var(--high-soft);color:var(--high)}
+.chip.med{background:var(--med-soft);color:var(--med)} .chip.low{background:var(--low-soft);color:var(--low)}
+.tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.58rem;letter-spacing:.05em;padding:.13em .46em;border-radius:4px;font-weight:600;text-transform:uppercase}
+.tag.V{border:1px solid var(--low);color:var(--low)}
+.tag.DONE{border:1px solid var(--low);background:var(--low-soft);color:var(--low)}
+.tag.PLAN{border:1px dashed var(--accent);color:var(--accent)}
+.tag.RD{border:1px dotted var(--crit);color:var(--crit)}
+table{width:100%;border-collapse:collapse;font-size:.81rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:.9rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.62rem;color:var(--text-dim);padding:.46rem .62rem;border-bottom:1px solid var(--border)}
+td{padding:.46rem .62rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td code{font-family:var(--mono);font-size:.8em}
+.num-cell{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:.9rem 0;overflow-x:auto}
+.diagram .cap{font-size:.76rem;color:var(--text-dim);margin-top:.6rem;padding-top:.6rem;border-top:1px dashed var(--border)}
+.querybox{font-family:var(--mono);font-size:.76rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:.85rem 1rem;margin:.7rem 0;white-space:pre-wrap;overflow-x:auto}
+.finding{border-left:3px solid var(--border);padding:.2rem 0 .2rem 1rem;margin:1rem 0}
+.finding.crit{border-color:var(--crit)} .finding.high{border-color:var(--high)}
+.finding.med{border-color:var(--med)} .finding.low{border-color:var(--low)}
+.finding .head{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-bottom:.3rem}
+.finding .head b{font-size:.93rem}
+.callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.88rem}
+.callout b{color:var(--accent)}
+.warncall{background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.88rem}
+.warncall b{color:var(--crit)}
+.okcall{background:var(--low-soft);border:1px solid var(--low);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.88rem}
+.okcall b{color:var(--low)}
+.approve{display:flex;gap:1rem;align-items:flex-start;margin:.9rem 0;padding:1rem;background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px}
+.approve .an{font-family:var(--serif);font-size:1.3rem;color:var(--crit);flex:0 0 1.8rem}
+ul,ol{padding-left:1.2rem} li{margin:.3rem 0}
+footer{color:var(--text-dim);font-size:.74rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.3rem;margin-top:2.6rem}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Graph Engineering — Phase 3</span>
+  <a href="#pa">Phase A — Inspect</a>
+  <a href="#pb1">Phase B — Contradiction found</a>
+  <a href="#pb2">Phase B — Current vs required</a>
+  <a href="#pc">Phase C — Implemented (safe)</a>
+  <a href="#pd">Phase D — Validation</a>
+  <a href="#tsconv">Timestamp convention decision</a>
+  <a href="#adjclose">adj_close decision</a>
+  <a href="#tickers">Ticker coverage</a>
+  <a href="#migplan">Migration plan — NOT executed</a>
+  <a href="#pe">Phase E — Final report</a>
+  <a href="#approve">Approval needed</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Graph Engineering — Phase 3</span>
+  <h1>Canonical <code>candles</code> storage + independent retention chains</h1>
+  <p class="dek">Inspected the real retention/resampling/historical-fetch code, found and fixed a genuine documentation-vs-code contradiction, implemented the missing daily retention chain safely (config + tests only, zero data touched), and scoped the actual migration precisely — without executing it. <code>stock_data</code> was not modified or dropped.</p>
+  <div class="statusbar">
+    <span class="go">239/239 backend tests passing</span>
+    <span>4 files modified, 0 data rows written</span>
+    <span>0 Angel One calls made</span>
+    <span>stock_data untouched</span>
+    <span class="stop">STOP before migration execution — awaiting approval</span>
+  </div>
+</header>
+
+<section id="pa">
+<h2><span class="num">Phase A</span> Inspect</h2>
+<p>Read in full: <code>retention_service.py</code>, <code>config/retention_policy.py</code>, <code>config/retention_policy.yaml</code>, <code>config/__init__.py</code>, <code>resampler.py</code>, <code>chart_service.py</code>, <code>config/timeframe_registry.py</code>, <code>models.py</code> (Candle/StockData schema), <code>tests/test_retention_service.py</code>, <code>tests/test_resampler.py</code>. Grepped the entire repository for <code>adj_close</code> (31 files) and traced every hit. Queried the live database read-only for <code>stock_metadata.is_active</code> against the 647/57/5 ticker segments identified in Phase 2, and computed the exact 180-session retention window using the app's own <code>nse_calendar</code>/session-counting logic.</p>
+</section>
+
+<section id="pb1">
+<h2><span class="num">Phase B</span> Contradiction found — report first, as instructed</h2>
+<div class="warncall">
+<b>Two retention policy files exist, and only one of them is real.</b>
+<p><code>retention_service.py</code>'s own module docstring claims the policy is "loaded from <code>config/retention_policy.yaml</code>." That is <b>false</b> — <code>config/__init__.py</code>'s <code>load_retention_policy()</code> imports the <code>RETENTION_POLICY</code> dict from <code>config/retention_policy.py</code> (the Python module), and never touches the <code>.yaml</code> file at all. <span class="tag V">Verified</span> — no <code>yaml.load</code>/<code>yaml.safe_load</code> call exists anywhere in <code>config/__init__.py</code>.</p>
+<p>The <b>active</b> policy (<code>.py</code>, version 3, actually loaded) correctly had no <code>4h→1D</code> rule and an explicit comment saying so. The <b>dead</b> policy (<code>.yaml</code>, version 2, never loaded) <i>did</i> contain exactly the <code>4h→1D</code> conversion you asked me to hunt for — plus a <code>1D→1W</code> and <code>1W→1M</code> chain using plain calendar-day cutoffs (730/1825 days) instead of the session-based convention every other rule in the codebase uses.</p>
+<p>This is almost certainly where the original "5m→15m→30m→1h→4h→1D→1W→1M" mental model in the very first mission brief of this engagement came from — a stale, unused file that looked authoritative but was never executed by the running application. It's now corrected (§Phase C) rather than left to confuse the next person who opens it.</p>
+</div>
+</section>
+
+<section id="pb2">
+<h2><span class="num">Phase B</span> Current vs. required architecture</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Requirement</th><th>Already correct in the active policy?</th><th>What was actually missing</th></tr>
+<tr><td>Intraday chain 5m→15m→30m→1h→4h</td><td><span class="chip low">Yes</span></td><td>Nothing — this chain was already correct, tested, and unchanged by this phase.</td></tr>
+<tr><td>No 4h→1D conversion</td><td><span class="chip low">Yes, in the active policy</span></td><td>The rule existed in the dead <code>.yaml</code> only — inert, never executed, but corrected anyway to remove the false trail (§Phase C).</td></tr>
+<tr><td>1D retention (~180 sessions, continuous rolling window)</td><td><span class="chip crit">No — did not exist at all</span></td><td>Zero 1D retention rule existed in the active policy. The generic retention engine (session-based cutoff, checksum-verified, idempotent upsert) already supports it — it just had no policy entry telling it to run. <b>Added</b> (§Phase C).</td></tr>
+<tr><td>1D→1W chain, independent of intraday</td><td><span class="chip crit">No</span></td><td>Same as above — added as <code>{"source_tf":"1D","target_tf":"1W","after_trading_sessions":180}</code>, the exact number you specified.</td></tr>
+<tr><td>1W→1M chain</td><td><span class="chip high">Engine-ready, not configured</span></td><td><code>resampler.py</code>'s <code>_resample_to_1m</code> already exists and works — but no retention window (how many weeks of 1W to keep before compressing) was specified anywhere in this conversation. <b>Not added</b> — would require an invented number. Flagged for approval, §Approval Needed.</td></tr>
+</table></div>
+<div class="okcall"><b>What already worked and required no change:</b> the retention engine itself (atomic per-batch INSERT→verify→DELETE, checksum verification before any delete, keyset pagination, idempotent <code>ON CONFLICT DO NOTHING</code>, live-window protection, checkpoint-based crash resume) is generic across every rule — it doesn't know or care whether a rule is "intraday" or "daily," it just executes whatever <code>(source_tf, target_tf, cutoff)</code> the policy hands it. Adding the daily chain required <b>zero</b> changes to <code>retention_service.py</code ) itself, and <b>zero</b> changes to <code>resampler.py</code> (1D/1W/1M resampling was already fully implemented, just unused by retention). This is exactly the "don't invent a new retention system" case — the existing implementation already handled it; it just wasn't switched on.</div>
+</section>
+
+<section id="pc">
+<h2><span class="num">Phase C</span> Implemented — safe changes only</h2>
+<p class="lede">Config and test changes only. No database write, no schema change, no Angel One call.</p>
+<div class="tbl-wrap"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>config/retention_policy.py</code></td><td>Added <code>{"source_tf":"1D","target_tf":"1W","after_trading_sessions":180,"batch_size":100}</code> to the active policy (version 3→4). Expanded the module comment to document both chains explicitly and note 1W→1M is intentionally not yet configured.</td></tr>
+<tr><td><code>config/retention_policy.yaml</code></td><td>Corrected to match the real active policy (removed the false <code>4h→1D</code> rule and the calendar-day-based cutoffs) and added a header stating plainly that this file is not loaded by the application, to prevent the exact confusion that produced this task.</td></tr>
+<tr><td><code>main.py</code></td><td>One docstring correction in <code>_retention_due_today()</code> — was hardcoded to say "4 policy tiers," now correctly describes the tier count as read from the live policy (the actual scheduling logic already worked generically and needed no functional change).</td></tr>
+<tr><td><code>tests/test_retention_service.py</code></td><td>Updated 3 existing tests that hardcoded the old 4-rule shape (now scoped explicitly to the intraday subset so they keep testing what they always tested). Added 5 new tests: daily-chain rule presence/value, chain-independence (no rule ever crosses from an intraday tier to a daily+ tier or vice versa), explicit absence of both <code>4h→1D</code> and <code>1W→1M</code>, and the item #15 boundary scenario (187 sessions of history, 180-session retention → exactly 180 kept, exactly 7 eligible for compression, contiguous split).</td></tr>
+<tr><td><code>tests/test_resampler.py</code></td><td>Added 2 new tests proving 1D→1W OHLCV correctness field-by-field (open=first session, high=max, low=min, close=last session, volume=sum) and that a week boundary correctly splits into two separate weekly candles rather than merging.</td></tr>
+</table></div>
+</section>
+
+<section id="pd">
+<h2><span class="num">Phase D</span> Validation</h2>
+<div class="querybox">$ python -m py_compile config/retention_policy.py retention_service.py resampler.py main.py  →  OK
+
+$ python -m pytest tests/test_retention_service.py tests/test_resampler.py -q
+..................F.....................   (1 failure — see below)
+39 passed / 1 failed initially
+
+$ # failure was test_run_cycle_uses_reverse_policy_order: it uses the REAL
+$ # policy (only _downgrade/_compute_cutoff are mocked), so it correctly
+$ # picked up the new 1D->1W rule. Updated the test's expected order rather
+$ # than bypassing it — this is exactly the kind of test failure that SHOULD
+$ # happen when a real policy rule is added.
+
+$ python -m pytest tests/ -q
+239 passed, 15 warnings in 5s</div>
+<p>239 = 233 after Phase 2 + 6 new tests this phase (5 in <code>test_retention_service.py</code>, 2 in <code>test_resampler.py</code>, minus 1 pre-existing test whose expectation legitimately changed). No test was deleted or weakened to make it pass.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Requirement from the prompt</th><th>Verified by</th></tr>
+<tr><td>5m→15m, 15m→30m, 30m→1h, 1h→4h all still work</td><td><code>test_intraday_chain_pyramid_order</code>, <code>test_intraday_chain_boundaries_increasing</code> — unchanged, still passing</td></tr>
+<tr><td>1D→1W works</td><td><code>test_daily_chain_1d_to_1w_present</code>, <code>test_resample_1d_to_1w_ohlcv_correctness</code></td></tr>
+<tr><td>1W→1M</td><td><span class="tag PLAN">Not implemented</span> — <code>test_no_1w_to_1m_rule_yet</code> documents the deliberate absence</td></tr>
+<tr><td>4h→1D never happens</td><td><code>test_no_4h_to_1d_rule</code> (active policy) + <code>test_daily_chain_is_independent_of_intraday_chain</code> (structural guarantee: no rule can ever cross from an intraday tier to a daily+ tier, by construction, not just by the current rule list happening not to)</td></tr>
+<tr><td>Day-187/180-session boundary produces a continuous rolling window, not a fixed cutover</td><td><code>test_1d_retention_boundary_keeps_180_compresses_older</code> — 180 kept, 7 eligible, contiguous</td></tr>
+<tr><td>Weekly candle OHLCV correctness</td><td><code>test_resample_1d_to_1w_ohlcv_correctness</code> — open/high/low/close/volume checked individually against hand-computed expected values</td></tr>
+</table></div>
+</section>
+
+<section id="tsconv">
+<h2><span class="num">§</span> Timestamp convention — decision, not a fix</h2>
+<p class="lede">Inspected as instructed: <code>config/timeframe_registry.py</code>, the live candle builder (<code>aggregator.py</code>), <code>historical_service.py</code>, <code>chart_service.py</code>, <code>resampler.py</code>, <code>retention_service.py</code>, and how a charting frontend consumes daily bars.</p>
+<div class="okcall">
+<b>Recommendation: keep 1D at midnight. Do not change it.</b>
+<p><code>resampler.py:69</code> explicitly excludes <code>'1D'</code> (and <code>'W'</code>, <code>'MS'</code>) from the 09:15-session-offset logic used for every intraday rule — this reads as a deliberate choice, not an oversight: a daily candle represents one entire trading session and is conventionally keyed by <b>date</b>, not by an intraday clock time, in every OHLCV charting convention (including the lightweight-charts library this app already uses, which accepts daily bars as a plain date rather than a timestamp). Under that reading, "midnight" isn't really a competing time-of-day convention at all — it's the natural zero-information placeholder for "this row represents the whole day," and the true convention question doesn't even apply to 1D/1W/1M the way it applies to intraday tiers.</p>
+<p><code>config/timeframe_registry.py</code> supports this: 1D/1W/1M are typed <code>"session"</code>/<code>"week"</code>/<code>"month"</code>, structurally distinct from the <code>"intraday"</code> type that carries a <code>minutes</code> field — the registry itself already treats them as a different kind of thing, not a same-kind-different-anchor thing.</p>
+</div>
+<p><b>What this means for the earlier finding:</b> Phase 2's report characterized the midnight-vs-09:15 difference as a "convention violation." That framing should be revised — it's a real <i>structural</i> difference (correctly observed), but not a <i>defect</i>. The corrective action is to update the shared <code>Candle</code> contract's documentation to state the 09:15-session-anchoring promise applies to intraday timeframes specifically, and that 1D/1W/1M are date-keyed by design — not to migrate any timestamp data. No migration plan is proposed for this item because no change is recommended.</p>
+</section>
+
+<section id="adjclose">
+<h2><span class="num">§</span> <code>adj_close</code> — searched the entire repository</h2>
+<p class="lede">Grepped all 31 files matching <code>adj_close</code> across the whole repo (not just backend) and traced every real (non-passthrough) usage.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Location</th><th>What it does</th></tr>
+<tr><td>Frontend (<code>*.js</code>, <code>*.html</code>)</td><td><span class="tag V">V</span> Zero references anywhere. No page displays or computes with <code>adj_close</code>.</td></tr>
+<tr><td><code>schemas.py:11</code>, various <code>main.py</code> response dicts</td><td>Pure passthrough — included in API response payloads because the ORM row has the field, never read back by anything that consumes those responses.</td></tr>
+<tr><td><code>indicator_service.py:120</code></td><td>Listed in a generic NaN/Inf-cleanup column set alongside open/high/low/close/volume — a defensive catch-all, not a computation. All real indicators (SMA/EMA/RSI/MACD/Bollinger) operate on <code>close</code>.</td></tr>
+<tr><td><code>main.py:3891</code></td><td><b>The one real consumer.</b> Inside the screener's third-tier fallback (only reached when live price AND candle-derived history are both unavailable for a ticker), <code>prev_c = float(sd.adj_close or sd.close)</code> — but two lines later it's overridden anyway if candle history (<code>closes_hist</code>) has ≥2 entries. So <code>adj_close</code> only actually affects output in a double-fallback edge case, and already degrades gracefully to <code>close</code> when absent (exactly what would happen automatically if <code>candles</code> — which has no such field — were the only source).</td></tr>
+</table></div>
+<div class="okcall"><b>Recommendation: exclude <code>adj_close</code> from the migration; do not add a column for it to <code>candles</code>.</b> No frontend feature and no primary backend computation depends on it. Its one real consumer already has a working, already-exercised fallback to plain <code>close</code> for the 90.8% of rows that have no <code>adj_close</code> today, so losing it entirely changes nothing structurally — it only removes a value that already usually isn't there. This satisfies the instruction not to add a new column without an actual product requirement backing it, because none was found.</div>
+</section>
+
+<section id="tickers">
+<h2><span class="num">§</span> The 647 <code>stock_data</code>-only tickers — checked against <code>stock_metadata.is_active</code></h2>
+<div class="tbl-wrap"><table>
+<tr><th>Segment</th><th>Count</th><th>Recommendation</th></tr>
+<tr><td><code>is_active = False</code></td><td class="num-cell">589</td><td>Confirmed inactive/delisted by the app's own metadata. Their <code>stock_data</code> history should be <b>preserved, not migrated into the live 180-day <code>candles</code> window</b> — they're not part of the "recent daily candles" retention target, but per instruction #11, historical users may still need them, so their existing rows in <code>stock_data</code> should not be deleted (this is exactly why <code>stock_data</code> itself is not being dropped this phase).</td></tr>
+<tr><td><code>is_active = True</code></td><td class="num-cell">57</td><td>Still active per metadata but currently absent from <code>candles</code> entirely — a real gap. These should be included in the migration/backfill scope, not just the 2,638 tickers already common to both tables.</td></tr>
+<tr><td>No <code>stock_metadata</code> row at all</td><td class="num-cell">15</td><td>Unmapped. <span class="tag RD">Requires a decision</span> — not enough information from this analysis alone to classify them; sampled tickers (e.g. <code>RFBL</code>, <code>SKP</code>, <code>JIWANRAM</code>) look like small/illiquid names, but this needs a manual check before deciding whether to migrate, ignore, or investigate as a metadata gap.</td></tr>
+</table></div>
+<p><span class="tag V">V</span> The 5 <code>candles</code>-only tickers (<code>360ONE</code>, <code>ANKITMETAL</code>, <code>ESSENTIA</code>, <code>IDEA</code>, <code>QUINT</code>) are unaffected by any of this — they already exist in the canonical table and need no migration action.</p>
+</section>
+
+<section id="migplan">
+<h2><span class="num">§</span> Migration plan — computed precisely, <span class="tag PLAN">NOT executed</span></h2>
+<p class="lede">Per the instruction to calculate the required range dynamically rather than assume it, this used the app's own <code>nse_calendar</code> session-counting logic (the same code <code>retention_service.py</code> uses) against the real database state.</p>
+<div class="querybox">holidays loaded from the `holidays` table: 0 rows  (the table itself is empty — a separate,
+                                                     already-known data-population gap, not a code gap;
+                                                     the cutoff below is therefore a weekday-only
+                                                     approximation, accurate to within a small number
+                                                     of actual NSE holidays)
+
+latest 1D candle date (today's anchor): 2026-08-10
+180-trading-session cutoff from that anchor: 2025-12-01
+→ required 1D coverage window: 2025-12-01 → 2026-08-10  (181 sessions)
+
+stock_data coverage in that window:     2025-12-01 → 2026-07-10   (covers the older ~85% of the window)
+candles(1D) coverage in that window:    2026-07-21 → 2026-08-10   (covers the newest ~12%)
+GAP — covered by neither source:        2026-07-11 → 2026-07-20
+  → actual trading sessions in that gap: 2026-07-13, 14, 15, 16, 17, 20  (6 sessions, weekday-only estimate)</div>
+<h4>Proposed 9-step execution (from the prompt's own workflow, with concrete numbers)</h4>
+<ol>
+<li><b>Inspect <code>candles</code> 1D coverage</b> — done above (2,643 tickers, 2026-07-21→2026-08-10).</li>
+<li><b>Inspect migrated <code>stock_data</code> coverage</b> — done above; scope to the 2,638 common + 57 active-only = <b>2,695 tickers</b>, restricted to rows dated 2025-12-01→2026-07-10, <i>excluding</i> the one known-bad NaN row (COALINDIA, 2026-06-02) and any other row failing the OHLCV validity checks in item #12 (high≥low, high≥open, high≥close, low≤open, low≤close, volume≥0, all four price fields finite).</li>
+<li><b>Identify missing ranges</b> — done above: exactly 6 trading sessions (2026-07-13 → 2026-07-20) are covered by neither source, for whichever of the 2,695 tickers don't already have those specific dates.</li>
+<li><b>Migrate valid <code>stock_data</code> rows</b> — <code>INSERT ... ON CONFLICT (ticker, timeframe, timestamp) DO NOTHING</code> using the existing <code>uix_candle_key</code> constraint (the same idempotency pattern <code>retention_service.py</code> and <code>batch_flush_candles</code> already use) — safe to re-run, a second run inserts zero additional rows.</li>
+<li><b>Fetch only the missing 6-session range from Angel One</b> — via <code>historical_service.py</code>'s existing <code>getCandleData</code> path, scoped per-ticker to just that window, not a full re-download.</li>
+<li><b>Normalize timestamps</b> — midnight-anchored, consistent with the §Timestamp convention decision above (no conversion needed, this is already <code>candles</code>' native 1D convention).</li>
+<li><b>Validate OHLCV</b> — reject (log, don't insert) any row failing the item #12 checks; explicitly guard against NaN (Python's <code>math.isnan()</code>, since Postgres stores IEEE NaN as a valid float distinct from NULL — confirmed this is exactly how the one known-bad row is stored).</li>
+<li><b>Insert/upsert into <code>candles</code></b> — same idempotent upsert as step 4.</li>
+<li><b>Verify continuity and duplicates</b> — post-migration query confirming, per ticker, zero gaps in the 181-session window and zero duplicate <code>(ticker, timestamp)</code> pairs (the unique constraint makes true duplicates structurally impossible, but a verification pass would still confirm row <i>counts</i> match expected session counts).</li>
+</ol>
+<div class="warncall"><b>Why this wasn't executed:</b> steps 4 and 5 are real, non-trivial actions — step 4 writes ~2,695 tickers × up to 181 daily rows (up to ~488,000 rows, though the true count is lower since <code>candles</code> already holds the newest 21 sessions) directly into the production <code>candles</code> table, and step 5 makes real calls against Angel One's historical API (subject to their rate limits, and a broker API call is not something to run speculatively). Both are reversible in principle (the rows could be deleted) but not something to execute without an explicit go-ahead, consistent with every other data-affecting step in this engagement.</div>
+</section>
+
+<section id="pe">
+<h2><span class="num">Phase E</span> Final report</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Field</th><th>Value</th></tr>
+<tr><td>Files changed</td><td><code>config/retention_policy.py</code>, <code>config/retention_policy.yaml</code>, <code>main.py</code> (1 docstring), <code>tests/test_retention_service.py</code>, <code>tests/test_resampler.py</code></td></tr>
+<tr><td>Migration executed</td><td><b>No</b> — plan computed and presented above, not run</td></tr>
+<tr><td>Rows inserted / skipped / rejected</td><td>0 / 0 / 0 — no migration executed</td></tr>
+<tr><td>Tickers migrated</td><td>0 — scope computed (2,695 candidate tickers), not executed</td></tr>
+<tr><td>Angel One rows fetched</td><td>0 — required range computed (6 trading sessions), not fetched</td></tr>
+<tr><td>Duplicate count</td><td>N/A — no insert performed; design uses <code>ON CONFLICT DO NOTHING</code> on the existing <code>uix_candle_key</code> constraint, making a future run idempotent by construction</td></tr>
+<tr><td>Validation results</td><td>Data-quality rules defined and matched against the one known-bad row (COALINDIA NaN) — handling designed (reject, don't copy), not yet exercised against real data since no migration ran</td></tr>
+<tr><td>Retention results</td><td>Daily chain (1D→1W) added to the active policy and proven correct by 6 new unit tests + the full existing suite; not yet run against production data (no <code>run_cycle()</code> invoked outside tests)</td></tr>
+<tr><td>Test results</td><td>239/239 passing</td></tr>
+<tr><td>stock_data</td><td>Untouched — not modified, not dropped, not migrated from</td></tr>
+<tr><td>Options / Recommendation Intelligence</td><td>Untouched</td></tr>
+</table></div>
+<h4>Remaining risks</h4>
+<ul>
+<li>The 180-session cutoff computed above is a weekday-only approximation because the <code>holidays</code> table is currently empty (a separate, already-known gap from earlier phases) — real execution should ideally have holidays populated first for exact session accuracy, though the effect is small.</li>
+<li>The 15 unmapped tickers (no <code>stock_metadata</code> row) need manual classification before migration includes or excludes them.</li>
+<li>1W→1M remains unconfigured — the daily chain is only half-built until a weekly retention window is specified.</li>
+<li>This plan was scoped to the 180-day window only; a separate, larger decision (migrating <code>stock_data</code>'s full 11-year, 792K-row history into <code>candles</code> as permanent archive) was deliberately not addressed here and should not be assumed as a follow-on without its own explicit scoping.</li>
+</ul>
+</section>
+
+<section id="approve">
+<h2><span class="num">§</span> Decisions requiring your approval before Phase C's data steps</h2>
+<div class="approve"><div class="an">1</div><div><b>Execute the migration plan above</b> — write ~2,695 tickers' worth of <code>stock_data</code> rows (2025-12-01→2026-07-10) into <code>candles</code>, idempotently.</div></div>
+<div class="approve"><div class="an">2</div><div><b>Call Angel One's historical API</b> to fill the 6-session gap (2026-07-13→2026-07-20) — a real external API call subject to their rate limits.</div></div>
+<div class="approve"><div class="an">3</div><div><b>Classify the 15 unmapped tickers</b> before deciding whether they're in scope.</div></div>
+<div class="approve"><div class="an">4</div><div><b>Specify the 1W→1M retention window</b> (a number of sessions/weeks) so that rule can be added the same safe way the 1D→1W rule was.</div></div>
+<div class="approve"><div class="an">5</div><div><b>Confirm the timestamp-convention decision</b> (keep midnight for 1D/1W/1M, update the contract documentation instead of the data) — presented as a recommendation, not yet acted on beyond this report.</div></div>
+</section>
+
+<footer>LEVERAGE — Phase 3 Report · Graph Engineering Mode · 239/239 tests passing · stock_data untouched · migration scoped and computed, not executed · awaiting approval on the five items above</footer>
+</main>
+</div>

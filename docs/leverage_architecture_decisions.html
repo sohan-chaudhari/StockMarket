@@ -1,0 +1,523 @@
+<title>LEVERAGE — Architecture Decision Package</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2;
+  --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0;
+  --low:#3d7a5e; --low-soft:#e1f0e7;
+  --optA:#3d6ea5; --optA-soft:#e3edf7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023;
+    --optA:#8ab4e0; --optA-soft:#1c2c3c; }
+}
+:root[data-theme="dark"]{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023;
+  --optA:#8ab4e0; --optA-soft:#1c2c3c; }
+:root[data-theme="light"]{ --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7;
+  --optA:#3d6ea5; --optA-soft:#e3edf7; }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1340px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.8rem;padding:.24rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:940px}
+header.hero{margin-bottom:2.2rem;padding-bottom:1.8rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2.15rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:1rem;max-width:66ch;text-wrap:balance}
+.statusbar{display:flex;gap:.8rem;margin-top:1.2rem;flex-wrap:wrap;font-family:var(--mono);font-size:.74rem}
+.statusbar span{padding:.3rem .7rem;border-radius:99px;border:1px solid var(--border);color:var(--text-dim)}
+.statusbar span.stop{border-color:var(--crit);color:var(--crit);font-weight:600}
+section{margin:2.8rem 0}
+section > h2{font-family:var(--serif);font-size:1.4rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:1rem}
+section > .lede{color:var(--text-dim);margin-bottom:1rem;font-size:.93rem;max-width:70ch}
+h3{font-family:var(--serif);font-size:1.05rem;margin:1.2rem 0 .4rem;font-weight:600}
+p{margin:.6rem 0}
+code{font-family:var(--mono);font-size:.84em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.chip{display:inline-flex;align-items:center;gap:.35em;font-family:var(--mono);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;padding:.2em .55em;border-radius:99px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-soft);color:var(--crit)}
+.chip.high{background:var(--high-soft);color:var(--high)}
+.chip.med{background:var(--med-soft);color:var(--med)}
+.chip.low{background:var(--low-soft);color:var(--low)}
+.chip.own{background:var(--optA-soft);color:var(--optA)}
+
+/* decision card */
+.decision{border:1px solid var(--border);border-radius:12px;padding:1.6rem 1.8rem;margin:1.6rem 0;background:var(--surface)}
+.decision > .dhead{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap;margin-bottom:.2rem}
+.decision > .dhead .dnum{font-family:var(--serif);font-size:1.05rem;color:var(--accent)}
+.decision > .dhead h3{margin:0;font-size:1.3rem}
+.dsec{margin:1rem 0}
+.dsec > .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:600;margin-bottom:.3rem}
+.dsec .ev{font-family:var(--mono);font-size:.78rem;color:var(--text-dim);background:var(--surface-2);padding:.5rem .7rem;border-radius:6px;margin-top:.4rem}
+.opts{display:grid;grid-template-columns:1fr;gap:.8rem;margin:.6rem 0}
+.opt{border:1px solid var(--border);border-radius:9px;padding:.9rem 1.1rem}
+.opt.rec{border-color:var(--low);background:var(--low-soft)}
+.opt .oname{font-weight:700;font-size:.92rem;margin-bottom:.3rem;display:flex;align-items:center;gap:.5rem}
+.opt .oname .recbadge{font-family:var(--mono);font-size:.62rem;text-transform:uppercase;letter-spacing:.05em;background:var(--low);color:var(--surface);padding:.1em .5em;border-radius:99px}
+.opt dl{margin:.4rem 0 0;font-size:.85rem}
+.opt dt{font-weight:600;color:var(--text-dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.03em;margin-top:.5rem}
+.opt dd{margin:.2rem 0 0}
+.recbox{border-left:3px solid var(--low);padding:.2rem 0 .2rem 1rem;background:var(--low-soft);border-radius:0 8px 8px 0;padding:.8rem 1rem}
+.ownerbox{display:inline-flex;align-items:center;gap:.5rem;font-family:var(--mono);font-size:.76rem;padding:.4rem .8rem;border-radius:8px;background:var(--surface-2);border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:1rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.66rem;color:var(--text-dim);padding:.55rem .75rem;border-bottom:1px solid var(--border)}
+td{padding:.55rem .75rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:1rem 0;overflow-x:auto}
+.diagram .cap{font-size:.78rem;color:var(--text-dim);margin-top:.65rem;padding-top:.65rem;border-top:1px dashed var(--border)}
+.contract{border:1px solid var(--border);border-radius:10px;padding:1.1rem 1.3rem;margin:.9rem 0;background:var(--surface)}
+.contract h4{font-family:var(--serif);font-size:1.15rem;color:var(--accent);margin:0 0 .5rem;font-weight:600}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:.3rem .8rem;font-size:.84rem;margin:.25rem 0}
+.kv dt{color:var(--text-dim);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.15rem}
+.kv dd{margin:0}
+.unk{border:1px dotted var(--crit);color:var(--crit);font-family:var(--mono);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;padding:.15em .5em;border-radius:4px}
+.flowbox{border:1px solid var(--border);border-radius:8px;padding:1rem;background:var(--surface-2);margin:.7rem 0}
+.flowbox h5{margin:0 0 .5rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim)}
+footer{color:var(--text-dim);font-size:.76rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.3rem;margin-top:2.8rem}
+ul,ol{padding-left:1.2rem} li{margin:.3rem 0}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Decision Package — Contents</span>
+  <a href="#d1">Decision 1 — Daily data source</a>
+  <a href="#d2">Decision 2 — Canonical timeframe</a>
+  <a href="#d3">Decision 3 — Duplicate-tick handling</a>
+  <a href="#d4">Decision 4 — Special-session calendar</a>
+  <a href="#d5">Decision 5 — Builder cap</a>
+  <a href="#d6">Decision 6 — Unbounded query path</a>
+  <a href="#contracts">Shared contracts</a>
+  <a href="#integration">Future integration boundary</a>
+  <a href="#final">Final decision table</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Discovery → Architecture Decisions</span>
+  <h1>Six decisions, laid out for approval — not implemented</h1>
+  <p class="dek">Each decision below follows the same shape: current situation, evidence, the problem, realistic options with honest trade-offs, a recommendation, and what it would cost to carry out. Nothing in this document changes code, schema, or data.</p>
+  <div class="statusbar">
+    <span>0 files modified</span>
+    <span>0 migrations created</span>
+    <span>0 tables deleted</span>
+    <span class="stop">STOP after this report — awaiting approval</span>
+  </div>
+</header>
+
+<section id="d1">
+<h2><span class="num">Decision 1</span></h2>
+<div class="decision">
+<div class="dhead"><span class="dnum">§1</span><h3>Daily-candle source of truth</h3></div>
+
+<div class="dsec"><div class="lbl">Current situation</div>
+<p><code>stock_data</code> and <code>candles</code> (timeframe=<code>1D</code>) both hold daily OHLCV for overlapping tickers, populated by completely independent code paths, with <b>inconsistent</b> precedence: the daily endpoint reads <code>stock_data</code> first, while the weekly/monthly endpoints read <code>candles</code> first.</p></div>
+
+<div class="dsec"><div class="lbl">Evidence</div>
+<div class="ev">stock_data writes: main.py:2899 (yfinance fallback), :2955 (Angel One REST fallback), :3001 (copies FROM candles(1D) as a last resort)
+candles(1D) writes: backfill_daily.py:99 — a standalone script with no scheduler/cron wiring found in main.py
+Precedence comment: main.py:3225 "# Prefer aggregated ... from the unified pipeline" (weekly/monthly only — contradicted by the daily endpoint's own precedence, which favors stock_data)
+Retention config (config/retention_policy.yaml) defines a 4h→1D downsample rule, meaning retention_service.py's generic downgrade path (retention_service.py:244) may ALSO write candles(1D) over time for aged data — this was not conclusively ruled out by either audit pass and should be confirmed before final migration, not assumed either way.</div></div>
+
+<div class="dsec"><div class="lbl">Problem</div>
+<p>Two schemas, two population mechanisms, no enforced agreement, and no evidence either was checked for adjusted-vs-unadjusted price consistency. yfinance and Angel One REST do not necessarily apply the same split/dividend-adjustment convention — if <code>stock_data</code> leans on yfinance's typically-adjusted series while <code>candles</code> is fed by Angel One's typically-unadjusted feed, the two tables could disagree by more than rounding error around any corporate action, and nothing in the code currently checks for or corrects this.</p></div>
+
+<div class="dsec"><div class="lbl">Options</div>
+<div class="opts">
+<div class="opt rec"><div class="oname">Option A — <code>candles</code> canonical <span class="recbadge">Recommended</span></div>
+<dl>
+<dt>Pros</dt><dd>One unified schema across every timeframe, sharing the same <code>(ticker,timeframe,timestamp)</code> idempotent-upsert discipline already proven reliable for intraday data. Already the precedence winner for weekly/monthly — adopting it for daily removes the inconsistency rather than deepening it.</dd>
+<dt>Cons</dt><dd>Today's daily depth in <code>candles</code> is thin and only reachable through a manual, unscheduled script — real historical depth currently lives in <code>stock_data</code>.</dd>
+<dt>Risks</dt><dd>A naive cutover before backfilling would visibly shrink daily chart history for users. Needs the adjustment-convention question answered first, or the migration silently bakes in a pricing inconsistency.</dd>
+</dl></div>
+<div class="opt"><div class="oname">Option B — <code>stock_data</code> canonical</div>
+<dl>
+<dt>Pros</dt><dd>Already the deepest, self-healing daily source in production (triple fallback chain inside the request handler).</dd>
+<dt>Cons</dt><dd>Requires flipping the weekly/monthly precedence instead (more endpoints touched, not fewer), keeps daily data outside the unified timeframe/retention infrastructure permanently, and keeps request-time dependency on external APIs (yfinance/Angel One) inside a user-facing endpoint — a latency pattern already implicated in prior dashboard slowness.</dd>
+<dt>Risks</dt><dd>Locks in two schemas forever rather than converging on one; every future timeframe feature has to special-case daily data.</dd>
+</dl></div>
+<div class="opt"><div class="oname">Option C — Phased transition (the practical form of Option A)</div>
+<dl>
+<dt>Pros</dt><dd>De-risks Option A: run a one-time diff between the two tables to quantify actual drift, add a scheduled EOD job writing into <code>candles</code>(1D) so it stops depending on a manual script, then cut reads over once verified. <code>stock_data</code> stays as a read-only fallback during the transition window, not deleted.</dd>
+<dt>Cons</dt><dd>More steps than a direct cutover.</dd>
+<dt>Risks</dt><dd>Low — this is the safety valve on Option A, not a separate architecture.</dd>
+</dl></div>
+</div></div>
+
+<div class="dsec"><div class="lbl">Recommendation</div>
+<div class="recbox"><b>Option A, executed as Option C's phased transition.</b> Adopt <code>candles</code> as the single canonical daily source, but only after (1) a scheduled EOD job replaces the manual backfill script, (2) the adjustment-convention question is answered, and (3) a row-level diff against <code>stock_data</code> is reviewed.</div></div>
+
+<div class="dsec"><div class="lbl">Why</div>
+<p>The unified <code>candles</code> table is the only one of the two with proven idempotency discipline across concurrent writers, and it's already where the rest of the timeframe hierarchy lives — keeping daily data outside it is the anomaly, not the norm. The phased approach exists specifically because "already implemented and deep" (Option B's real strength) is a legitimate reason to move carefully, not a reason to keep two permanent sources of truth.</p></div>
+
+<div class="dsec"><div class="lbl">Consequences</div>
+<p><code>/api/stock-data/range</code> and <code>/range/paginated</code> would eventually read from <code>candles</code> instead of <code>stock_data</code>; weekly/monthly endpoints need no change since they already prefer <code>candles</code>. <code>stock_data</code> would move to a deprecated/read-only role during the transition, not be deleted.</p></div>
+
+<div class="dsec"><div class="lbl">Migration impact</div>
+<p>Endpoints touched: <code>/api/stock-data/range</code>, <code>/range/paginated</code>. A new scheduled EOD backfill job is required (does not exist today — <code>backfill_daily.py</code> is manual-only). No schema change to either table is required for the transition itself.</p></div>
+
+<div class="dsec"><div class="lbl">Testing required</div>
+<p>A row-level diff report (ticker × date, both tables) surfacing any close-price or volume mismatch beyond a defined tolerance, run before cutover. Regression tests on <code>/range</code>, <code>/weekly</code>, <code>/monthly</code> against the post-cutover source. A specific test asserting adjustment-convention consistency around at least one known historical split/dividend event.</p></div>
+
+<div class="dsec"><div class="lbl">Decision owner</div>
+<div class="ownerbox"><span class="chip own">Core-team decision</span> — no team-owned system depends on this yet, but Team 2 (Recommendation) should be briefed before final cutover since they will eventually train against whichever table wins.</div></div>
+</div>
+</section>
+
+<section id="d2">
+<h2><span class="num">Decision 2</span></h2>
+<div class="decision">
+<div class="dhead"><span class="dnum">§2</span><h3>Canonical live-ingestion resolution</h3></div>
+
+<div class="dsec"><div class="lbl">Current situation</div>
+<p>5-minute candles are the only timeframe built directly from live ticks and persisted; 15m/30m/1h/4h are derived in memory from completed 5m candles; historical tiers above that are produced by checkpointed downsampling, never independently re-aggregated from raw ticks.</p></div>
+
+<div class="dsec"><div class="lbl">Evidence</div>
+<div class="ev">aggregator.py — Live5mBuilder is structured specifically around a 5-minute bucket concept, not a generic N-minute one
+live_timeframe_manager.py — consumes candle.5m.completed events only; nothing in the live path currently produces or persists 1-minute bars
+No Angel One interval-limit figures were found cited directly in historical_service.py during either audit pass — the general SmartAPI convention that finer intervals carry shorter maximum REST lookback windows than coarser ones is treated here as an industry-standard ASSUMPTION requiring verification against this repo's actual chunking logic before being relied on</div></div>
+
+<div class="dsec"><div class="lbl">Problem</div>
+<p>Nothing in the current codebase demonstrates a need for sub-5-minute resolution — but the choice is a one-way door: historical data stored only at 5-minute resolution can never be reconstructed to 1-minute resolution later, and a broker's own historical retention for fine intervals is typically time-limited, so even a late REST backfill may not be able to recover it. If Options Intelligence turns out to need tighter entry/exit precision, the cost of not deciding this now is permanent, not just delayed.</p></div>
+
+<div class="dsec"><div class="lbl">Options</div>
+<div class="opts">
+<div class="opt rec"><div class="oname">Option A — Keep 5-minute canonical (status quo) <span class="recbadge">Recommended, conditionally</span></div>
+<dl>
+<dt>Pros</dt><dd>Most mature, tested part of the codebase; 1/5th the storage and write pressure of 1-minute; matches every demonstrated consumer today (no options/recommendation code exists to require finer).</dd>
+<dt>Cons</dt><dd>Forecloses 1-minute (or finer) backtesting for any date before a future switch, permanently.</dd>
+<dt>Risks</dt><dd>If Team 1 later needs finer data, every day that passes under this decision is unrecoverable history.</dd>
+</dl></div>
+<div class="opt"><div class="oname">Option B — Switch to 1-minute canonical</div>
+<dl>
+<dt>Pros</dt><dd>Removes the one-way-door risk entirely; every higher timeframe becomes a pure, uniform aggregation of one source.</dd>
+<dt>Cons</dt><dd>~5x storage/write volume on the exact tier that's already shown DB-write pressure and soft-cap issues (§5 below); requires rewriting <code>Live5mBuilder</code>'s bucket-specific structure; more REST chunking calls during recovery/backfill, worsening the recovery-storm risk already identified.</dd>
+<dt>Risks</dt><dd>Stacks a canonical-resolution rewrite on top of existing, unresolved reliability gaps (dedup, calendar, cap) — the highest-risk option of the three, on a codebase not yet hardened enough to absorb it safely.</dd>
+</dl></div>
+<div class="opt"><div class="oname">Option C — Dual canonical (1m and 5m both persisted)</div>
+<dl>
+<dt>Pros</dt><dd>Keeps the current 5m infrastructure's stability while adding true 1m depth going forward; avoids the one-way-door problem from this point on.</dd>
+<dt>Cons</dt><dd>Second live-persistence tier to build, test, and operate; less invasive than full Option B only if 5m is derived from 1m rather than independently tick-built (avoids re-solving the same bucket logic twice).</dd>
+<dt>Risks</dt><dd>Moderate engineering cost; still doesn't recover history before the switch date.</dd>
+</dl></div>
+</div></div>
+
+<div class="dsec"><div class="lbl">Recommendation</div>
+<div class="recbox">Keep 5-minute as canonical <b>today</b> — do not rewrite the aggregator speculatively. But treat this as a time-boxed decision, not a closed one: get an explicit answer from Team Member 1 on whether Options Intelligence has a firm sub-5-minute requirement <i>before</i> their build starts. If yes, adopt Option C (dual canonical) starting from that decision point, accepting the historical gap before it rather than a disruptive later retrofit.</div></div>
+
+<div class="dsec"><div class="lbl">Why</div>
+<p>Rewriting mature, tested infrastructure to satisfy a hypothetical requirement — when no code today demonstrates the need — trades a working system for speculative complexity, which runs against the platform's own stated preference for a modular monolith over premature infrastructure. But because the cost of waiting too long is irreversible, the right move is to ask the question now rather than assume the answer either way.</p></div>
+
+<div class="dsec"><div class="lbl">Consequences</div>
+<p>If kept at 5m: Core proceeds with hardening (Decisions 3–6) instead of a resolution rewrite. If Team 1 confirms a 1m requirement: Core adds a second ingestion tier from that point forward; data before that date remains 5m-only permanently.</p></div>
+
+<div class="dsec"><div class="lbl">Migration impact</div>
+<p>None today. If later adopted: a new <code>Live1mBuilder</code> (or generalized N-minute builder), a new retention tier definition, and 1-minute REST fetch support in <code>recovery_service.py</code> — all additive, no change required to the existing 5m path.</p></div>
+
+<div class="dsec"><div class="lbl">Testing required</div>
+<p>If adopted later: parity tests proving a 5m candle built by aggregating six 1m candles exactly matches one built directly from ticks; backfill-chunking tests against Angel One's actual documented interval-specific range limits (to be confirmed, not assumed).</p></div>
+
+<div class="dsec"><div class="lbl">Decision owner</div>
+<div class="ownerbox"><span class="chip own">Joint decision</span> — Core proposes and maintains the default; the deciding input on whether to move to Option C belongs to Team Member 1 (Options Intelligence), since they are the plausible source of a genuine sub-5-minute requirement. Team Member 2 should be asked but is unlikely to need finer than 5m for typical signal generation.</div></div>
+</div>
+</section>
+
+<section id="d3">
+<h2><span class="num">Decision 3</span></h2>
+<div class="decision">
+<div class="dhead"><span class="dnum">§3</span><h3>Duplicate-tick / volume double-count handling</h3></div>
+
+<div class="dsec"><div class="lbl">Current situation</div>
+<p>The live aggregator rejects a tick only if its exchange timestamp is strictly older than the last processed tick for that ticker; a tick with the <i>same</i> timestamp as the last one is accepted and its quantity is added to the forming candle's volume.</p></div>
+
+<div class="dsec"><div class="lbl">Evidence</div>
+<div class="ev">aggregator.py:225-230 — guard is `tick_ts < last_ts` only
+aggregator.py:274 — `forming["volume"] += volume` runs unconditionally for any accepted tick
+angelone_service.py:292 — tick_volume is `last_traded_quantity`, a per-trade delta (correctly not derived from the cumulative day-volume field), which is exactly why an accepted duplicate adds real, wrong quantity rather than a harmless re-diff of zero</div></div>
+
+<div class="dsec"><div class="lbl">Problem</div>
+<p>Duplicate/replayed ticks — most plausible during a WebSocket reconnect, where a resubscribe snapshot can redeliver the most recent trade — are not filtered before their quantity is accumulated. Open/high/low/close are self-correcting (same price re-applied is harmless), but volume is additive and has no such protection.</p>
+<h3>Traced flow</h3>
+<ol>
+<li>WS drops, watchdog (main.py:4389-4423) detects it, forces reconnect.</li>
+<li>On reconnect, subscribed tokens are resubscribed from a snapshot (angelone_service.py on_open) — this is the highest-risk moment for a replayed tick.</li>
+<li>A replayed tick carrying the same exchange timestamp, price, and quantity as the last one processed reaches <code>process_tick</code>.</li>
+<li><code>tick_ts == last_ts</code> passes the current guard (only `<` is rejected).</li>
+<li>Volume is added a second time for a trade that already happened once.</li>
+<li>Recovery (REST-sourced) candles are <b>not</b> vulnerable to this — they come pre-aggregated from the broker, not built tick-by-tick by this app, which narrows the fix's required scope to the live ingestion path only.</li>
+</ol></div>
+
+<div class="dsec"><div class="lbl">Options</div>
+<div class="opts">
+<div class="opt rec"><div class="oname">Option A — Composite fingerprint dedup at ingestion <span class="recbadge">Recommended</span></div>
+<dl>
+<dt>Pros</dt><dd>Dedup happens once, at the point ticks are received (<code>angelone_service.py</code>), before handoff to the aggregator — protects every downstream consumer, not just candle building. Uses a composite key of (exchange_timestamp, price, quantity) since no confirmed globally-unique trade ID exists in the current WS payload fields on record.</dd>
+<dt>Cons</dt><dd>Not cryptographically perfect — two genuinely different trades with identical price+quantity in the same second (plausible in a very liquid stock) would be incorrectly treated as one duplicate.</dd>
+<dt>Risks</dt><dd>The fingerprint cache must survive across a reconnect (not reset when the socket reconnects) or it's blind exactly when needed most — this is an implementation detail that has to be gotten right, not a design flaw.</dd>
+</dl></div>
+<div class="opt"><div class="oname">Option B — True unique trade ID, if the WS payload actually carries one</div>
+<dl>
+<dt>Pros</dt><dd>If Angel One's SmartWebSocketV2 payload includes a genuine per-trade sequence number or exchange trade ID, this is a strictly better identifier than a composite heuristic — zero false-positive risk.</dd>
+<dt>Cons</dt><dd>Not confirmed present in the fields cited by either audit pass (price, quantity, cumulative day-volume, timestamp only) — needs a direct check of the raw WS payload schema before this can be relied on.</dd>
+<dt>Risks</dt><dd>If no such field exists, this option isn't available and Option A is the fallback by default, not a lesser alternative.</dd>
+</dl></div>
+</div></div>
+
+<div class="dsec"><div class="lbl">Recommendation</div>
+<div class="recbox">Check the raw Angel One WS payload for a genuine unique trade identifier first (Option B); if none exists, implement Option A — a composite (timestamp, price, quantity) fingerprint cache per ticker, checked and updated in <code>angelone_service.py</code> at ingestion, explicitly surviving reconnects.</div></div>
+
+<div class="dsec"><div class="lbl">Why</div>
+<p>Dedup belongs at the point of ingestion, not inside the aggregator's bucket logic — it's a data-quality concern independent of how candles are built, and fixing it once upstream protects any future consumer of raw ticks, not just <code>Live5mBuilder</code>.</p></div>
+
+<div class="dsec"><div class="lbl">Consequences</div>
+<p>Volume accuracy improves for any ticker that experiences a WS reconnect during market hours — currently unquantified how often that happens, but the watchdog's existence implies it's not rare.</p></div>
+
+<div class="dsec"><div class="lbl">Migration impact</div>
+<p>No schema change. A new in-memory per-ticker fingerprint cache in <code>angelone_service.py</code>, sized and cleared on genuine new-trading-day boundaries. No effect on already-persisted historical volume — this only prevents new double-counts, it does not retroactively correct past ones (a separate, lower-priority data-cleanup question if past inflation is later quantified as significant).</p></div>
+
+<div class="dsec"><div class="lbl">Testing required</div>
+<p>A unit test replaying an identical tick twice through the ingestion path and asserting volume is only counted once. An integration-style test simulating a reconnect (fingerprint cache must not reset) followed by a genuine new different trade at the same timestamp (must still be counted).</p></div>
+
+<div class="dsec"><div class="lbl">Decision owner</div>
+<div class="ownerbox"><span class="chip own">Core-team decision</span> — fully internal to market-data ingestion.</div></div>
+</div>
+</section>
+
+<section id="d4">
+<h2><span class="num">Decision 4</span></h2>
+<div class="decision">
+<div class="dhead"><span class="dnum">§4</span><h3>Special-session / market-calendar authority</h3></div>
+
+<div class="dsec"><div class="lbl">Current situation</div>
+<p>Two independent implementations of session-boundary logic exist: <code>exchange_calendar.py</code> has real special-session/shortened-session data structures that are never invoked in production, and <code>aggregator.py</code> hardcodes standard 09:15–15:30 hours directly, never importing the calendar module at all. <code>live_timeframe_manager.py</code> separately re-implements the same 09:15 bucket-anchoring a third time.</p></div>
+
+<div class="dsec"><div class="lbl">Evidence</div>
+<div class="ev">exchange_calendar.py — SessionInfo, add_special_session(), is_shortened_session() defined but only referenced from test_exchange_calendar.py
+aggregator.py:27-30 — hardcoded NSE_OPEN_HOUR/MIN, NSE_CLOSE_HOUR/MIN constants, no import of exchange_calendar
+aggregator.py:58-73 vs live_timeframe_manager.py:42-61 — two separate re-implementations of the same 09:15-anchored bucket snap</div></div>
+
+<div class="dsec"><div class="lbl">Problem</div>
+<p>A special/shortened session (e.g. Muhurat trading) would build zero candles under the current live path, since the aggregator's hardcoded hours reject any tick outside standard hours regardless of what the (unused) calendar module knows. Three independent implementations of session-boundary logic is also a standing drift risk even on ordinary days.</p></div>
+
+<div class="dsec"><div class="lbl">Options</div>
+<div class="opts">
+<div class="opt rec"><div class="oname">Option A — Consolidate onto exchange_calendar.py as the single source <span class="recbadge">Recommended</span></div>
+<dl>
+<dt>Pros</dt><dd>Eliminates the duplicate-logic drift risk entirely; special/shortened sessions become handled correctly everywhere at once, since every consumer (live aggregator, timeframe manager, resampler, recovery, retention) calls the same function.</dd>
+<dt>Cons</dt><dd>Touches the hottest, most latency-sensitive code path in the app — the per-tick processing loop.</dd>
+<dt>Risks</dt><dd>Refactor risk in the most business-critical module; the shared lookup must be O(1)/cached, not a per-tick DB round-trip, or this trades a correctness fix for a performance regression.</dd>
+</dl></div>
+<div class="opt"><div class="oname">Option B — Leave hardcoded constants, only fix holiday-refresh freshness</div>
+<dl>
+<dt>Pros</dt><dd>Much smaller, lower-risk change to the hot path.</dd>
+<dt>Cons</dt><dd>Does not fix the actual flaw — special sessions remain silently broken — and leaves the three-way duplicate 09:15-anchor logic in place.</dd>
+<dt>Risks</dt><dd>Low risk, low value — defers the real problem.</dd>
+</dl></div>
+</div></div>
+
+<div class="dsec"><div class="lbl">Recommendation</div>
+<div class="recbox">Option A. Scope it as a pure extraction refactor — shared, cached calendar lookup functions used by every consumer, with no change to the currently-correct standard-session math — plus a concrete plan for sourcing special-session dates (a manually-maintained list alongside the existing holidays table is an acceptable starting point; the current admin-triggered scrape is not a real automatic source either).</div></div>
+
+<div class="dsec"><div class="lbl">Why</div>
+<p>A single source of truth for market calendar logic is a correctness requirement, not a nice-to-have — every other subsystem (recovery, retention, resampling) already implicitly assumes session boundaries are consistent; today they aren't guaranteed to be, just coincidentally aligned.</p></div>
+
+<div class="dsec"><div class="lbl">Consequences</div>
+<p><code>aggregator.py</code> and <code>live_timeframe_manager.py</code> would import calendar lookups instead of hardcoding/re-deriving them.</p></div>
+
+<div class="dsec"><div class="lbl">Migration impact</div>
+<p>No new table required — the existing <code>market_sessions</code> table already models a <code>session_type</code> column per the database audit and can carry special/shortened session records without a schema change.</p></div>
+
+<div class="dsec"><div class="lbl">Testing required</div>
+<p>Extend <code>test_exchange_calendar.py</code> to cover the aggregator's actual call sites, not just the calendar module in isolation. Add a regression test simulating a known historical Muhurat-trading date and asserting candles are built for it under the new path.</p></div>
+
+<div class="dsec"><div class="lbl">Decision owner</div>
+<div class="ownerbox"><span class="chip own">Core-team decision</span></div></div>
+</div>
+</section>
+
+<section id="d5">
+<h2><span class="num">Decision 5</span></h2>
+<div class="decision">
+<div class="dhead"><span class="dnum">§5</span><h3>In-memory timeframe-builder cap</h3></div>
+
+<div class="dsec"><div class="lbl">Current situation</div>
+<p><code>LiveTimeframeManager</code> caps concurrent in-memory (ticker, timeframe) builders at <code>MAX_BUILDERS=5000</code>, with LRU eviction restricted to builders that have no active viewer. If eviction finds no candidate, a new builder is created anyway — the cap is soft, not hard.</p></div>
+
+<div class="dsec"><div class="lbl">Evidence</div>
+<div class="ev">live_timeframe_manager.py:239-240 — MAX_BUILDERS constant and IDLE_TIMEOUT_SEC
+live_timeframe_manager.py:256-264 — add_viewer calls _evict_lru() then unconditionally creates a builder
+live_timeframe_manager.py:340-351 — _evict_lru only considers viewer_count == 0 candidates (correctly never evicts an active viewer)</div></div>
+
+<div class="dsec"><div class="lbl">Problem</div>
+<p>The cap exists to bound memory growth as users browse many tickers/timeframes through a trading day. It works correctly under normal browsing churn (idle builders get evicted), but fails exactly under the worst-case load: a mass reconnect event (e.g. a backend restart causing every open tab to resubscribe near-simultaneously) spikes active builder count all at once, when almost nothing is evictable because everyone just reconnected and is actively viewing.</p></div>
+
+<div class="dsec"><div class="lbl">Options</div>
+<div class="opts">
+<div class="opt"><div class="oname">Option A — Hard cap, reject new views past the limit</div>
+<dl><dt>Pros</dt><dd>Simplest possible fix; guarantees a memory ceiling.</dd>
+<dt>Cons</dt><dd>Produces user-facing failures at exactly the worst moment — a reconnect storm, when many legitimate viewers would be turned away.</dd>
+<dt>Risks</dt><dd>Trades an invisible memory-growth bug for a visible availability bug.</dd></dl></div>
+<div class="opt rec"><div class="oname">Option B — Hard cap with graceful degradation to on-demand resampling <span class="recbadge">Recommended</span></div>
+<dl><dt>Pros</dt><dd>When the cap is hit and nothing is evictable, serve the requested (ticker,timeframe) via the existing <code>resampler.py</code> on-demand path — already built, already used for cold/rarely-viewed timeframes — instead of either rejecting the view or growing unbounded. Converts "cap exceeded" into "temporarily slower, still correct."</dd>
+<dt>Cons</dt><dd>Slightly higher latency for the viewer who trips the cap.</dd>
+<dt>Risks</dt><dd>Low — reuses existing, already-tested infrastructure rather than adding a new mechanism.</dd></dl></div>
+<div class="opt"><div class="oname">Option C — Queueing/backpressure</div>
+<dl><dt>Pros</dt><dd>Smooths load spikes in principle.</dd>
+<dt>Cons</dt><dd>New infrastructure category for a problem that a simpler existing fallback already solves; builder construction is fast/cheap, so queuing delay buys little.</dd>
+<dt>Risks</dt><dd>Over-engineering relative to the platform's current scale and stated preference against unneeded complexity.</dd></dl></div>
+</div></div>
+
+<div class="dsec"><div class="lbl">Recommendation</div>
+<div class="recbox">Option B — hard cap paired with graceful degradation to the existing on-demand resampler, with the cap-hit condition logged/alerted (currently silent either way).</div></div>
+
+<div class="dsec"><div class="lbl">Why</div>
+<p>It closes the unbounded-growth gap without introducing new infrastructure, by reusing a fallback path that already exists for a structurally identical situation (a timeframe that isn't actively hot).</p></div>
+
+<div class="dsec"><div class="lbl">Consequences</div>
+<p>Memory stays bounded under a reconnect storm; the tradeoff is visible in latency, not correctness or availability.</p></div>
+
+<div class="dsec"><div class="lbl">Migration impact</div>
+<p><code>add_viewer</code>/<code>_evict_lru</code> in <code>live_timeframe_manager.py</code> need a bounded-creation branch. No schema/data change.</p></div>
+
+<div class="dsec"><div class="lbl">Testing required</div>
+<p>A load test simulating a reconnect storm — many simultaneous <code>add_viewer</code> calls past 5000, all with <code>viewer_count &gt; 0</code> — asserting builder count stays bounded and requests still return correct data via the fallback path.</p></div>
+
+<div class="dsec"><div class="lbl">Decision owner</div>
+<div class="ownerbox"><span class="chip own">Core-team decision</span></div></div>
+</div>
+</section>
+
+<section id="d6">
+<h2><span class="num">Decision 6</span></h2>
+<div class="decision">
+<div class="dhead"><span class="dnum">§6</span><h3>Unbounded query path on <code>/api/stock-data/chart</code></h3></div>
+
+<div class="dsec"><div class="lbl">Current situation</div>
+<p><code>GET /api/stock-data/chart</code> accepts a client-supplied <code>limit</code> with no upper bound. When resampling to a higher timeframe, <code>ChartService._build_candles</code> multiplies that limit by up to 60 to size the query against the source 5-minute table.</p></div>
+
+<div class="dsec"><div class="lbl">Evidence</div>
+<div class="ev">main.py:3297-3299 — `limit: int = Query(5000)`, no `le=` upper bound
+chart_service.py:94-111,154 — `query_limit = limit * 60` against the 5m table, no pagination/streaming
+Contrast: main.py:3332,3483 — the sibling paginated endpoints correctly cap at `le=50000`
+Re-verification finding: no current frontend page or backend caller invokes this endpoint today — it is reachable but unused, so this is a prophylactic fix, not an active incident</div></div>
+
+<div class="dsec"><div class="lbl">Problem</div>
+<p>A client (or a future internal caller who doesn't know about this gap) requesting a large <code>limit</code> on a higher timeframe could trigger a single unpaginated query for tens of millions of 5-minute rows — a real OOM/DoS vector, and also a payload size no chart UI would ever usefully render.</p></div>
+
+<div class="dsec"><div class="lbl">Options</div>
+<div class="opts">
+<div class="opt rec"><div class="oname">Option A — Reuse the existing ceiling already proven elsewhere <span class="recbadge">Recommended</span></div>
+<dl><dt>Pros</dt><dd>Cap <code>limit</code> at the same 50,000 ceiling the paginated endpoints already use — a product-informed number already chosen once, not invented fresh. Additionally cap the derived <code>query_limit</code> independently (not just scaling with <code>limit × 60</code> unbounded) so even a "reasonable" limit for the target timeframe can't explode the source-tier query past a fixed ceiling.</dd>
+<dt>Cons</dt><dd>None significant — this is a narrow, low-risk fix.</dd>
+<dt>Risks</dt><dd>Low.</dd></dl></div>
+<div class="opt"><div class="oname">Option B — Add a maximum date-range constraint instead of/alongside a row limit</div>
+<dl><dt>Pros</dt><dd>Guards a distinct failure mode — "give me every candle since year zero" — that a row-count cap alone doesn't fully address if combined with a very coarse timeframe.</dd>
+<dt>Cons</dt><dd>Needs a product-informed maximum range (not yet defined) rather than a technical one.</dd>
+<dt>Risks</dt><dd>Low; complements Option A rather than replacing it.</dd></dl></div>
+</div></div>
+
+<div class="dsec"><div class="lbl">Recommendation</div>
+<div class="recbox">Option A, with Option B added as a second, independent guard once a product-appropriate maximum date range is defined (this itself is a small, separate product question, not an architecture one).</div></div>
+
+<div class="dsec"><div class="lbl">Why</div>
+<p>The correct ceiling already exists in the codebase for the sibling endpoints — this isn't a case of picking an arbitrary number, it's applying the number the team already settled on to the one endpoint that was missed.</p></div>
+
+<div class="dsec"><div class="lbl">Consequences</div>
+<p>No behavior change for any real caller today (none exist); closes the gap before <code>/api/stock-data/chart</code> is ever wired up to a live page.</p></div>
+
+<div class="dsec"><div class="lbl">Migration impact</div>
+<p>None — a bounds check only. Can ship in the same change as the timeframe-case fix, since both live in <code>chart_service.py</code>/its call site.</p></div>
+
+<div class="dsec"><div class="lbl">Testing required</div>
+<p>A test asserting a large client-supplied <code>limit</code> is clamped, and that the derived source-tier query never exceeds the fixed ceiling regardless of the requested timeframe's multiplier.</p></div>
+
+<div class="dsec"><div class="lbl">Decision owner</div>
+<div class="ownerbox"><span class="chip own">Core-team decision</span></div></div>
+</div>
+</section>
+
+<section id="contracts">
+<h2><span class="num">§7</span> Shared contracts — what Core can safely guarantee</h2>
+<p class="lede">Instrument, Candle, and LivePrice are specified in full. Signal and OptionContract remain <span class="unk">UNKNOWN — REQUIRES TEAM DECISION</span> — their internal shape belongs to Team 2 and Team 1 respectively; Core's job is only to state what it can guarantee to whoever eventually defines them.</p>
+
+<div class="contract"><h4>Instrument</h4><div class="kv">
+<dt>Core guarantees</dt><dd>A stable <code>(ticker, exchange)</code> identity backed by <code>stock_metadata</code>, with <code>instrument_token</code>, <code>name</code>, <code>segment</code>, <code>is_active</code>.</dd>
+<dt>Core does not guarantee</dt><dd>Continuity across a corporate-action re-tokenization — no such handling exists in the code today; treat instrument identity as stable only within a single listing lifetime until this gap is closed.</dd>
+<dt>Timestamp</dt><dd><code>last_updated</code> on the metadata record.</dd>
+<dt>Mutability</dt><dd>Metadata mutable; identity fields immutable once created.</dd>
+<dt>Backing</dt><dd>Database-backed, should be exposed via a read API rather than direct table access.</dd>
+</div></div>
+
+<div class="contract"><h4>Candle</h4><div class="kv">
+<dt>Core guarantees</dt><dd>OHLCV per <code>(ticker, timeframe, timestamp)</code>, unique-constrained, upserted idempotently. Timestamps are IST-naive, snapped to the 09:15 NSE session anchor.</dd>
+<dt>Core does not guarantee</dt><dd>That a row is final while <code>is_completed=False</code> — forming candles are mutable. Any consumer building features or training a model <b>must</b> filter to <code>is_completed=True</code> or risk using a value that later changed. Also does not yet guarantee protection against the volume double-count in Decision 3 until that fix ships, nor correct candles during a special session until Decision 4 ships.</dd>
+<dt>Timestamp</dt><dd>Bucket start time — never assume midnight-anchored buckets (the dead <code>v002</code> materialized-view migration got exactly this wrong).</dd>
+<dt>Backing</dt><dd>Database-backed; recommend an API layer in front of it so the schema can evolve without breaking either team.</dd>
+</div></div>
+
+<div class="contract"><h4>LivePrice</h4><div class="kv">
+<dt>Core guarantees</dt><dd>Latest tick/quote snapshot per ticker via <code>/api/live-prices</code> and the WebSocket channels.</dd>
+<dt>Core does not guarantee</dt><dd>Persistence or revision history — this is deliberately <b>not</b> a database-backed contract. It must never be used as historical/training data; that is exactly what the Candle contract exists for.</dd>
+<dt>Timestamp</dt><dd>Must distinguish exchange tick time from server-received time — currently conflated in places in the live pipeline; a consumer needing precise latency measurement should not assume these are the same clock without verifying.</dd>
+<dt>Backing</dt><dd>Event/API only, not a table.</dd>
+</div></div>
+
+<div class="contract"><h4>Signal <span class="unk">UNKNOWN — Team 2</span></h4><p style="margin-top:.4rem">Core's only guarantee here is a discipline the eventual contract must follow, not its content: whatever <code>generated_at</code> timestamp Team 2 attaches to a signal, Core commits to making Candle data queryable strictly as of that timestamp, so their backtests can enforce point-in-time correctness. The payload itself — score, horizon, model semantics — is entirely Team 2's to define.</p></div>
+
+<div class="contract"><h4>OptionContract <span class="unk">UNKNOWN — Team 1</span></h4><p style="margin-top:.4rem">Core's only current guarantee is the underlying equity/index Instrument and Candle/LivePrice feed. Core does <b>not</b> yet support option-instrument WebSocket subscriptions — <code>angelone_service.py</code>'s token resolution is equity/index-focused today. This is a concrete, named gap Team 1 will hit immediately, not a hidden one — it needs a joint scoping conversation before Team 1's build starts, not a Core-invented schema.</p></div>
+</section>
+
+<section id="integration">
+<h2><span class="num">§8</span> Future integration boundary</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+  Core["CORE PLATFORM"]
+  Contracts["Stable Data Contracts<br/>Instrument · Candle · LivePrice"]
+  Rec["Recommendation Intelligence<br/>TEAM-OWNED"]
+  Opt["Options Intelligence<br/>TEAM-OWNED"]
+  Core --> Contracts
+  Contracts --> Rec
+  Contracts --> Opt
+</pre>
+</div>
+<div class="flowbox"><h5>Core → Recommendation Intelligence</h5><p>Instrument list, completed-only Candle history, LivePrice feed if needed. <span class="unk">UNKNOWN</span> whether Team 2's system mounts inside this FastAPI process or runs separately — affects whether Core also provides shared auth middleware.</p></div>
+<div class="flowbox"><h5>Recommendation Intelligence → Core</h5><p><span class="unk">UNKNOWN — TEAM DECISION REQUIRED.</span> Whether Core stores/displays Signal output at all, or Team 2 hosts that entirely on their own, has not been decided and is not Core's to assume.</p></div>
+<div class="flowbox"><h5>Core → Options Intelligence</h5><p>Instrument (equities/indices only today — option tokens are a named gap, not yet built), Candle/LivePrice for the underlying. Optionally the existing <code>Position</code>/<code>Order</code>/<code>Transaction</code> ledger, if Team 1 chooses to reuse it rather than build a parallel one.</p></div>
+<div class="flowbox"><h5>Options Intelligence → Core</h5><p><span class="unk">UNKNOWN — TEAM DECISION REQUIRED.</span> Whether OptionContract/strategy output is ever stored or displayed by Core, and whether Team 1 wants Core's WebSocket subscription manager extended for option tokens, are both open questions for Team 1, not Core decisions to make on their behalf.</p></div>
+</section>
+
+<section id="final">
+<h2><span class="num">§9</span> Final decision table</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Decision</th><th>Recommendation</th><th>Risk</th><th>Owner</th><th>Approval required</th></tr>
+<tr><td>1. Daily data source</td><td><code>candles</code> canonical, via phased transition</td><td><span class="chip med">Medium</span></td><td>Core</td><td>Core-team; brief Team 2 before cutover</td></tr>
+<tr><td>2. Canonical resolution</td><td>Keep 5m now; revisit only if Team 1 confirms a firm need</td><td><span class="chip high">High if delayed</span></td><td>Core + Team 1</td><td><b>Joint — needs Team 1 input before their build starts</b></td></tr>
+<tr><td>3. Duplicate-tick volume</td><td>Composite-fingerprint dedup at ingestion (or true trade ID if one exists)</td><td><span class="chip med">Medium</span></td><td>Core</td><td>Core-team</td></tr>
+<tr><td>4. Special-session calendar</td><td>Consolidate onto <code>exchange_calendar.py</code> as sole source</td><td><span class="chip med">Medium</span></td><td>Core</td><td>Core-team</td></tr>
+<tr><td>5. Builder cap</td><td>Hard cap + graceful degradation to existing resampler</td><td><span class="chip low">Low</span></td><td>Core</td><td>Core-team</td></tr>
+<tr><td>6. Unbounded query path</td><td>Reuse the existing 50,000-row ceiling; add date-range guard</td><td><span class="chip low">Low</span></td><td>Core</td><td>Core-team</td></tr>
+</table></div>
+<p class="lede" style="margin-top:1rem">No code, schema, or data has been modified. Awaiting explicit approval, decision by decision, before any implementation phase begins.</p>
+</section>
+
+<footer>LEVERAGE — Architecture Decision Package · Discovery → Decisions stage · zero files modified, zero migrations created, zero tables deleted</footer>
+</main>
+</div>

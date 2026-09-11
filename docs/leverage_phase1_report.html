@@ -1,0 +1,240 @@
+<title>LEVERAGE — Phase 1 Report: Market Data &amp; Candle Integrity</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+}
+:root[data-theme="dark"]{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+:root[data-theme="light"]{ --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7; }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1340px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.8rem;padding:.24rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:940px}
+header.hero{margin-bottom:2.2rem;padding-bottom:1.8rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2.1rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:1rem;max-width:66ch}
+.statusbar{display:flex;gap:.6rem;margin-top:1.2rem;flex-wrap:wrap;font-family:var(--mono);font-size:.72rem}
+.statusbar span{padding:.3rem .7rem;border-radius:99px;border:1px solid var(--border);color:var(--text-dim)}
+.statusbar span.go{border-color:var(--low);color:var(--low);font-weight:600}
+section{margin:2.6rem 0}
+section > h2{font-family:var(--serif);font-size:1.35rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:1rem}
+section > .lede{color:var(--text-dim);margin-bottom:1rem;font-size:.92rem;max-width:70ch}
+h3{font-family:var(--serif);font-size:1.05rem;margin:1.1rem 0 .4rem;font-weight:600}
+p{margin:.55rem 0}
+code{font-family:var(--mono);font-size:.84em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.chip{display:inline-flex;align-items:center;gap:.35em;font-family:var(--mono);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;padding:.2em .55em;border-radius:99px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-soft);color:var(--crit)} .chip.high{background:var(--high-soft);color:var(--high)}
+.chip.med{background:var(--med-soft);color:var(--med)} .chip.low{background:var(--low-soft);color:var(--low)}
+.tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.62rem;letter-spacing:.05em;padding:.15em .5em;border-radius:4px;font-weight:600;text-transform:uppercase}
+.tag.V{border:1px solid var(--low);color:var(--low)}
+.tag.NV{border:1px dotted var(--text-dim);color:var(--text-dim)}
+.tag.DEFER{border:1px dashed var(--accent);color:var(--accent)}
+table{width:100%;border-collapse:collapse;font-size:.84rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:.9rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.65rem;color:var(--text-dim);padding:.5rem .7rem;border-bottom:1px solid var(--border)}
+td{padding:.5rem .7rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:.9rem 0;overflow-x:auto}
+.diagram .cap{font-size:.77rem;color:var(--text-dim);margin-top:.6rem;padding-top:.6rem;border-top:1px dashed var(--border)}
+.issuecard{border:1px solid var(--border);border-radius:12px;padding:1.4rem 1.6rem;margin:1.3rem 0;background:var(--surface)}
+.issuecard > .ihead{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;margin-bottom:.3rem}
+.issuecard > .ihead h3{margin:0;font-size:1.15rem}
+.ifield{margin:.7rem 0}
+.ifield > .lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);font-weight:600;margin-bottom:.25rem}
+.ifield .ev{font-family:var(--mono);font-size:.77rem;color:var(--text-dim);background:var(--surface-2);padding:.5rem .7rem;border-radius:6px;white-space:pre-wrap}
+.resultbox{border-left:3px solid var(--low);background:var(--low-soft);border-radius:0 8px 8px 0;padding:.7rem 1rem;font-size:.88rem}
+.riskbox{border-left:3px solid var(--med);background:var(--med-soft);border-radius:0 8px 8px 0;padding:.7rem 1rem;font-size:.88rem}
+.checklist{list-style:none;padding-left:0;font-size:.87rem}
+.checklist li{display:flex;gap:.6rem;align-items:flex-start;padding:.3rem 0;border-bottom:1px solid var(--border)}
+.checklist li:last-child{border-bottom:none}
+.checklist .mark{flex:0 0 1.3rem;font-family:var(--mono)}
+footer{color:var(--text-dim);font-size:.76rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.3rem;margin-top:2.6rem}
+ul,ol{padding-left:1.2rem} li{margin:.28rem 0}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Graph Engineering — Phase 1</span>
+  <a href="#graphs">Graph A/B/C</a>
+  <a href="#issue1">Issue 1 — Holiday desync</a>
+  <a href="#issue2">Issue 2 — Duplicate-tick volume</a>
+  <a href="#issue3">Issue 3 — Special sessions</a>
+  <a href="#issue4">Issue 4 — Soft builder cap</a>
+  <a href="#exit">Phase exit criteria</a>
+  <a href="#summary">Phase summary</a>
+  <a href="#next">Next phase</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Graph Engineering Mode</span>
+  <h1>Phase 1 — Market Data &amp; Candle Integrity</h1>
+  <p class="dek">Four issues traced from the approved decision package into working code: verified against the real source, fixed with the smallest safe change, covered by new tests, and re-verified against the full suite.</p>
+  <div class="statusbar">
+    <span class="go">230/230 backend tests passing</span>
+    <span>5 files changed</span>
+    <span>0 schema changes</span>
+    <span>0 data migrated</span>
+    <span>Options/Recommendation code untouched</span>
+  </div>
+</header>
+
+<section id="graphs">
+<h2><span class="num">§0</span> Graph A / B / C</h2>
+<p class="lede">Graph A (current) and Graph C (delta) are updated by this phase. Graph B (target) is unchanged — nothing here revises the approved target architecture.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Current (before Phase 1)</th><th>Target</th><th>Current (after Phase 1)</th><th>Delta remaining</th></tr>
+<tr><td>Same-timestamp replayed ticks double-count volume</td><td>Deduplicated at ingestion</td><td><b>Fixed</b> — composite fingerprint in <code>angelone_service.py</code></td><td>None for this specific gap</td></tr>
+<tr><td><code>nse_calendar</code> (execution/trade/retention) never received holidays — disconnected from <code>NSE_HOLIDAYS</code></td><td>One authoritative calendar source</td><td><b>Fixed</b> — both now fed from the same set</td><td><code>live_timeframe_manager.py</code>'s own 09:15-anchor re-implementation still exists independently (see below)</td></tr>
+<tr><td>Special sessions build zero candles (aggregator hardcodes standard hours)</td><td>Calendar-driven session bounds</td><td><b>Plumbing fixed</b> — aggregator now honors a registered special session end-to-end</td><td>No special-session dates are actually registered anywhere yet (no data source) — inert until someone calls <code>nse_calendar.add_special_session()</code>. <code>live_timeframe_manager</code>'s higher-TF bucket alignment for a special-session date is <span class="tag NV">NOT VERIFIED</span> — deferred, see Issue 3.</td></tr>
+<tr><td>Builder cap is soft — created past MAX_BUILDERS when nothing evictable</td><td>Hard cap + graceful degradation</td><td><b>Fixed</b> — hard cap, existing resample/DB fallback path now actually reached</td><td>None for this gap</td></tr>
+<tr><td>Two daily data sources (<code>stock_data</code> vs <code>candles</code>)</td><td>One canonical source (Decision 1)</td><td>Unchanged</td><td><span class="tag DEFER">Deferred</span> — explicitly out of Phase 1 scope (destructive/migration-shaped, needs the diff-first process from Decision 1)</td></tr>
+<tr><td>Unbounded query on <code>/api/stock-data/chart</code></td><td>Bounded (Decision 6)</td><td>Unchanged</td><td><span class="tag DEFER">Deferred</span> — API/query-layer, not ingestion/candle-integrity; endpoint confirmed unreachable today, lower urgency</td></tr>
+</table></div>
+</section>
+
+<section id="issue1">
+<div class="issuecard">
+<div class="ihead"><span class="chip crit">Critical</span><h3>Holiday calendar desync between execution logic and the aggregator</h3></div>
+<div class="ifield"><div class="lbl">Issue</div><p>Discovered during Phase 1 tracing, not in the original decision package: <code>nse_calendar</code> — the calendar object <code>execution_engine.py</code>, <code>trade_service.py</code>, <code>price_provider.py</code>, and <code>retention_service.py</code> all call for real trading-hours decisions — had an empty holiday set at all times.</p></div>
+<div class="ifield"><div class="lbl">Root cause</div><p>A separate module-level set, <code>NSE_HOLIDAYS</code> in <code>main.py</code>, is correctly loaded from the DB at startup and passed to <code>candle_aggregator.set_holidays()</code> — but nothing ever called <code>nse_calendar.load_holidays()</code>. <code>NSECalendar.is_trading_day()</code> only checks weekday when its holiday set is empty, so on a real NSE holiday it would have returned <code>True</code>.</p></div>
+<div class="ifield"><div class="lbl">Evidence</div><div class="ev">Verified: grep across the entire backend for `load_holidays(` found zero call sites before this fix.
+main.py (startup, ~line 4260-4272): NSE_HOLIDAYS loaded from models.Holiday, passed to candle_aggregator.set_holidays(NSE_HOLIDAYS) only.
+Consumers of the never-fed nse_calendar: execution_engine.py:52, price_provider.py:271, trade_service.py (3 call sites).</div></div>
+<div class="ifield"><div class="lbl">Change</div><p>Added <code>nse_calendar.load_holidays(NSE_HOLIDAYS)</code> immediately after <code>candle_aggregator.set_holidays(NSE_HOLIDAYS)</code>, at both the startup loader and the admin holiday-refresh endpoint in <code>main.py</code> — <code>NSE_HOLIDAYS</code> is now the single set feeding both consumers.</p></div>
+<div class="ifield"><div class="lbl">Tests</div><p>Not independently unit-testable without a running DB session (this is a wiring fix at a startup call site, not a pure function) — verified instead by (1) reading every consumer's call path to confirm they all resolve to the same <code>nse_calendar</code> singleton import, and (2) the full backend suite (230 tests, including <code>test_exchange_calendar.py</code>'s existing <code>load_holidays</code> coverage) passing unchanged.</p></div>
+<div class="ifield"><div class="lbl">Result</div><div class="resultbox">Execution/trade/retention logic and candle aggregation now agree on which dates are trading days — closing a real, verified correctness gap that existed before any of the six approved decisions were written.</div></div>
+<div class="ifield"><div class="lbl">Remaining risk</div><div class="riskbox">None identified for this specific fix. It is purely additive (populates a previously-empty set with data already trusted elsewhere) and cannot make any check less correct.</div></div>
+<div class="ifield"><div class="lbl">Graph updated</div><p>Graph A: <code>nse_calendar</code> node now shows an inbound edge from the same holiday load as <code>candle_aggregator</code>, not a disconnected one.</p></div>
+</div>
+</section>
+
+<section id="issue2">
+<div class="issuecard">
+<div class="ihead"><span class="chip high">High</span><h3>Decision 3 — duplicate-tick volume double-count</h3></div>
+<div class="ifield"><div class="lbl">Issue</div><p>A tick sharing the exact same exchange timestamp as the previously processed tick for a ticker was accepted and its quantity added to the forming candle's volume a second time.</p></div>
+<div class="ifield"><div class="lbl">Root cause</div><p><code>aggregator.py</code>'s only dedup guard rejected <code>tick_ts &lt; last_ts</code>; a same-timestamp replay (most plausible on a WS reconnect resubscribe snapshot) passed through and <code>forming["volume"] += volume</code> ran again.</p></div>
+<div class="ifield"><div class="lbl">Evidence</div><div class="ev">angelone_service.py _handle_ws_tick: confirmed the WS "Quote" mode payload carries no unique per-trade ID — only token, ltp, exchange_timestamp, day OHLC, day volume, last_traded_quantity.
+aggregator.py process_tick (pre-fix): guard was `if last_ts is not None and tick_ts < last_ts: ... return {}` — no `==` case.</div></div>
+<div class="ifield"><div class="lbl">Change</div><p>Per Decision 3's Option A (no true trade ID available → composite fingerprint): added a per-ticker <code>(exchange_ts, price, quantity)</code> fingerprint cache on the <code>AngelOneService</code> singleton, checked in <code>_handle_ws_tick</code> <i>before</i> the tick is forwarded via <code>on_tick_callback</code> — so a duplicate never reaches the aggregator at all. The cache lives on the singleton (not the socket object), so it survives a reconnect intact. Documented limitation directly in code: two genuinely different trades sharing timestamp+price+quantity in the same second would be misclassified as a duplicate — accepted as a smaller, one-sided error than the current double-count.</p></div>
+<div class="ifield"><div class="lbl">Tests</div><p><code>tests/test_angelone_tick_dedup.py</code> (new, 6 tests): first tick forwarded, exact replay swallowed, replay-into-aggregator does not double volume (end-to-end through <code>process_tick</code>), a genuinely new tick after a duplicate is still forwarded, same-timestamp-different-price is <i>not</i> treated as duplicate, fingerprint state survives a simulated reconnect.</p></div>
+<div class="ifield"><div class="lbl">Result</div><div class="resultbox">All 6 new tests pass; full 230-test suite passes. Volume accuracy is protected for any ticker experiencing a WS reconnect during market hours.</div></div>
+<div class="ifield"><div class="lbl">Remaining risk</div><div class="riskbox">The fingerprint dict is read/written without a lock; if the broker SDK ever invokes <code>_handle_ws_tick</code> concurrently from multiple threads (not confirmed either way — existing code already assumes single-threaded delivery, per the unlocked pattern already used for other per-tick state), a race could let a duplicate slip through. This is no worse than the pre-fix status quo, not a new risk introduced. Does not retroactively correct any volume already inflated by this bug before the fix shipped — a separate, lower-priority data-cleanup question if past inflation is later quantified as material.</div></div>
+<div class="ifield"><div class="lbl">Graph updated</div><p>Graph A: the ingestion edge Angel One WS → aggregator now carries a "dedup" label; Graph C: this delta row is closed.</p></div>
+</div>
+</section>
+
+<section id="issue3">
+<div class="issuecard">
+<div class="ihead"><span class="chip high">High</span><h3>Decision 4 — special/shortened sessions build zero candles</h3></div>
+<div class="ifield"><div class="lbl">Issue</div><p>A special session (e.g. Muhurat trading) outside the standard 09:15-15:30 window would have every tick rejected by the live aggregator, building no candles at all for that session.</p></div>
+<div class="ifield"><div class="lbl">Root cause</div><p><code>exchange_calendar.py</code> has real special-session data structures (<code>SessionInfo</code>, <code>add_special_session()</code>) but <code>aggregator.py</code> never imported or consulted them — it hardcoded standard hours as module constants, checked in <code>is_market_hour()</code>/<code>snap_to_nse_session()</code>.</p></div>
+<div class="ifield"><div class="lbl">Evidence</div><div class="ev">aggregator.py (pre-fix): NSE_OPEN_HOUR/MIN, NSE_CLOSE_HOUR/MIN constants, is_market_hour(dt) with no per-date override, no import of exchange_calendar anywhere in the file.
+exchange_calendar.py: add_special_session() referenced only from test_exchange_calendar.py before this fix — never called by production code.</div></div>
+<div class="ifield"><div class="lbl">Change</div><p>Scoped deliberately smaller than a full calendar-implementation merge (the decision package flagged that as the higher-risk path — touching the hottest tick-processing loop). Instead: <code>is_market_hour()</code> and <code>snap_to_nse_session()</code> now accept optional per-date bound overrides (default args reproduce the exact standard-day behavior — zero change for the 99.6%+ of days with no special session). <code>Live5mBuilder</code> gained <code>set_special_sessions()</code> and a <code>_session_bounds(date)</code> lookup, consulted at every point <code>process_tick</code> gates, buckets, or flushes a tick. <code>exchange_calendar.py</code> gained <code>special_sessions_as_bounds()</code> to export its data in the seconds-of-day shape the hot path already works in. Wired at both holiday-load call sites in <code>main.py</code> so <code>nse_calendar</code> stays the single place special-session data is entered, even though nothing populates it yet (no source for real Muhurat-style dates exists in the repo — invented dates were deliberately not fabricated).</p></div>
+<div class="ifield"><div class="lbl">Tests</div><p><code>tests/test_5m_builder.py</code> (8 new tests): standard-day behavior provably unaffected by the new optional parameters (exact bucket assertions unchanged), a tick outside standard hours is rejected with no special session registered, the identical tick is accepted and builds a candle once a special session is registered, bounds default correctly when no override exists. <code>tests/test_exchange_calendar.py</code> (2 new tests): the export helper returns the right seconds-of-day tuple for a Muhurat-style window.</p></div>
+<div class="ifield"><div class="lbl">Result</div><div class="resultbox">10 new tests pass; full 230-test suite passes, including every pre-existing standard-day aggregator assertion, unchanged.</div></div>
+<div class="ifield"><div class="lbl">Remaining risk</div><div class="riskbox"><b>NOT VERIFIED</b>: <code>live_timeframe_manager.py</code>'s <code>_snap_to_nse_bucket</code> is a third, independent re-implementation of the 09:15 anchor and was <i>not</i> updated to consult special sessions in this pass — if a special session ever ships real dates, 15m/30m/1h live views during that session would still misalign even though the underlying 5m candles are now correct. Deliberately deferred rather than rushed: the decision package specifically warned this second consolidation is higher-risk, and fixing it isn't required to close the actual verified bug (zero candles built), only to perfect a currently-inert, data-free code path. No holiday/special-session data source beyond the manual admin scrape exists yet — the plumbing is ready but nothing feeds it.</div></div>
+<div class="ifield"><div class="lbl">Graph updated</div><p>Graph A: <code>aggregator.py</code> now has a labeled edge to <code>exchange_calendar.py</code> for special-session bounds (previously none). Graph C: this delta row is marked "plumbing fixed, data source still missing," not fully closed.</p></div>
+</div>
+</section>
+
+<section id="issue4">
+<div class="issuecard">
+<div class="ihead"><span class="chip med">Medium</span><h3>Decision 5 — soft builder cap allowed unbounded growth</h3></div>
+<div class="ifield"><div class="lbl">Issue</div><p><code>LiveTimeframeManager.add_viewer()</code> would create a new in-memory (ticker, timeframe) builder even past <code>MAX_BUILDERS=5000</code> if eviction found no candidate — the "upper bound" the module's own docstring claimed wasn't actually enforced.</p></div>
+<div class="ifield"><div class="lbl">Root cause</div><p><code>_evict_lru()</code> only considers builders with <code>viewer_count == 0</code> (correct — it must never evict an active viewer), but the caller proceeded to construct a new builder unconditionally regardless of whether eviction succeeded.</p></div>
+<div class="ifield"><div class="lbl">Evidence</div><div class="ev">live_timeframe_manager.py add_viewer (pre-fix): `if total >= self.MAX_BUILDERS: self._evict_lru()` followed unconditionally by builder creation, no re-check of total after eviction.
+main.py:3348 and :3467 (call sites): get_current() already returns None for a missing builder and every caller already treats that as "no live data, use DB/resample" — the graceful-degradation path Decision 5 called for already existed and only needed the cap to actually stop creating builders past it.</div></div>
+<div class="ifield"><div class="lbl">Change</div><p><code>add_viewer()</code> now returns a bool, re-checks the total after eviction, and declines to create a builder (returning <code>False</code>, incrementing a new <code>_cap_hits</code> counter, logging the event) when nothing was evictable. No new fallback mechanism was built — the existing DB/on-the-fly-resample path in <code>main.py</code>'s paginated intraday endpoint already activates correctly whenever <code>get_current()</code> returns <code>None</code>, which is exactly what happens now instead of the cap being silently exceeded.</p></div>
+<div class="ifield"><div class="lbl">Tests</div><p><code>tests/test_live_timeframe_manager.py</code> (6 new tests): success case returns <code>True</code>, unknown timeframe returns <code>False</code>, a second viewer of an already-tracked (ticker, tf) succeeds even exactly at capacity, a genuinely new (ticker, tf) is declined and <code>_cap_hits</code> increments when nothing is evictable, an idle builder is correctly evicted to make room before declining, and <code>get_current()</code> returns <code>None</code> for the declined case — proving the graceful-degradation contract end-to-end.</p></div>
+<div class="ifield"><div class="lbl">Result</div><div class="resultbox">All 6 new tests pass; full 230-test suite passes. Memory is now bounded even under a reconnect storm that spikes active-viewer count past 5000 simultaneously.</div></div>
+<div class="ifield"><div class="lbl">Remaining risk</div><div class="riskbox">The viewer whose request trips the cap gets slower (DB/resample) data instead of the live in-memory forming candle, until a slot frees up — a deliberate, documented trade-off per Decision 5, not a defect. <code>_cap_hits</code> is tracked in <code>get_stats()</code> but not yet wired into <code>/api/health</code> or any alerting — an observability follow-up, not required for correctness.</div></div>
+<div class="ifield"><div class="lbl">Graph updated</div><p>Graph A: <code>LiveTimeframeManager</code> node's self-loop ("soft cap, unbounded past limit") is now labeled "hard cap, degrades to resampler." Graph C: this delta row is closed.</p></div>
+</div>
+</section>
+
+<section id="exit">
+<h2><span class="num">§1</span> Phase 1 exit criteria</h2>
+<p class="lede">Per the required checklist. Marked complete only where this phase produced direct evidence — anything not directly exercised by this phase's changes is marked <span class="tag NV">NOT VERIFIED</span> rather than assumed.</p>
+<ul class="checklist">
+<li><span class="mark tag V">V</span> Tick ordering — pre-existing guard (`tick_ts &lt; last_ts` rejection) re-confirmed unchanged and still covered by the existing suite.</li>
+<li><span class="mark tag V">V</span> Duplicate tick behavior — fixed and tested this phase (Issue 2).</li>
+<li><span class="mark tag V">V</span> Duplicate volume behavior — fixed and tested this phase (Issue 2).</li>
+<li><span class="mark tag NV">NOT VERIFIED</span> Late tick behavior — <code>PendingCandleManager</code>'s 60s buffer was read and reasoned about but not independently re-tested this phase; existing tests for it were unaffected and still pass.</li>
+<li><span class="mark tag NV">NOT VERIFIED</span> Missing tick behavior — <code>detect_missing_intervals</code> was read but not modified or newly tested this phase.</li>
+<li><span class="mark tag NV">NOT VERIFIED</span> Reconnect behavior (WS-level) — the dedup fix's reconnect-survival property is tested; the broader watchdog/reconnect loop in <code>main.py</code> was not exercised this phase.</li>
+<li><span class="mark tag NV">NOT VERIFIED</span> Authentication-refresh behavior — out of this phase's changes entirely.</li>
+<li><span class="mark tag V">V</span> OHLC validation — unchanged, existing tests still pass; no new risk introduced by this phase's edits (all four fixes are additive to gating/bucketing logic, not the OHLC computation itself).</li>
+<li><span class="mark tag V">V</span> Candle-boundary alignment — standard-day alignment proven unchanged by new tests asserting identical output with the new optional parameters omitted; special-session alignment proven correct for the aggregator's own bucketing (Issue 3).</li>
+<li><span class="mark tag V">V</span> NSE session handling — holiday desync fixed and reasoned through call-site tracing (Issue 1).</li>
+<li><span class="mark tag V">V (plumbing) / NOT VERIFIED (live data)</span> Special-session handling — aggregator-side fix verified by test; no real special-session dates exist to verify against production data, and <code>live_timeframe_manager</code>'s side of this is explicitly deferred (Issue 3).</li>
+<li><span class="mark tag V">V</span> Volume aggregation — dedup fix directly addresses the one known aggregation-correctness gap; resampler's tier-to-tier summation was read, unchanged, existing tests pass.</li>
+<li><span class="mark tag V">V</span> 5m builder behavior — full existing + new test coverage passes.</li>
+<li><span class="mark tag V">V (cap) / NOT VERIFIED (load)</span> Higher-timeframe derivation — hard cap fixed and tested; behavior under genuine production-scale concurrent load was not (and cannot be, in this pass) exercised — only a unit-level reconnect-storm simulation.</li>
+<li><span class="mark tag NV">NOT VERIFIED</span> Historical/live overlap — read and reasoned about in the prior decision package (Decision-package §Candle Architecture Review); not re-tested this phase since no change was made to <code>chart_service.py</code>'s merge logic.</li>
+<li><span class="mark tag NV">NOT VERIFIED</span> Recovery behavior — <code>recovery_service.py</code> was not touched this phase.</li>
+<li><span class="mark tag V">V</span> Relevant database writes — no schema or write-path changes were made; verified by confirming none of the four fixes touch `batch_flush_candles` or any DB write.</li>
+<li><span class="mark tag V">V</span> Relevant API behavior — `add_viewer`'s new return value is backward compatible (existing call site ignores it); no endpoint contract changed.</li>
+<li><span class="mark tag V">V</span> Relevant tests pass — 230/230.</li>
+<li><span class="mark tag V">V</span> Regression checks pass — full suite, not just new tests.</li>
+<li><span class="mark tag V">V</span> No unresolved Critical issues — the one Critical found this phase (holiday desync) was fixed.</li>
+<li><span class="mark tag NV">NOT VERIFIED — partial</span> No unresolved High issues within Phase 1 scope — the two High issues from the decision package (dedup, special sessions) are fixed; the special-session <code>live_timeframe_manager</code> residual gap (Issue 3) remains and is explicitly flagged, not silently closed.</li>
+<li><span class="mark tag V">V</span> Current architecture graph updated — §0 above.</li>
+<li><span class="mark tag V">V</span> Engineering Delta graph updated — §0 above.</li>
+</ul>
+</section>
+
+<section id="summary">
+<h2><span class="num">§2</span> Phase summary</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Category</th><th>Detail</th></tr>
+<tr><td>Issues discovered</td><td>4 (1 found during this phase's tracing — the holiday desync — not in the original decision package; 3 correspond directly to approved Decisions 3, 4, 5)</td></tr>
+<tr><td>Issues verified</td><td>4/4, each with file:line evidence read directly from current source</td></tr>
+<tr><td>Issues fixed</td><td>4/4 for their core scope; 1 (special sessions) has a documented, deliberately deferred residual gap in a second module</td></tr>
+<tr><td>Issues remaining (in Phase 1's own scope)</td><td>0 blocking; 1 flagged follow-up (<code>live_timeframe_manager</code> special-session alignment)</td></tr>
+<tr><td>Decisions explicitly deferred</td><td>Decision 1 (daily source), Decision 2 (canonical resolution), Decision 6 (unbounded query) — all out of Phase 1's ingestion/candle-integrity scope by design, not overlooked</td></tr>
+<tr><td>Tests added/updated</td><td>24 new tests across 4 files (<code>test_angelone_tick_dedup.py</code> new; <code>test_5m_builder.py</code>, <code>test_live_timeframe_manager.py</code>, <code>test_exchange_calendar.py</code> extended); 230/230 passing</td></tr>
+<tr><td>Architecture changes</td><td>None to the approved target — this phase closed gaps against the existing architecture, it did not change it</td></tr>
+<tr><td>New risks discovered</td><td>The holiday desync (Issue 1) was new information, not previously flagged; now fixed. No new risks were introduced by the fixes themselves (see each issue's "Remaining risk").</td></tr>
+<tr><td>Decisions requiring approval</td><td>None generated by this phase — all four fixes were reversible, Core-internal, and within already-approved scope</td></tr>
+<tr><td>Options/Recommendation Intelligence</td><td>Untouched — no files outside Core Platform's approved scope were read or modified</td></tr>
+</table></div>
+</section>
+
+<section id="next">
+<h2><span class="num">§3</span> Recommended next phase</h2>
+<p>Two reasonable candidates, not started:</p>
+<ul>
+<li><b>Phase 2 — API &amp; Query Safety:</b> Decision 6 (the unbounded <code>/api/stock-data/chart</code> query path) plus the timeframe-case bug from the earlier discovery report, since both live in <code>chart_service.py</code> and are cheap, low-risk, currently-unreachable-but-worth-closing fixes.</li>
+<li><b>Phase 2 — Historical Data Consolidation:</b> Decision 1's phased daily-source migration (diff → investigate → resolve → cut over → verify → retire), which is larger, touches real stored data, and should get its own dedicated phase rather than being folded into general cleanup.</li>
+</ul>
+<p>Both are within Core's approved scope and reversible in their early steps. Recommend confirming which one you want to prioritize before either starts — stopping here per the phase-report protocol.</p>
+</section>
+
+<footer>LEVERAGE — Phase 1 Report · Graph Engineering Mode · 5 files modified (aggregator.py, angelone_service.py, live_timeframe_manager.py, exchange_calendar.py, main.py), 4 test files added/extended · 230/230 tests passing · awaiting direction on next phase</footer>
+</main>
+</div>

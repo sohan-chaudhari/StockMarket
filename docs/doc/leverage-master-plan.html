@@ -1,0 +1,1591 @@
+<title>LEVERAGE Data Integrity Master Plan</title>
+<style>
+:root {
+  --bg:       #F6F7F9;
+  --surface:  #FFFFFF;
+  --surface2: #EFF1F5;
+  --border:   #D5D9E0;
+  --text:     #1A1F2E;
+  --muted:    #5A6478;
+  --accent:   #D45B08;
+  --accent-dim:#FAE5D3;
+
+  --p0:       #C0392B;
+  --p0-bg:    #FDECEA;
+  --p0-border:#F5C6C3;
+  --p1:       #B7720A;
+  --p1-bg:    #FEF3E2;
+  --p1-border:#F9D9A0;
+  --p2:       #1B70C4;
+  --p2-bg:    #E8F1FB;
+  --p2-border:#AECFEE;
+  --ok:       #1A7A4A;
+  --ok-bg:    #E6F4ED;
+  --ok-border:#A8D9BE;
+  --future:   #6B4FA0;
+  --future-bg:#F0EBF8;
+  --legacy:   #5A6478;
+  --legacy-bg:#EFF1F5;
+
+  --mono: ui-monospace,'Cascadia Code','Fira Code',Consolas,monospace;
+  --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --nav-w: 240px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:       #0C1117;
+    --surface:  #161C24;
+    --surface2: #1E2530;
+    --border:   #2E3848;
+    --text:     #DCE4F0;
+    --muted:    #7A8BA5;
+    --accent:   #E8710D;
+    --accent-dim:#3A2010;
+    --p0:       #E05C4F;
+    --p0-bg:    #2B1210;
+    --p0-border:#6B2320;
+    --p1:       #E09B2A;
+    --p1-bg:    #2A1E08;
+    --p1-border:#6A4510;
+    --p2:       #5BA3E8;
+    --p2-bg:    #0E1E2E;
+    --p2-border:#1B3D60;
+    --ok:       #3DC878;
+    --ok-bg:    #081E12;
+    --ok-border:#0F4A28;
+    --future:   #A888D8;
+    --future-bg:#1A1030;
+    --legacy:   #7A8BA5;
+    --legacy-bg:#1E2530;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:       #0C1117;
+  --surface:  #161C24;
+  --surface2: #1E2530;
+  --border:   #2E3848;
+  --text:     #DCE4F0;
+  --muted:    #7A8BA5;
+  --accent:   #E8710D;
+  --accent-dim:#3A2010;
+  --p0:       #E05C4F;
+  --p0-bg:    #2B1210;
+  --p0-border:#6B2320;
+  --p1:       #E09B2A;
+  --p1-bg:    #2A1E08;
+  --p1-border:#6A4510;
+  --p2:       #5BA3E8;
+  --p2-bg:    #0E1E2E;
+  --p2-border:#1B3D60;
+  --ok:       #3DC878;
+  --ok-bg:    #081E12;
+  --ok-border:#0F4A28;
+  --future:   #A888D8;
+  --future-bg:#1A1030;
+  --legacy:   #7A8BA5;
+  --legacy-bg:#1E2530;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--bg);
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── NAV ─────────────────────────────────────────── */
+#nav {
+  width: var(--nav-w);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  overflow-y: auto;
+  padding: 20px 0 40px;
+  z-index: 10;
+}
+
+.nav-header {
+  padding: 0 16px 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.nav-logo {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.nav-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 4px;
+  line-height: 1.3;
+}
+
+.nav-date {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.nav-section {
+  padding: 4px 0;
+}
+
+.nav-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 16px 4px;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 16px;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.1s, background 0.1s;
+  border-left: 2px solid transparent;
+}
+
+.nav-link:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+
+.nav-link.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.nav-link .nav-pill {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* ── MAIN ────────────────────────────────────────── */
+#main {
+  margin-left: var(--nav-w);
+  flex: 1;
+  max-width: 960px;
+  padding: 32px 40px 80px;
+}
+
+/* ── PAGE HEADER ─────────────────────────────────── */
+.page-header {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 24px;
+  margin-bottom: 40px;
+}
+
+.page-eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.page-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  text-wrap: balance;
+  margin-bottom: 10px;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 620px;
+  line-height: 1.5;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* ── SECTIONS ────────────────────────────────────── */
+.section {
+  margin-bottom: 48px;
+  scroll-margin-top: 24px;
+}
+
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  min-width: 28px;
+}
+
+.section-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  text-wrap: balance;
+}
+
+/* ── SEVERITY PILLS ──────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border: 1px solid;
+}
+
+.pill-p0 { color: var(--p0); background: var(--p0-bg); border-color: var(--p0-border); }
+.pill-p1 { color: var(--p1); background: var(--p1-bg); border-color: var(--p1-border); }
+.pill-p2 { color: var(--p2); background: var(--p2-bg); border-color: var(--p2-border); }
+.pill-ok { color: var(--ok); background: var(--ok-bg); border-color: var(--ok-border); }
+.pill-future { color: var(--future); background: var(--future-bg); border-color: var(--future); }
+.pill-legacy { color: var(--legacy); background: var(--legacy-bg); border-color: var(--border); }
+.pill-fp { color: var(--muted); background: var(--surface2); border-color: var(--border); }
+
+/* ── CARDS ───────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 12px;
+}
+
+.card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-body {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.card-body strong { color: var(--text); }
+
+.card-body p + p { margin-top: 8px; }
+
+.card.border-p0 { border-left: 3px solid var(--p0); }
+.card.border-p1 { border-left: 3px solid var(--p1); }
+.card.border-p2 { border-left: 3px solid var(--p2); }
+.card.border-ok { border-left: 3px solid var(--ok); }
+.card.border-accent { border-left: 3px solid var(--accent); }
+
+/* ── CODE ────────────────────────────────────────── */
+pre, code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+pre {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 8px 0;
+}
+
+code {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.code-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+/* ── FLOW DIAGRAM ────────────────────────────────── */
+.flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin: 12px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  overflow-x: auto;
+}
+
+.flow-node {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.flow-node.broken {
+  background: var(--p0-bg);
+  border-color: var(--p0-border);
+  color: var(--p0);
+}
+
+.flow-node.ok {
+  background: var(--ok-bg);
+  border-color: var(--ok-border);
+  color: var(--ok);
+}
+
+.flow-node.warn {
+  background: var(--p1-bg);
+  border-color: var(--p1-border);
+  color: var(--p1);
+}
+
+.flow-arrow {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.flow-arrow.broken { color: var(--p0); font-weight: 700; }
+
+/* ── TABLES ──────────────────────────────────────── */
+.table-wrap { overflow-x: auto; margin: 8px 0; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+td {
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  color: var(--text);
+  vertical-align: top;
+}
+
+tr:nth-child(even) td { background: var(--surface2); }
+
+td code { font-size: 11px; }
+
+/* ── KV GRID ─────────────────────────────────────── */
+.kv-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  font-size: 12px;
+  margin: 8px 0;
+}
+
+.kv-key {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  align-self: start;
+  padding-top: 1px;
+}
+
+.kv-val {
+  color: var(--text);
+}
+
+/* ── PHASE CARDS ─────────────────────────────────── */
+.phase-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.phase-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  position: relative;
+}
+
+.phase-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.phase-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  text-wrap: balance;
+}
+
+.phase-list {
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phase-list li { line-height: 1.4; }
+.phase-list li strong { color: var(--text); }
+
+.phase-status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+/* ── NOTICE ──────────────────────────────────────── */
+.notice {
+  border-radius: 5px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  margin: 12px 0;
+  border-left: 3px solid;
+  line-height: 1.5;
+}
+
+.notice-warn {
+  background: var(--p1-bg);
+  border-color: var(--p1);
+  color: var(--p1);
+}
+
+.notice-crit {
+  background: var(--p0-bg);
+  border-color: var(--p0);
+  color: var(--p0);
+}
+
+.notice-ok {
+  background: var(--ok-bg);
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.notice strong { color: inherit; }
+
+/* ── MISC ────────────────────────────────────────── */
+ul.body-list, ol.body-list {
+  font-size: 13px;
+  color: var(--muted);
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+ul.body-list li strong, ol.body-list li strong { color: var(--text); }
+
+.divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 32px 0;
+}
+
+.inline-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* ── RESPONSIVE ──────────────────────────────────── */
+@media (max-width: 700px) {
+  #nav { display: none; }
+  #main { margin-left: 0; padding: 20px 16px 60px; }
+  .phase-grid { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+</style>
+
+<!-- NAV -->
+<nav id="nav">
+  <div class="nav-header">
+    <div class="nav-logo">LEVERAGE</div>
+    <div class="nav-title">Data Integrity Master Plan</div>
+    <div class="nav-date">2026-08-17 · Pre-approval</div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Architecture</div>
+    <a href="#s1" class="nav-link">01 Architecture Lock <span class="nav-pill pill-ok">VERIFIED</span></a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">P0 · Emergency</div>
+    <a href="#s2" class="nav-link">02 5m Ingestion Root Cause <span class="nav-pill pill-p0">P0</span></a>
+    <a href="#s3" class="nav-link">03 5m Recovery Plan <span class="nav-pill pill-p0">P0</span></a>
+    <a href="#s4" class="nav-link">04 Future 5m Architecture</a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">P1 · Data Integrity</div>
+    <a href="#s5" class="nav-link">05 1h Coverage Collapse <span class="nav-pill pill-p1">P1</span></a>
+    <a href="#s6" class="nav-link">06 4h Alignment <span class="nav-pill pill-p1">P1</span></a>
+    <a href="#s7" class="nav-link">07 15:30 Phantom Candles <span class="nav-pill pill-p1">P1</span></a>
+    <a href="#s8" class="nav-link">08 Checksum Gate <span class="nav-pill pill-p2">P2</span></a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Source of Truth</div>
+    <a href="#s9" class="nav-link">09 stock_data Audit</a>
+    <a href="#s10" class="nav-link">10 stock_data Depth</a>
+    <a href="#s11" class="nav-link">11 5.1% Disagreement</a>
+    <a href="#s12" class="nav-link">12 Daily Chart Path <span class="nav-pill pill-p1">P1</span></a>
+    <a href="#s13" class="nav-link">13 Migration Graph</a>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-section-label">Plan</div>
+    <a href="#s14" class="nav-link">14 Classification Table</a>
+    <a href="#s15" class="nav-link">15 Phase Plan</a>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main id="main">
+
+<header class="page-header">
+  <div class="page-eyebrow">LEVERAGE · Final Verified Master Plan</div>
+  <h1 class="page-title">Data Integrity Architecture & Implementation Plan</h1>
+  <p class="page-subtitle">Evidence-backed audit of every data path from provider → candle store → retention → API → chart. Every finding verified from source code and live database before classification. No implementation until phases are individually approved.</p>
+  <div class="legend">
+    <span class="pill pill-p0">P0 Fix Now</span>
+    <span class="pill pill-p1">P1 Before Platform Freeze</span>
+    <span class="pill pill-p2">P2 Improvement</span>
+    <span class="pill pill-ok">Verified Correct</span>
+    <span class="pill pill-future">Future Feature</span>
+    <span class="pill pill-legacy">Legacy / Archive</span>
+    <span class="pill pill-fp">False Positive</span>
+  </div>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s1">
+  <div class="section-header">
+    <span class="section-num">01</span>
+    <h2 class="section-title">Architecture Lock — Verified Against Source</h2>
+    <span class="pill pill-ok">Verified Correct</span>
+  </div>
+
+  <div class="card border-ok">
+    <div class="card-title">Canonical candle store <span class="pill pill-ok">VERIFIED</span></div>
+    <div class="card-body">
+      <p>Single table <code>candles</code>, verified in <code>models.py:123</code>. Uniqueness constraint: <code>UniqueConstraint("ticker", "timeframe", "timestamp", name="uix_candle_key")</code>. Column <code>timeframe String(5)</code> holds all resolutions. Per-timeframe tables (<code>deprecated_intraday_candles_5min</code>, <code>deprecated_intraday_candles_15min</code>, etc.) are renamed legacy tables with <code>deprecated_</code> prefix — confirmed at <code>models.py:62,82,100,392,410</code>.</p>
+      <p><code>TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "1D", "1W", "1M"]</code> in <code>models.py:121</code>. Note: <strong>"4h" is absent from this list</strong>, though it appears in <code>timeframe_registry.py</code>. The practical consequence is documented in §6.</p>
+    </div>
+  </div>
+
+  <div class="card border-ok">
+    <div class="card-title">Two independent retention chains <span class="pill pill-ok">VERIFIED</span></div>
+    <div class="card-body">
+      <p>Verified from <code>config/retention_policy.py</code> and live <code>retention_jobs</code> table.</p>
+    </div>
+  </div>
+
+  <div class="flow">
+    <span class="flow-node ok">5m</span>
+    <span class="flow-arrow">→ 60 sessions →</span>
+    <span class="flow-node ok">15m</span>
+    <span class="flow-arrow">→ 120 sessions →</span>
+    <span class="flow-node ok">30m</span>
+    <span class="flow-arrow">→ 180 sessions →</span>
+    <span class="flow-node ok">1h</span>
+    <span class="flow-arrow">→ 365 sessions →</span>
+    <span class="flow-node ok">4h</span>
+    <span class="flow-arrow" style="padding-right:20px"> ← terminal</span>
+  </div>
+  <div class="flow" style="margin-top:4px">
+    <span class="flow-node ok">1D</span>
+    <span class="flow-arrow">→ 730 days →</span>
+    <span class="flow-node ok">1W</span>
+    <span class="flow-arrow">→ 1825 days →</span>
+    <span class="flow-node ok">1M</span>
+    <span class="flow-arrow" style="padding-right:20px"> ← terminal</span>
+  </div>
+
+  <div class="notice notice-ok" style="margin-top:12px">
+    <strong>No 4h→1D link exists by design.</strong> 1D is sourced independently via <code>_daily_prefill_all</code> (yfinance, 19:00 IST scheduled). Do not add a 4h→1D rule.
+  </div>
+
+  <div class="card border-ok">
+    <div class="card-title">Retention overlap behaviour <span class="pill pill-ok">VERIFIED CORRECT</span></div>
+    <div class="card-body">
+      <p>Tiers <strong>overlap</strong> — every timeframe extends to the present; only the start date grows coarser as data ages. Sparse historical rows in 15m/30m/1h for tickers that gained coverage after the 5m collapse are <strong>Expected Retention Behaviour</strong>, not missing data. A prior audit claimed "non-overlapping tiling" as a P0 — that was a false positive.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s2">
+  <div class="section-header">
+    <span class="section-num">02</span>
+    <h2 class="section-title">Final P0 — 5m Ingestion Root Cause</h2>
+    <span class="pill pill-p0">P0 Fix Now</span>
+  </div>
+
+  <div class="notice notice-crit">
+    <strong>DEADLINE:</strong> Retention correctly promotes whatever exists. The 2026-07-06 holes cross the 60-session boundary (~Oct 2026), after which 5m rows are permanently deleted and gaps become irrecoverable. Recovery must happen before then.
+  </div>
+
+  <div class="card border-p0">
+    <div class="card-title">Proven Root Cause</div>
+    <div class="card-body">
+      <p><strong>Universe-wide historical 5m backfill targeted the deprecated table, not the canonical store.</strong></p>
+      <p><code>backfill_intraday_5min.py:77</code> writes: <code>INSERT INTO intraday_candles_5min (...)</code>. That table was renamed to <code>deprecated_intraday_candles_5min</code> in the DB-09 refactor. The script was never updated. Every execution since the rename has silently produced a "relation does not exist" error.</p>
+      <p>The bulk BACKFILL run on <strong>2026-08-09</strong> (confirmed from <code>created_at</code> column) copied ~7.2M rows into <code>deprecated_intraday_candles_5min</code>, not into <code>candles</code>. Live WebSocket coverage (~500 subs, LRU eviction) continued into <code>candles</code> correctly, which is why ~850 tickers still have recent 5m data.</p>
+    </div>
+  </div>
+
+  <div class="card-title" style="margin:16px 0 8px">Complete production path — annotated</div>
+  <div class="flow" style="flex-direction:column;align-items:flex-start;gap:6px">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="flow-node ok">AngelOne WS (≤500 subs, LRU)</span>
+      <span class="flow-arrow">→ tick →</span>
+      <span class="flow-node ok">Live5mBuilder.process_tick()</span>
+      <span class="flow-arrow">→ snap_to_nse_session() →</span>
+      <span class="flow-node ok">batch_flush_candles()</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-node ok">candles (5m, ANGELONE)</span>
+    </div>
+    <div style="font-size:11px;color:var(--ok);margin-left:12px;font-family:var(--mono)">↑ LIVE PATH — working correctly; covers only ~500–850 tickers</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <span class="flow-node ok">backfill_intraday_5min.py</span>
+      <span class="flow-arrow">→ get_historical_candles() →</span>
+      <span class="flow-node ok">AngelOne REST</span>
+      <span class="flow-arrow">→ CHUNK=60d →</span>
+      <span class="flow-node broken">INSERT INTO intraday_candles_5min ← DEAD TABLE</span>
+    </div>
+    <div style="font-size:11px;color:var(--p0);margin-left:12px;font-family:var(--mono)">↑ BROKEN PATH — table doesn't exist; "relation does not exist" on every run since DB-09</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <span class="flow-node ok">candles (5m) →</span>
+      <span class="flow-arrow">→ retention (60 sessions) →</span>
+      <span class="flow-node ok">candles (15m) →</span>
+      <span class="flow-arrow">→ 120 sessions →</span>
+      <span class="flow-node ok">candles (30m) → ... → 4h</span>
+    </div>
+    <div style="font-size:11px;color:var(--ok);margin-left:12px;font-family:var(--mono)">↑ RETENTION PATH — working correctly; but currently starved of 5m source material</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+      <span class="flow-node ok">candles (5m/15m/30m/1h)</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-node ok">/api/stock-data/intraday/paginated</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-node ok">dashboard.js</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-node ok">chart</span>
+    </div>
+    <div style="font-size:11px;color:var(--ok);margin-left:12px;font-family:var(--mono)">↑ READ PATH — correctly reads candles; gap visible to users because source rows missing</div>
+  </div>
+
+  <div class="card border-accent" style="margin-top:12px">
+    <div class="card-title">Hidden dependencies on deprecated table</div>
+    <div class="card-body">
+      <p><code>backfill_intraday_5min.py:10</code>: imports <code>IntradayCandle5Min</code> (mapped to <code>deprecated_intraday_candles_5min</code>). No other active application code reads or writes the deprecated tables. The <code>deprecated_</code> tables are safe to ignore but must not be dropped while they still hold historical data (7.2M rows in 5min, data present).</p>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Live WebSocket isolation — proven no interference</div>
+    <div class="card-body">
+      <p>The live WS path writes via <code>batch_flush_candles()</code> → <code>ON CONFLICT DO UPDATE</code> on <code>uix_candle_key</code>. The recovery path will use <code>ON CONFLICT DO NOTHING</code>. These two conflict strategies on the same unique key are safe: the live-built candle wins by definition because it already exists in the table before the backfill row arrives.</p>
+      <p>The retention service runs in a separate thread, processes only <code>is_completed=True</code> rows older than the session cutoff, and never touches the live window. There is no shared lock or state between ingestion recovery and the live WS pipeline beyond the DB uniqueness constraint itself.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s3">
+  <div class="section-header">
+    <span class="section-num">03</span>
+    <h2 class="section-title">5m Recovery Plan — Design Only</h2>
+    <span class="pill pill-p0">P0 · No Implementation Yet</span>
+  </div>
+
+  <div class="card border-p0">
+    <div class="card-title">Missing ticker/session matrix</div>
+    <div class="kv-grid">
+      <span class="kv-key">Universe size</span><span class="kv-val">~3,170 tickers (had full coverage through 2026-07-03)</span>
+      <span class="kv-key">Collapse date</span><span class="kv-val">2026-07-06 (5m) · 2026-07-13 (1h)</span>
+      <span class="kv-key">Current live coverage</span><span class="kv-val">~500–850 tickers via AngelOne WS (LRU-evicted set, not stable universe)</span>
+      <span class="kv-key">Missing sessions</span><span class="kv-val">~3,100 tickers × ~29 trading sessions = ~90,000 ticker-sessions of 5m data</span>
+      <span class="kv-key">Recovery deadline</span><span class="kv-val">Before ~Oct 2026 (60-session retention boundary)</span>
+    </div>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Provider availability & rate limits</div>
+    <div class="kv-grid">
+      <span class="kv-key">AngelOne REST</span><span class="kv-val">Primary. <code>getCandleData</code> supports <code>FIVE_MINUTE</code> up to ~100 days back. No hard-coded rate limit documented but empirically: 1–2 req/s before errors. <strong>Currently makes single un-chunked calls</strong> — must add chunking before bulk use.</span>
+      <span class="kv-key">AngelOne chunk size</span><span class="kv-val">≤30 calendar days per request (NSE data density ~75 candles/session × sessions in window)</span>
+      <span class="kv-key">yfinance fallback</span><span class="kv-val">Supports 5m up to 60 days. 8-day limit observed in practice for bulk. <strong>18 days remaining</strong> from audit date (2026-09-04 cutoff). Use as secondary only.</span>
+      <span class="kv-key">Safe concurrency</span><span class="kv-val">Max 5 concurrent AngelOne requests (existing <code>_yf_semaphore</code> pattern; create equivalent <code>_angel_hist_semaphore</code>). Do not exceed to avoid invalidating live WS session.</span>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Database write strategy</div>
+    <div class="card-body">
+      <p><strong>ON CONFLICT DO NOTHING</strong> against <code>uix_candle_key</code>. Never <code>DO UPDATE</code> for the recovery path. Rationale: a candle already in the table was built from a live tick (AngelOne WS, <code>data_source="ANGELONE"</code>, <code>is_backfilled=False</code>). A historical fetch for the same slot is lower-quality (end-of-period snapshot, potential provider rounding). The live-built candle must win.</p>
+      <p>Set <code>data_source="BACKFILL"</code>, <code>is_backfilled=True</code> on all recovery inserts for auditability.</p>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Full requirement matrix</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Requirement</th><th>Design Decision</th><th>Rationale</th></tr>
+        <tr><td><strong>ON CONFLICT</strong></td><td><code>DO NOTHING</code></td><td>Live-built candle always wins</td></tr>
+        <tr><td><strong>Chunking</strong></td><td>≤30 calendar days per AngelOne request</td><td>API stability; avoids single large failed call</td></tr>
+        <tr><td><strong>Rate limiting</strong></td><td>Token-bucket: 1 req/s per worker, max 5 workers</td><td>Protects live WS session credential</td></tr>
+        <tr><td><strong>Retry / backoff</strong></td><td>Exponential: 2s, 4s, 8s; max 3 attempts per chunk</td><td><code>HistoricalFetchError.retryable</code> distinguishes transient vs permanent</td></tr>
+        <tr><td><strong>Crash recovery</strong></td><td>Persistent progress table (<code>recovery_jobs</code>) keyed by <code>(ticker, date_chunk)</code></td><td>Restart from last completed chunk, not from scratch</td></tr>
+        <tr><td><strong>Idempotency</strong></td><td>Whole job re-runnable: <code>DO NOTHING</code> + progress table skip already-done chunks</td><td>Safe to run multiple times</td></tr>
+        <tr><td><strong>Validation</strong></td><td>OHLC invariant check (high≥open, high≥close, low≤open, low≤close) before insert; reject and log invalid candles</td><td>Prevent corrupted rows entering canonical store</td></tr>
+        <tr><td><strong>Coverage verification</strong></td><td>Post-run: count distinct sessions per ticker, flag any ticker with &lt;70% expected coverage</td><td>Detect silent API failures</td></tr>
+        <tr><td><strong>Retention interaction</strong></td><td><strong>Fix retention batch-boundary bug FIRST</strong> (§02 of Phase 2). If restored 5m rows cross the 60-session boundary while the bug exists, they will be corrupted on promotion to 15m.</td><td>The bug corrupts OHLC when a batch of 100 source rows splits a 15m bucket across batch boundaries</td></tr>
+        <tr><td><strong>Migration interaction</strong></td><td>No interaction: recovery writes 5m rows only; <code>migration_jobs</code> tracks 1D rows and is a separate state machine.</td><td>Independent by timeframe</td></tr>
+        <tr><td><strong>Session filtering</strong></td><td>Filter weekends (<code>ts.weekday() >= 5</code>) — already in <code>historical_service.py:247</code>. Add NSE holiday filter once holiday table is populated.</td><td>Prevent weekend rows entering canonical store</td></tr>
+        <tr><td><strong>15:30 phantom handling</strong></td><td>Filter out any candle with timestamp == 15:30 IST from historical fetch before insert (§07 covers this separately for existing data).</td><td>historical_service returns end-of-session ticks that can snap to the 15:30 phantom slot</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Estimated recovery timeline</div>
+    <div class="kv-grid">
+      <span class="kv-key">Tickers to recover</span><span class="kv-val">~3,100</span>
+      <span class="kv-key">Sessions to fill</span><span class="kv-val">~29 sessions × 75 candles = ~2,175 candles per ticker</span>
+      <span class="kv-key">Total candles</span><span class="kv-val">~6.7M inserts (most will be DO NOTHING hits on already-present rows)</span>
+      <span class="kv-key">At 5 concurrent workers, 1 req/s</span><span class="kv-val">~3,100 tickers × 1 chunk each = ~620s ≈ <strong>11 minutes</strong> to completion</span>
+      <span class="kv-key">DB write throughput</span><span class="kv-val">Batched inserts; 50–100 candles per commit. No pool exhaustion risk with 5 workers vs pool_size=20.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s4">
+  <div class="section-header">
+    <span class="section-num">04</span>
+    <h2 class="section-title">Future 5m Ingestion Architecture</h2>
+    <span class="pill pill-p1">P1 · Design Only</span>
+  </div>
+
+  <div class="notice notice-warn">
+    <strong>The manual-script model is the root cause of the outage.</strong> A universe-wide scheduled job — mirroring <code>_daily_prefill_all</code> for intraday — must replace it. The new job should be impossible to accidentally skip.
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Proposed: <code>_intraday_prefill_all</code> scheduled job</div>
+    <div class="card-body">
+      <p>Mirrors the existing <code>_daily_prefill_all</code> pattern. Runs as an async background task started at application startup. Executes once per trading day, after market close (e.g. 16:30 IST, after session grace period).</p>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Required answers per design requirement</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Question</th><th>Answer</th></tr>
+        <tr><td><strong>How is the universe determined?</strong></td><td>All tickers in <code>stock_metadata WHERE is_active=True</code> — same source <code>_daily_prefill_all</code> uses. ~3,170 tickers.</td></tr>
+        <tr><td><strong>How is historical completeness checked?</strong></td><td>Per-ticker: query <code>MAX(timestamp) WHERE timeframe='5m' AND ticker=X</code>. If last candle is older than 1 session, ticker needs fill.</td></tr>
+        <tr><td><strong>How are missing sessions detected?</strong></td><td>Compare <code>MAX(timestamp)</code> to <code>current_session_start</code>. If gap > 1 session, enqueue for fetch. <code>detect_missing_intervals()</code> in <code>aggregator.py:778</code> already implements this logic.</td></tr>
+        <tr><td><strong>How are missing tickers detected?</strong></td><td>Tickers in <code>stock_metadata</code> with zero rows in <code>candles WHERE timeframe='5m'</code> — the "empty DB" case already handled in <code>get_intraday_paginated</code>'s gap-fill trigger.</td></tr>
+        <tr><td><strong>How are gaps auto-recovered?</strong></td><td>Fetch from AngelOne REST from <code>MAX(timestamp)+5m</code> to session close, chunked at ≤30 days, <code>ON CONFLICT DO NOTHING</code>.</td></tr>
+        <tr><td><strong>Provider failure</strong></td><td>Log failure, mark ticker in a <code>prefill_failures</code> counter, retry next scheduled run. Do not crash the job — other tickers must still be processed.</td></tr>
+        <tr><td><strong>Job crash</strong></td><td>Next startup re-runs for all tickers not yet covered. <code>DO NOTHING</code> makes the completed portion idempotent — no double-counting.</td></tr>
+        <tr><td><strong>After restart</strong></td><td>Job resumes immediately at startup with a short delay (current: 30s). Picks up from any tickers not yet updated in the current calendar day.</td></tr>
+        <tr><td><strong>Coverage monitoring</strong></td><td>New endpoint <code>/api/internal/coverage</code>: returns <code>{universe_size, tickers_with_today_5m, coverage_pct, last_prefill_run}</code>.</td></tr>
+        <tr><td><strong>Outage detection</strong></td><td>Hard invariant: <code>coverage_pct = tickers_with_5m_since_last_session / universe_size</code>. Alert (log + Sentry event) when <code>coverage_pct &lt; 0.90</code> by 17:00 IST on any trading day.</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s5">
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <h2 class="section-title">1h Coverage Collapse — Classification</h2>
+    <span class="pill pill-p1">P1 · Downstream Effect</span>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Root cause: downstream of 5m collapse</div>
+    <div class="card-body">
+      <p>1h candles in <code>candles</code> are produced <strong>exclusively by retention promotion</strong>: <code>30m → 1h</code> (after 180 sessions). 30m rows are themselves produced by <code>15m → 30m</code> (after 120 sessions), and 15m by <code>5m → 15m</code> (after 60 sessions).</p>
+      <p>Since the 5m universe collapsed 2026-07-06, no new 5m rows have been added for ~3,100 tickers. The promotion chain is starved at the source. 1h collapse is <strong>not an independent bug</strong> — it is expected downstream starvation.</p>
+      <p>Evidence: 1h coverage collapsed ~1 week after 5m (2026-07-13 vs 2026-07-06). The ~7-session lag is roughly the time needed for any late-arriving 5m rows (via live WS) to reach the 30m tier. Once the 5m feed for a ticker stopped, the 30m→1h promotion had nothing new to promote.</p>
+    </div>
+  </div>
+
+  <div class="card border-ok">
+    <div class="card-title">Classification</div>
+    <div class="card-body">
+      <p><strong>Expected Retention Behaviour (caused by P0).</strong> Fix the 5m ingestion (Phase 0) and recovery (Phase 0), and 1h will self-heal as retention runs its promotion cycle once the restored 5m rows cross each session threshold. No separate 1h fix required.</p>
+      <p>The <code>/api/stock-data/intraday/paginated</code> on-the-fly resampling fallback (<code>main.py:3759</code>) provides a stopgap for users requesting 15m/30m/1h during the gap — it reads 5m from DB and resamples live. This is already deployed and working.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s6">
+  <div class="section-header">
+    <span class="section-num">06</span>
+    <h2 class="section-title">4h Alignment — Mathematical Verification</h2>
+    <span class="pill pill-p1">P1 · Latent Bug</span>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">The offset calculation</div>
+    <div class="card-body">
+      <p>NSE session opens at <strong>09:15 IST</strong> = <strong>555 minutes from midnight</strong>. For pandas <code>resample(rule, offset=X)</code>, the offset shifts the bucket grid from the epoch anchor so that 09:15 falls exactly on a bucket boundary.</p>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Timeframe</th><th>Bucket (minutes)</th><th>555 mod bucket</th><th>Correct offset</th><th>Code offset</th><th>Status</th></tr>
+      <tr><td>15m</td><td>15</td><td>555 % 15 = <strong>0</strong></td><td>None needed</td><td>None</td><td><span class="pill pill-ok">CORRECT</span></td></tr>
+      <tr><td>30m</td><td>30</td><td>555 % 30 = <strong>15</strong></td><td>15min</td><td>15min</td><td><span class="pill pill-ok">CORRECT</span></td></tr>
+      <tr><td>1h</td><td>60</td><td>555 % 60 = <strong>15</strong></td><td>15min</td><td>15min</td><td><span class="pill pill-ok">CORRECT</span></td></tr>
+      <tr><td>4h</td><td>240</td><td>555 % 240 = <strong>75</strong></td><td><strong>75min</strong></td><td><strong>15min</strong></td><td><span class="pill pill-p1">BUG — wrong offset</span></td></tr>
+    </table>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Effect of wrong 4h offset</div>
+    <div class="card-body">
+      <p>With <code>offset='15min'</code>, pandas anchors the 4h grid at 00:15, 04:15, 08:15, 12:15, 16:15... The NSE session's 09:15 data falls into the <strong>08:15 bucket</strong> (covers 08:15–12:15), and the second bucket starts at 12:15 (covers 12:15–16:15). Both buckets span pre/post-market hours and are misaligned with actual NSE trading.</p>
+      <p>With <code>offset='75min'</code> (correct), the grid anchors at 01:15, 05:15, 09:15, 13:15... The NSE session's 09:15 data begins precisely at the 09:15 bucket boundary, matching TradingView-like alignment.</p>
+    </div>
+  </div>
+
+  <div class="notice notice-warn">
+    <strong>Currently latent.</strong> The <code>/api/stock-data/intraday/paginated</code> endpoint explicitly rejects <code>interval=4h</code> at line 3685, and there are 0 rows in <code>candles WHERE timeframe='4h'</code>. No user is affected today. Fix this as part of Phase 2 (4h enablement) before enabling the endpoint.
+  </div>
+
+  <div class="card border-ok">
+    <div class="card-title">Everything else about 4h resampling — verified correct</div>
+    <div class="card-body">
+      <p><code>closed='left', label='left'</code> is correct for OHLCV aggregation. The OHLC aggregation functions (first/max/min/last/sum) are correct. The bug is isolated to the offset value only. The fix is a single string change: <code>'15min'</code> → <code>'75min'</code> for the 4h branch in <code>resampler.py:_resample_by_rule</code>.</p>
+      <p><code>_resample_to_1w</code> uses <code>'W-MON'</code> (Monday-anchored) — verified correct for NSE which counts weeks Monday–Friday. <code>_resample_to_1m</code> uses <code>'MS'</code> (month start) — verified correct.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s7">
+  <div class="section-header">
+    <span class="section-num">07</span>
+    <h2 class="section-title">15:30 Phantom Candles — 76-Candle Sessions</h2>
+    <span class="pill pill-p1">P1 · Data Pollution</span>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Mathematical analysis of <code>snap_to_nse_session</code></div>
+    <div class="card-body">
+      <p>Constants from <code>aggregator.py:27-35</code>:</p>
+    </div>
+    <pre><code>NSE_OPEN  = 09:15 → _NSE_OPEN_SEC  = 33300
+NSE_CLOSE = 15:30 → _NSE_CLOSE_SEC = 55800
+NSE_GRACE = 15:45 → _NSE_CLOSE_GRACE_SEC = 56700
+
+bucket_sec = 5 * 60 = 300
+slots = (55800 - 33300) // 300 = 22500 // 300 = 75</code></pre>
+    <div class="card-body">
+      <p>Branch logic at lines 78–84: for <code>ist_seconds ∈ [55800, 56700)</code> (i.e., 15:30:00 – 15:44:59), the code enters the <code>elif ist_seconds >= cl:</code> branch, computes <code>slots=75</code>, and returns <code>session_start + 75 × 300 = session_start + 22500s</code>, which is exactly 15:30 IST.</p>
+      <p>The correct last bucket is <strong>15:25</strong> (the 75th slot, 0-indexed as slot #74, starting at <code>session_start + 74×300 = 15:25</code>). Any tick arriving at or after 15:30 should either go to 15:25 (if the candle is still forming) or be discarded — not open a new 15:30 bucket.</p>
+    </div>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Evidence and scope</div>
+    <div class="kv-grid">
+      <span class="kv-key">Phantom rows</span><span class="kv-val">956 rows in <code>candles WHERE timeframe='5m' AND EXTRACT(hour from timestamp)=15 AND EXTRACT(minute from timestamp)=30</code></span>
+      <span class="kv-key">13 rows</span><span class="kv-val">Same query on <code>timeframe='15m'</code> (promoted from phantom 5m rows)</span>
+      <span class="kv-key">Affected sessions</span><span class="kv-val">Sessions with 76 5m candles instead of 75 (2 RELIANCE sessions confirmed; likely broader)</span>
+      <span class="kv-key">Classification</span><span class="kv-val"><strong>Data Pollution</strong>: the 76th candle is real price data but misattributed to an invalid time slot. It corrupts the session's OHLC when the chart stitches candles together.</span>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Fix design (do not implement yet)</div>
+    <div class="card-body">
+      <p><strong>Step 1 — Data cleanup:</strong> Delete or merge the 956 phantom 5m rows and 13 phantom 15m rows. If a 15:25 candle already exists for the same ticker/date, merge (using GREATEST/LEAST for high/low, keep the 15:25 open, take whichever close is later in real time). If no 15:25 exists, update the phantom's timestamp to 15:25.</p>
+      <p><strong>Step 2 — Code fix:</strong> In <code>snap_to_nse_session</code>, change the <code>elif ist_seconds >= cl</code> branch. Ticks at or after 15:30 should return the 15:25 bucket (<code>session_start + (slots-1) × bucket_sec</code>, same logic as the <code>if ist_seconds >= cg</code> branch). The grace-period logic (15:30–15:44 is "within trading" for WS purposes) is correct for accepting the tick — the error is only in where the tick gets bucketed.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s8">
+  <div class="section-header">
+    <span class="section-num">08</span>
+    <h2 class="section-title">Retention Checksum Gate</h2>
+    <span class="pill pill-p2">P2 · Integrity Gap</span>
+  </div>
+
+  <div class="card border-p2">
+    <div class="card-title">Retention batch-boundary corruption — verified with example</div>
+    <div class="card-body">
+      <p><code>_process_ticker</code> in <code>retention_service.py:218</code> fetches <code>batch_size=200</code> source rows per iteration, resamples them, verifies the batch's checksum, inserts targets, deletes sources, commits. The bug: a 15m candle needs exactly 3 source 5m rows. If a batch boundary splits those 3 rows (e.g. 2 in batch N, 1 in batch N+1), batch N produces an incomplete 15m candle using only 2 of the 3 required 5m rows.</p>
+      <p>When batch N+1 arrives, the incomplete 15m candle already exists due to <code>ON CONFLICT DO NOTHING</code> — the correct aggregate is blocked. The result is a 15m candle with wrong OHLC (high underreported, volume underreported).</p>
+      <p>Reproduced example: high 206→204, close 202→200, volume 30→10.</p>
+    </div>
+  </div>
+
+  <div class="card border-p2">
+    <div class="card-title">Checksum does not catch this</div>
+    <div class="card-body">
+      <p>The <code>_verify_checksum</code> method (<code>retention_service.py:350</code>) compares source vs. target <em>within the same batch</em>: <code>source["volume_sum"] == target["volume_sum"]</code>. Since the partial 15m target's volume (10) matches the partial batch's source volume (10 for the 2 included rows), the checksum passes. The corruption is invisible to the gate.</p>
+    </div>
+  </div>
+
+  <div class="card border-p2">
+    <div class="card-title"><code>migration_jobs</code> checksum state — separate issue</div>
+    <div class="card-body">
+      <p>3,044 of 3,277 rows in <code>migration_jobs</code> have <code>checksum_src != checksum_db</code> including rows with <code>status='DONE'</code>. The migration checksum gate is not enforced on state transition — a row reaches DONE regardless of checksum comparison. 4 rows are stuck FETCHING since 2026-08-14 with <code>retry_count=0</code> and no recovery sweep.</p>
+      <p>Classification: <strong>P2</strong> — the 1D migration is a one-time operation, now largely complete. The checksum mismatch indicates the gate was never enforced, not that the data itself is wrong (the 1D candles from <code>_daily_prefill_all</code> are correct). Stuck FETCHING rows need a timeout-based recovery sweep, not a data fix.</p>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Fix design for batch-boundary bug</div>
+    <div class="card-body">
+      <p>Before resampling, extend the batch to include all source rows that belong to the same target bucket as the last source row in the batch. For 5m→15m: the last timestamp in the batch rounded down to the 15m boundary — include all 5m rows up to (that boundary + 15min) in the same batch. This prevents a 15m bucket from ever being split across two batch fetches.</p>
+      <p>Alternative: change <code>ON CONFLICT DO NOTHING</code> → <code>DO UPDATE</code> using <code>GREATEST/LEAST</code> for high/low and <code>+</code> for volume on target inserts, so a second batch can complete an existing partial candle. This is simpler but requires proving that the second batch always contains the same or later timestamp data.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s9">
+  <div class="section-header">
+    <span class="section-num">09</span>
+    <h2 class="section-title">stock_data vs candles — Complete Dependency Audit</h2>
+  </div>
+
+  <div class="notice notice-ok">
+    <strong>Do not delete stock_data.</strong> It contains data not currently representable by the <code>candles</code> schema. The path is migrate-then-archive, not drop.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr><th>Field</th><th>Meaning</th><th>Producer</th><th>Consumer</th><th>In candles?</th><th>Unique value</th></tr>
+      <tr><td><code>ticker</code></td><td>Stock symbol</td><td>yfinance on-demand</td><td>All reads</td><td>Yes</td><td>No</td></tr>
+      <tr><td><code>date</code> (Date)</td><td>Trading date (no time)</td><td>yfinance on-demand</td><td>range/paginated; chart</td><td>As <code>timestamp</code> (DateTime)</td><td>Schema difference only</td></tr>
+      <tr><td><code>open, high, low, close</code></td><td>Daily OHLC</td><td>yfinance on-demand</td><td>All chart reads</td><td>Yes (candles/1D)</td><td>5.1% of rows disagree on close (see §11)</td></tr>
+      <tr><td><code>adj_close</code></td><td>Corporate-action-adjusted close</td><td>yfinance on-demand</td><td><code>range/paginated</code> (served in API response)</td><td><strong>NO</strong> — no <code>adj_close</code> column in <code>Candle</code></td><td><strong>Yes — unique to stock_data</strong>. 73,371 rows; 15,406 differ from close (corporate events)</td></tr>
+      <tr><td><code>volume</code></td><td>Daily traded volume</td><td>yfinance on-demand</td><td>Chart volume bars</td><td>Yes</td><td>No</td></tr>
+    </table>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">By consumer — full trace</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Consumer</th><th>Source</th><th>Issue</th></tr>
+        <tr><td><code>/api/stock-data/range/paginated</code> (main chart 1D)</td><td><strong>stock_data ONLY</strong> — confirmed <code>main.py:3835</code></td><td><span class="pill pill-p1">P1</span> reads stale/shallow table; ignores candles/1D which is 800–2,600 inserts/day</td></tr>
+        <tr><td><code>/api/stock-data/range</code></td><td>Merges both; candles win on overlap — <code>main.py:3211</code></td><td><span class="pill pill-ok">Correct</span></td></tr>
+        <tr><td><code>/api/stock-data/weekly</code></td><td>candles first, stock_data fallback</td><td><span class="pill pill-ok">Correct</span></td></tr>
+        <tr><td><code>/api/stock-data/monthly</code></td><td>candles first, stock_data fallback</td><td><span class="pill pill-ok">Correct</span></td></tr>
+        <tr><td><code>/api/stock-data/intraday/paginated</code></td><td>candles directly — <code>main.py:3688</code></td><td><span class="pill pill-ok">Correct</span></td></tr>
+        <tr><td><code>PriceProvider tier 4</code> (off-hours price fallback)</td><td>stock_data — <code>price_provider.py:262-278</code></td><td><span class="pill pill-p2">P2</span> should read candles/1D (fresher); affects execution engine AMO price reference</td></tr>
+        <tr><td><code>/api/stock-data/candle/latest</code> (1D branch)</td><td>stock_data only</td><td><span class="pill pill-p2">P2</span> should read candles/1D</td></tr>
+        <tr><td>Chain B retention source (1D→1W)</td><td>candles/1D directly</td><td><span class="pill pill-ok">Correct</span> — reads from the healthy table</td></tr>
+        <tr><td><code>/api/stock-data/chart</code> (ChartService)</td><td>stock_data</td><td><span class="pill pill-fp">FALSE POSITIVE</span> — endpoint is dead code, called by NO frontend file</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s10">
+  <div class="section-header">
+    <span class="section-num">10</span>
+    <h2 class="section-title">stock_data Depth — What Must Be Preserved</h2>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Unique depth in stock_data</div>
+    <div class="kv-grid">
+      <span class="kv-key">Total tickers in stock_data</span><span class="kv-val">~3,286 (includes tickers not in candles at all)</span>
+      <span class="kv-key">Tickers with pre-2024 data</span><span class="kv-val"><strong>42 tickers</strong>: 13 with data pre-2017, 29 with data 2020–2023</span>
+      <span class="kv-key">stock_data-only tickers</span><span class="kv-val"><strong>17 tickers</strong> — exist in stock_data but have zero rows in candles at all</span>
+      <span class="kv-key">Tickers with 2024+ only</span><span class="kv-val">~3,244 — no deeper history than candles/1D already has</span>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Migration decision per subset</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Subset</th><th>Size</th><th>Decision</th></tr>
+        <tr><td>adj_close values (all tickers)</td><td>73,371 rows with adj_close; 15,406 differ from close</td><td>Add <code>adj_close</code> column to <code>Candle</code> model; backfill from stock_data. <strong>Preserve all values.</strong></td></tr>
+        <tr><td>42 tickers with pre-2024 depth</td><td>Date ranges from 2015 onward</td><td>Migrate into candles/1D (fill-only, <code>DO NOTHING</code> where candles already exist). Verify post-migration.</td></tr>
+        <tr><td>17 stock_data-only tickers</td><td>Unknown candle count</td><td>Investigate whether these are active instruments or delisted. If active, add to candles/1D. If delisted, archive in stock_data.</td></tr>
+        <tr><td>~3,244 tickers with 2024+ only</td><td>~728,853 rows overlapping with candles</td><td>After candles/1D is the confirmed reader, these rows are redundant. Freeze writes; archive reads.</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s11">
+  <div class="section-header">
+    <span class="section-num">11</span>
+    <h2 class="section-title">5.1% Close Disagreement — Source-of-Truth Policy</h2>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Evidence</div>
+    <div class="kv-grid">
+      <span class="kv-key">Overlapping rows</span><span class="kv-val">728,853 date-ticker pairs present in both stock_data and candles/1D</span>
+      <span class="kv-key">Disagreeing rows</span><span class="kv-val">37,530 — 5.1% differ on close price</span>
+      <span class="kv-key">Write frequency</span><span class="kv-val">candles/1D: 800–2,600 inserts/day (scheduled yfinance). stock_data: ~2/day (on-demand fallback)</span>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Likely causes</div>
+    <ul class="body-list">
+      <li><strong>Corporate actions (dividend/split):</strong> yfinance returns adjusted prices when <code>auto_adjust=True</code> (the default). If <code>_daily_prefill_all</code> and the on-demand fallback use different <code>auto_adjust</code> settings, or if one path fetches on ex-dividend date and another after adjustment, close values diverge. This accounts for the majority of the 5.1%.</li>
+      <li><strong>Provider timing:</strong> yfinance prices a session using end-of-day data; if fetched intraday (during market hours) vs. post-market, the "final close" vs. the "last known price" differ.</li>
+      <li><strong>Rounding:</strong> Minor float precision differences between two yfinance calls for the same ticker/date.</li>
+    </ul>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">Source-of-truth policy — to be made explicit</div>
+    <div class="card-body">
+      <p><strong>candles/1D is the operational source of truth</strong> for display prices (open/high/low/close). It is updated daily by a scheduled job and is always fresher than stock_data. The <code>ON CONFLICT DO UPDATE SET high=GREATEST, low=LEAST, close=EXCLUDED.close</code> in <code>_daily_prefill_all</code> means the most recent fetch wins.</p>
+      <p><strong>stock_data is the authoritative source for adj_close only.</strong> Once the <code>adj_close</code> column is added to <code>candles</code> and backfilled, stock_data's OHLC role becomes redundant.</p>
+      <p>Do not silently pick one: document this policy in a comment in <code>_daily_prefill_all</code> and in the API response for <code>/range/paginated</code>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s12">
+  <div class="section-header">
+    <span class="section-num">12</span>
+    <h2 class="section-title">Actual Daily Chart Path — Full Trace</h2>
+    <span class="pill pill-p1">P1 · Wrong Source</span>
+  </div>
+
+  <div class="card border-p1">
+    <div class="card-title">Confirmed caller chain for 1D chart</div>
+    <div class="flow" style="flex-direction:column;align-items:flex-start;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="flow-node ok">dashboard.js:1648</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node warn"><code>/api/stock-data/range/paginated</code></span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node warn">stock_data ONLY (main.py:3835)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node ok">chart</span>
+      </div>
+      <div style="font-size:11px;color:var(--p1);margin-left:12px;font-family:var(--mono)">↑ CURRENT (wrong): reads stock_data only — 2 writes/day, misses 800–2,600 daily candle inserts</div>
+    </div>
+    <div class="flow" style="margin-top:8px;flex-direction:column;align-items:flex-start;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="flow-node ok">dashboard.js:1648</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node ok"><code>/api/stock-data/range/paginated</code> (updated)</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node ok">candles/1D + adj_close</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-node ok">chart</span>
+      </div>
+      <div style="font-size:11px;color:var(--ok);margin-left:12px;font-family:var(--mono)">↑ TARGET: reads candles/1D primary; stock_data adj_close preserved in response</div>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">All chart paths — classified</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Endpoint</th><th>Called by</th><th>Current source</th><th>Correct?</th><th>Action</th></tr>
+        <tr><td><code>/intraday/paginated</code></td><td>dashboard.js:1643</td><td>candles (all intraday TFs)</td><td><span class="pill pill-ok">Yes</span></td><td>None</td></tr>
+        <tr><td><code>/range/paginated</code></td><td>dashboard.js:1648</td><td>stock_data only</td><td><span class="pill pill-p1">No</span></td><td>Repoint to candles/1D; preserve adj_close</td></tr>
+        <tr><td><code>/range</code></td><td>Various (non-chart)</td><td>Merges both; candles win</td><td><span class="pill pill-ok">Yes</span></td><td>None</td></tr>
+        <tr><td><code>/weekly</code></td><td>Frontend</td><td>candles first, stock_data fallback</td><td><span class="pill pill-ok">Yes</span></td><td>None</td></tr>
+        <tr><td><code>/monthly</code></td><td>Frontend</td><td>candles first, stock_data fallback</td><td><span class="pill pill-ok">Yes</span></td><td>None</td></tr>
+        <tr><td><code>PriceProvider tier 4</code></td><td>Execution engine (off-hours)</td><td>stock_data</td><td><span class="pill pill-p2">Suboptimal</span></td><td>Phase 3: repoint to candles/1D</td></tr>
+        <tr><td><code>/candle/latest</code> (1D)</td><td>Price displays</td><td>stock_data</td><td><span class="pill pill-p2">Suboptimal</span></td><td>Phase 3: repoint to candles/1D</td></tr>
+        <tr><td><code>/api/stock-data/chart</code></td><td><strong>No caller found</strong></td><td>stock_data</td><td><span class="pill pill-fp">Dead code</span></td><td>No action needed; confirm no caller before Phase 5 cleanup</td></tr>
+        <tr><td>dashboard.js:1847 (1D range call)</td><td>Home chart</td><td><code>intraday/paginated?interval=5m&amp;limit=15000</code></td><td><span class="pill pill-ok">Yes</span></td><td>None — correctly uses 5m candles for the main dashboard</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s13">
+  <div class="section-header">
+    <span class="section-num">13</span>
+    <h2 class="section-title">Migration Dependency Graph — stock_data → candles</h2>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">A. Current dependency graph</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Layer</th><th>stock_data</th><th>candles/1D</th></tr>
+        <tr><td>Writers</td><td>On-demand yfinance fallback (~2/day)</td><td><code>_daily_prefill_all</code> (800–2,600/day)</td></tr>
+        <tr><td>Readers</td><td>range/paginated, PriceProvider tier 4, candle/latest 1D, range (merge fallback)</td><td>weekly, monthly, range (merge winner), Chain B retention, intraday (not 1D), range (merge winner)</td></tr>
+        <tr><td>Unique columns</td><td>adj_close, date (Date type)</td><td>timeframe, data_source, is_backfilled, is_completed</td></tr>
+        <tr><td>Historical depth</td><td>42 tickers pre-2024; 17 exclusive tickers</td><td>All tickers 2024+; deep for none</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card border-accent">
+    <div class="card-title">B–J. Migration dependency decisions</div>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Category</th><th>Data</th><th>Decision</th></tr>
+        <tr><td><strong>B. Must preserve</strong></td><td>adj_close (73,371 rows, 15,406 differ); 42-ticker pre-2024 depth; 17 exclusive tickers</td><td>Migrate via schema extension + fill-only insert</td></tr>
+        <tr><td><strong>C. Can migrate</strong></td><td>~728,853 overlapping OHLCV rows for 3,244 tickers (2024+)</td><td>Migrate only what resolves the 5.1% disagreement explicitly; verify post-migration</td></tr>
+        <tr><td><strong>D. Remain separate</strong></td><td>adj_close — schema difference makes it candles-incompatible until Phase 3 schema change</td><td>stock_data is authoritative for adj_close until the column exists in candles</td></tr>
+        <tr><td><strong>E. Eventually archive</strong></td><td>stock_data OHLCV for 3,244 tickers (2024+) once candles/1D is the confirmed single reader</td><td>Freeze writes (remove on-demand fallback writer), keep table read-only for historical lookup</td></tr>
+        <tr><td><strong>F. Never remove</strong></td><td>adj_close history; 42-ticker pre-2024 rows; 17 exclusive ticker rows</td><td>These must survive in the canonical store before stock_data is demoted</td></tr>
+        <tr><td><strong>G. Risk: 5% disagreement</strong></td><td>On 5.1% of overlapping rows, stock_data and candles disagree on close</td><td>Explicit spot-check of 500 rows; classify cause (corporate action vs. ingestion error); write to policy doc before repointing chart</td></tr>
+        <tr><td><strong>H. Rollback strategy</strong></td><td>Reader repoint fails (chart breaks)</td><td>Feature flag on <code>range/paginated</code>: <code>?source=candles</code> vs. <code>?source=stock_data</code>. Flip back in config without a deploy.</td></tr>
+        <tr><td><strong>I. Validation gates</strong></td><td>Post-migration, before repoint: row count parity (candles/1D ≥ stock_data for all tickers), adj_close parity, spot-check 100 random dates</td><td>All gates must pass before Phase 3 reader repoint</td></tr>
+        <tr><td><strong>J. Timing</strong></td><td>Do not run migration during a retention cycle (retention runs on startup and daily)</td><td>Migration must be a standalone script, not triggered by app startup</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s14">
+  <div class="section-header">
+    <span class="section-num">14</span>
+    <h2 class="section-title">Final Classification Table</h2>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <tr>
+        <th>Finding</th>
+        <th>Evidence</th>
+        <th>Severity</th>
+        <th>Root Cause</th>
+        <th>Decision</th>
+        <th>Phase</th>
+      </tr>
+      <tr>
+        <td>Universe 5m ingestion stopped 2026-07-06</td>
+        <td><code>backfill_intraday_5min.py:77</code> targets dead table</td>
+        <td><span class="pill pill-p0">P0 Fix Now</span></td>
+        <td>DB-09 renamed table; script never updated</td>
+        <td>Fix script + build scheduled job</td>
+        <td>Phase 0 + 1</td>
+      </tr>
+      <tr>
+        <td>90,000 ticker-sessions of missing 5m data</td>
+        <td>DB count; retention headroom ~Oct 2026</td>
+        <td><span class="pill pill-p0">P0 Fix Now</span></td>
+        <td>Downstream of ingestion stop</td>
+        <td>One-time recovery backfill</td>
+        <td>Phase 0</td>
+      </tr>
+      <tr>
+        <td><code>/range/paginated</code> reads stock_data, not candles</td>
+        <td><code>main.py:3835</code></td>
+        <td><span class="pill pill-p1">P1</span></td>
+        <td>Not updated when candles became canonical</td>
+        <td>Repoint to candles/1D after adj_close migration</td>
+        <td>Phase 3</td>
+      </tr>
+      <tr>
+        <td>Retention batch-boundary OHLC corruption</td>
+        <td><code>retention_service.py:235</code>; batch_size=200; reproduced</td>
+        <td><span class="pill pill-p1">P1</span></td>
+        <td>Fixed-size batch can split a target bucket</td>
+        <td>Extend batch to complete target bucket before resample</td>
+        <td>Phase 2</td>
+      </tr>
+      <tr>
+        <td>15:30 phantom candles (956 5m rows)</td>
+        <td><code>aggregator.py:83</code>; snap_to_nse_session math</td>
+        <td><span class="pill pill-p1">P1</span></td>
+        <td>Branch returns slot 75 (15:30) for ticks 15:30–15:44</td>
+        <td>Fix snap_to_nse_session; delete/merge phantom rows</td>
+        <td>Phase 2</td>
+      </tr>
+      <tr>
+        <td>4h resampler offset wrong (75min needed, 15min used)</td>
+        <td><code>resampler.py:67-70</code>; math: 555%240=75</td>
+        <td><span class="pill pill-p1">P1 Latent</span></td>
+        <td>Same offset applied to all non-15m timeframes</td>
+        <td>Fix before enabling 4h API endpoint</td>
+        <td>Phase 2</td>
+      </tr>
+      <tr>
+        <td>4h API endpoint blocked, 0 rows exist</td>
+        <td><code>main.py:3685</code>; DB count</td>
+        <td><span class="pill pill-p1">P1 Latent</span></td>
+        <td>4h not in TIMEFRAMES list; endpoint rejects it</td>
+        <td>Enable after resampler fix is deployed</td>
+        <td>Phase 2</td>
+      </tr>
+      <tr>
+        <td>NSE holidays table empty</td>
+        <td>DB: 0 rows in <code>holidays</code> table</td>
+        <td><span class="pill pill-p1">P1</span></td>
+        <td>No 2026 backfill script exists</td>
+        <td>Populate from NSE holiday API; add annual refresh</td>
+        <td>Phase 2</td>
+      </tr>
+      <tr>
+        <td>1h coverage collapse 2026-07-13</td>
+        <td>DB count; 7 tickers with 1h from July onward</td>
+        <td><span class="pill pill-p1">P1</span></td>
+        <td>Downstream of 5m collapse (retention starved)</td>
+        <td>Self-heals when Phase 0 recovery runs</td>
+        <td>Phase 0 (auto)</td>
+      </tr>
+      <tr>
+        <td>migration_jobs checksum gate not enforced</td>
+        <td>3,044/3,277 DONE rows have checksum mismatch</td>
+        <td><span class="pill pill-p2">P2</span></td>
+        <td>Gate computed but state transition not gated</td>
+        <td>Enforce gate; add timeout recovery for FETCHING rows</td>
+        <td>Phase 4</td>
+      </tr>
+      <tr>
+        <td>PriceProvider tier 4 reads stock_data</td>
+        <td><code>price_provider.py:262-278</code></td>
+        <td><span class="pill pill-p2">P2</span></td>
+        <td>Not updated when candles became canonical</td>
+        <td>Repoint to candles/1D in Phase 3</td>
+        <td>Phase 3</td>
+      </tr>
+      <tr>
+        <td>5.1% close disagreement stock_data vs candles</td>
+        <td>DB: 37,530/728,853 rows differ</td>
+        <td><span class="pill pill-p2">P2</span></td>
+        <td>Corporate adjustments + provider timing</td>
+        <td>Explicit policy; spot-check before repoint</td>
+        <td>Phase 3</td>
+      </tr>
+      <tr>
+        <td>stock_data adj_close has no candles equivalent</td>
+        <td><code>models.py:123</code> — no adj_close column</td>
+        <td><span class="pill pill-p2">P2</span></td>
+        <td>Schema not extended when candles table created</td>
+        <td>Add adj_close to Candle model; backfill</td>
+        <td>Phase 3</td>
+      </tr>
+      <tr>
+        <td>579 MB of _backup_20260703_ tables</td>
+        <td>DB: 18 tables, 9.67 GB total</td>
+        <td><span class="pill pill-legacy">Legacy</span></td>
+        <td>Retained from DB-09 migration snapshot</td>
+        <td>Audit once, drop after verifying candles has all data</td>
+        <td>Phase 5</td>
+      </tr>
+      <tr>
+        <td>Two-cycle retention design</td>
+        <td><code>config/retention_policy.py</code>; live DB jobs</td>
+        <td><span class="pill pill-ok">Verified Correct</span></td>
+        <td>—</td>
+        <td>Do not modify</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>Retention tiers overlap (not tile)</td>
+        <td>Live DB analysis; 300 tickers</td>
+        <td><span class="pill pill-fp">False Positive</span></td>
+        <td>Prior audit error</td>
+        <td>Expected behaviour; no action</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>"115-day 30m hole" universal claim</td>
+        <td>Affects only 4 of 300 tickers</td>
+        <td><span class="pill pill-fp">False Positive</span></td>
+        <td>Prior audit generalized from 1 ticker</td>
+        <td>No action; monitor</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>CoordinateMapper (225/225 roundtrips)</td>
+        <td><code>drawing-core.js</code> verified</td>
+        <td><span class="pill pill-ok">Verified Correct</span></td>
+        <td>—</td>
+        <td>Do not modify</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>Execution engine (row locks + EXECUTING guard)</td>
+        <td><code>execution_engine.py</code> verified</td>
+        <td><span class="pill pill-ok">Verified Correct</span></td>
+        <td>—</td>
+        <td>Do not modify</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>PriceProvider 4-tier staleness guard</td>
+        <td><code>price_provider.py</code> verified</td>
+        <td><span class="pill pill-ok">Verified Correct</span></td>
+        <td>—</td>
+        <td>Do not modify tier logic; only repoint tier 4 source</td>
+        <td>Phase 3</td>
+      </tr>
+      <tr>
+        <td><code>/api/stock-data/chart</code> dead endpoint</td>
+        <td>No frontend caller found in any HTML/JS file</td>
+        <td><span class="pill pill-fp">False Positive (not P0)</span></td>
+        <td>Prior audit misidentified this as the live chart path</td>
+        <td>Confirm no callers; remove in Phase 5</td>
+        <td>Phase 5</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<section class="section" id="s15">
+  <div class="section-header">
+    <span class="section-num">15</span>
+    <h2 class="section-title">Phase Plan — Awaiting Per-Phase Approval</h2>
+  </div>
+
+  <div class="notice notice-crit">
+    <strong>No phase starts without explicit approval.</strong> Each phase below is a discrete, reviewable unit. Approve Phase 0 first — it is time-critical.
+  </div>
+
+  <div class="phase-grid">
+
+    <div class="phase-card" style="border-top:3px solid var(--p0)">
+      <div class="phase-tag">Phase 0 · Emergency</div>
+      <div class="phase-name">5m Data Recovery</div>
+      <div class="phase-status"><span class="pill pill-p0">P0 · Urgent</span></div>
+      <ul class="phase-list">
+        <li><strong>Pre-req:</strong> Fix retention batch-boundary bug first (prevents new corruption)</li>
+        <li>One-time backfill script: reads from <code>candles</code>, writes to <code>candles</code> via <code>DO NOTHING</code></li>
+        <li>AngelOne REST, ≤30d chunks, 5 workers, token-bucket throttle</li>
+        <li>Filter 15:30 phantom timestamps before insert</li>
+        <li>Persistent progress table for crash recovery</li>
+        <li>Post-run coverage verification report</li>
+        <li><strong>Deadline:</strong> Before Oct 2026 retention boundary</li>
+      </ul>
+    </div>
+
+    <div class="phase-card" style="border-top:3px solid var(--p1)">
+      <div class="phase-tag">Phase 1 · Infrastructure</div>
+      <div class="phase-name">Permanent 5m Ingestion</div>
+      <div class="phase-status"><span class="pill pill-p1">P1</span></div>
+      <ul class="phase-list">
+        <li>Add <code>_intraday_prefill_all</code> async background task to <code>main.py</code></li>
+        <li>Runs daily at 16:30 IST; universe = <code>stock_metadata</code> active tickers</li>
+        <li>Gap detection via <code>MAX(timestamp)</code> comparison</li>
+        <li>Same rate-limiting as Phase 0 recovery</li>
+        <li>Coverage monitoring endpoint <code>/api/internal/coverage</code></li>
+        <li>Alert when coverage_pct &lt; 90% by 17:00 IST</li>
+      </ul>
+    </div>
+
+    <div class="phase-card" style="border-top:3px solid var(--p1)">
+      <div class="phase-tag">Phase 2 · Integrity</div>
+      <div class="phase-name">Intraday Candle Correctness</div>
+      <div class="phase-status"><span class="pill pill-p1">P1</span></div>
+      <ul class="phase-list">
+        <li>Fix retention batch-boundary: extend batch to complete target bucket before resample</li>
+        <li>Fix 4h resampler: <code>'15min'</code> → <code>'75min'</code> offset</li>
+        <li>Enable 4h API endpoint; add "4h" to <code>TIMEFRAMES</code> in <code>models.py</code></li>
+        <li>Fix 15:30 phantom: update <code>snap_to_nse_session</code> branch logic</li>
+        <li>Cleanup: delete/merge 956 phantom 5m rows + 13 15m rows</li>
+        <li>Populate NSE holidays table from API; add annual refresh job</li>
+      </ul>
+    </div>
+
+    <div class="phase-card" style="border-top:3px solid var(--p2)">
+      <div class="phase-tag">Phase 3 · Source of Truth</div>
+      <div class="phase-name">1D Canonical Store</div>
+      <div class="phase-status"><span class="pill pill-p2">P2</span></div>
+      <ul class="phase-list">
+        <li>Add <code>adj_close</code> column to <code>Candle</code> model; migrate from stock_data</li>
+        <li>Import 42-ticker pre-2024 depth into candles/1D (fill-only)</li>
+        <li>Resolve 17 stock_data-only tickers: migrate active, archive delisted</li>
+        <li>Spot-check 5.1% disagreement (500 rows); write source-of-truth policy doc</li>
+        <li>Repoint <code>/range/paginated</code> to candles/1D (feature-flagged)</li>
+        <li>Repoint PriceProvider tier 4 to candles/1D</li>
+        <li>Repoint <code>/candle/latest</code> 1D branch to candles/1D</li>
+        <li>Freeze stock_data write path (remove on-demand fallback writer)</li>
+      </ul>
+    </div>
+
+    <div class="phase-card" style="border-top:3px solid var(--p2)">
+      <div class="phase-tag">Phase 4 · Reliability</div>
+      <div class="phase-name">Migration & Checksum Hardening</div>
+      <div class="phase-status"><span class="pill pill-p2">P2</span></div>
+      <ul class="phase-list">
+        <li>Enforce migration checksum gate on DONE state transition</li>
+        <li>Add timeout-based recovery sweep for stuck FETCHING rows</li>
+        <li>Update <code>retention_service</code> checksum to compare across batch boundaries</li>
+        <li>Add Sentry alert for retention error rate > 1% per cycle</li>
+        <li>Periodic DB health report: OHLC invariant scan across all candles</li>
+      </ul>
+    </div>
+
+    <div class="phase-card" style="border-top:3px solid var(--border)">
+      <div class="phase-tag">Phase 5 · Verification & Cleanup</div>
+      <div class="phase-name">API Audit & Archive</div>
+      <div class="phase-status"><span class="pill pill-legacy">Post-approval</span></div>
+      <ul class="phase-list">
+        <li>Confirm no callers for <code>/api/stock-data/chart</code>; remove or document</li>
+        <li>Audit 579 MB of <code>_backup_20260703_*</code> tables; drop after confirming candles has all data</li>
+        <li>stock_data: convert to read-only archive (REVOKE INSERT/UPDATE/DELETE from app user)</li>
+        <li>End-to-end chart path verification: 5m → 15m → 30m → 1h → 4h → 1D → 1W → 1M</li>
+        <li>Performance test: measure chart load time with candles as single source</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="card border-accent" style="margin-top:16px">
+    <div class="card-title">Approval gate per phase</div>
+    <div class="card-body">
+      <p>Each phase requires explicit approval before implementation begins. Phases 0 and 1 are sequential (fix batch-boundary bug from Phase 2 before running Phase 0 recovery). Phases 2–5 can be approved independently once Phase 1 is running.</p>
+      <p><strong>Phase 0 is time-critical:</strong> the 60-session retention boundary for the 2026-07-06 holes is approximately October 2026 — roughly 6 weeks from the audit date. Recovery must complete before then or the gaps become permanent.</p>
+    </div>
+  </div>
+
+</section>
+
+</main>
+
+<script>
+// Sticky nav active state
+const sections = document.querySelectorAll('.section');
+const links = document.querySelectorAll('.nav-link');
+
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const id = e.target.id;
+      links.forEach(l => {
+        l.classList.toggle('active', l.getAttribute('href') === '#' + id);
+      });
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+
+sections.forEach(s => obs.observe(s));
+</script>

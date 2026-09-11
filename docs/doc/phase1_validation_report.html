@@ -1,0 +1,662 @@
+<title>Phase 1 Validation</title>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-2: #636c76;
+    --text-3: #9198a1;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --red: #cf222e;
+    --red-bg: #ffebe9;
+    --yellow: #9a6700;
+    --yellow-bg: #fff8c5;
+    --blue: #0969da;
+    --blue-bg: #ddf4ff;
+    --purple: #8250df;
+    --purple-bg: #fbefff;
+    --orange: #bc4c00;
+    --orange-bg: #fff1e5;
+    --mono: 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-2: #1c2128;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-2: #8b949e;
+      --text-3: #656d76;
+      --green: #3fb950;
+      --green-bg: #122614;
+      --red: #f85149;
+      --red-bg: #2d0f12;
+      --yellow: #e3b341;
+      --yellow-bg: #2e1f06;
+      --blue: #58a6ff;
+      --blue-bg: #0c1e36;
+      --purple: #bc8cff;
+      --purple-bg: #1f1035;
+      --orange: #f0883e;
+      --orange-bg: #2d1800;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-2: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-2: #8b949e;
+    --text-3: #656d76;
+    --green: #3fb950;
+    --green-bg: #122614;
+    --red: #f85149;
+    --red-bg: #2d0f12;
+    --yellow: #e3b341;
+    --yellow-bg: #2e1f06;
+    --blue: #58a6ff;
+    --blue-bg: #0c1e36;
+    --purple: #bc8cff;
+    --purple-bg: #1f1035;
+    --orange: #f0883e;
+    --orange-bg: #2d1800;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 24px 16px 48px;
+  }
+
+  .page { max-width: 900px; margin: 0 auto; }
+
+  /* ── Header ── */
+  .report-header {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .report-header-main { flex: 1; min-width: 200px; }
+  .report-label { font-size: 10px; font-family: var(--mono); color: var(--text-3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+  .report-title { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+  .report-sub { font-size: 12px; color: var(--text-2); }
+  .verdict-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .verdict-pass { background: var(--green-bg); color: var(--green); border: 1.5px solid var(--green); }
+  .verdict-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+  /* ── Stats row ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .stat-val { font-size: 22px; font-weight: 700; font-family: var(--mono); color: var(--text); }
+  .stat-label { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+  .stat-pass .stat-val { color: var(--green); }
+  .stat-warn .stat-val { color: var(--yellow); }
+
+  /* ── Section ── */
+  .section { margin-bottom: 20px; }
+  .section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text-2);
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* ── Validation table ── */
+  .vtable { width: 100%; border-collapse: collapse; }
+  .vtable td, .vtable th {
+    padding: 7px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  .vtable th {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text-3);
+    background: var(--surface-2);
+    border-top: 1px solid var(--border);
+  }
+  .vtable tr:last-child td { border-bottom: none; }
+  .vtable tbody tr:hover { background: var(--surface-2); }
+  .vtable-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    overflow-x: auto;
+  }
+  td.num { font-family: var(--mono); white-space: nowrap; }
+  td.desc { color: var(--text-2); font-size: 12px; }
+
+  /* ── Status chips ── */
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 7px; border-radius: 100px;
+    font-size: 10px; font-weight: 600; white-space: nowrap;
+    letter-spacing: .03em;
+  }
+  .chip-pass { background: var(--green-bg); color: var(--green); }
+  .chip-warn { background: var(--yellow-bg); color: var(--yellow); }
+  .chip-info { background: var(--blue-bg); color: var(--blue); }
+  .chip-dead { background: var(--surface-2); color: var(--text-3); }
+  .chip-fixed { background: var(--purple-bg); color: var(--purple); }
+
+  /* ── Architecture diagram ── */
+  .arch-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    overflow-x: auto;
+  }
+  .arch-diagram { min-width: 760px; }
+
+  /* SVG arch diagram */
+  .arch-svg { width: 100%; }
+
+  /* ── StockData audit ── */
+  .audit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px;
+  }
+  .audit-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .audit-cat { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+  .audit-count { font-size: 18px; font-weight: 700; font-family: var(--mono); }
+  .audit-desc { font-size: 11px; color: var(--text-2); margin-top: 3px; }
+  .cat-a .audit-cat { color: var(--green); } .cat-a .audit-count { color: var(--green); }
+  .cat-b .audit-cat { color: var(--blue); } .cat-b .audit-count { color: var(--blue); }
+  .cat-c .audit-cat { color: var(--text-3); } .cat-c .audit-count { color: var(--text-3); }
+  .cat-d .audit-cat { color: var(--purple); } .cat-d .audit-count { color: var(--purple); }
+  .cat-e .audit-cat { color: var(--orange); } .cat-e .audit-count { color: var(--orange); }
+
+  /* ── Risk table ── */
+  .risk-item {
+    display: flex;
+    gap: 10px;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
+  }
+  .risk-item:last-child { border-bottom: none; }
+  .risk-sev {
+    width: 6px; min-width: 6px; border-radius: 3px;
+    align-self: stretch;
+  }
+  .sev-low { background: var(--blue); }
+  .sev-med { background: var(--yellow); }
+  .risk-title { font-weight: 600; font-size: 12px; color: var(--text); }
+  .risk-desc { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 24px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-3);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .footer code { font-family: var(--mono); color: var(--text-2); }
+
+  /* mono inline */
+  code {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 4px;
+    color: var(--text);
+  }
+</style>
+
+<div class="page">
+
+  <!-- HEADER -->
+  <div class="report-header">
+    <div class="report-header-main">
+      <div class="report-label">Backend · candles SSOT · Phase 1</div>
+      <div class="report-title">Post-Implementation Validation</div>
+      <div class="report-sub">Validated 2026-08-19 · 16 areas · candles as Single Source of Truth for all chart OHLCV data</div>
+    </div>
+    <div class="verdict-badge verdict-pass">
+      <span class="verdict-dot"></span>
+      PRODUCTION READY
+    </div>
+  </div>
+
+  <!-- STATS ROW -->
+  <div class="stats-row">
+    <div class="stat-card stat-pass">
+      <div class="stat-val">543</div>
+      <div class="stat-label">Tests passing</div>
+    </div>
+    <div class="stat-card stat-pass">
+      <div class="stat-val">0</div>
+      <div class="stat-label">Tests failing</div>
+    </div>
+    <div class="stat-card stat-pass">
+      <div class="stat-val">0</div>
+      <div class="stat-label">StockData chart reads</div>
+    </div>
+    <div class="stat-card stat-pass">
+      <div class="stat-val">16/16</div>
+      <div class="stat-label">Validation sections pass</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="font-size:14px;color:var(--text)">1,445,738</div>
+      <div class="stat-label">candles(1D) rows (SSOT)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="font-size:14px;color:var(--text)">3,295</div>
+      <div class="stat-label">tickers in candles(1D)</div>
+    </div>
+  </div>
+
+  <!-- ARCHITECTURE DIAGRAM -->
+  <div class="section">
+    <div class="section-title">Section 15 — Architecture</div>
+    <div class="arch-wrap">
+      <div class="arch-diagram">
+        <svg viewBox="0 0 820 320" xmlns="http://www.w3.org/2000/svg" class="arch-svg" style="display:block;">
+          <defs>
+            <marker id="arr" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="var(--text-3)"/>
+            </marker>
+            <marker id="arr-g" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="var(--green)"/>
+            </marker>
+            <marker id="arr-b" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill="var(--blue)"/>
+            </marker>
+          </defs>
+          <style>
+            .arch-box { rx: 5; }
+            .lbl-col { font: 9px var(--sans); fill: var(--text-3); text-anchor: middle; text-transform: uppercase; letter-spacing: .07em; }
+            .box-title { font: 600 10px var(--sans); fill: var(--text); }
+            .box-sub { font: 9px var(--mono); fill: var(--text-2); }
+            .arrow { stroke: var(--text-3); stroke-width: 1; fill: none; marker-end: url(#arr); }
+            .arrow-g { stroke: var(--green); stroke-width: 1.5; fill: none; marker-end: url(#arr-g); }
+            .arrow-b { stroke: var(--blue); stroke-width: 1; fill: none; stroke-dasharray: 4 3; marker-end: url(#arr-b); }
+            .chain-label { font: 9px var(--mono); fill: var(--text-3); }
+          </style>
+
+          <!-- Column headers -->
+          <text x="64" y="16" class="lbl-col">Producers</text>
+          <text x="210" y="16" class="lbl-col">Storage (SSOT)</text>
+          <text x="360" y="16" class="lbl-col">Retention</text>
+          <text x="520" y="16" class="lbl-col">API</text>
+          <text x="680" y="16" class="lbl-col">Frontend</text>
+
+          <!-- PRODUCERS -->
+          <!-- Angel One 5m prefill -->
+          <rect x="4" y="28" width="122" height="42" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="12" y="43" class="box-title">AngelOne 5m</text>
+          <text x="12" y="55" class="box-sub">_daily_prefill_all</text>
+          <text x="12" y="65" class="box-sub">09:15–15:30</text>
+
+          <!-- Angel One 1D close -->
+          <rect x="4" y="80" width="122" height="42" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="12" y="95" class="box-title">AngelOne / yfinance</text>
+          <text x="12" y="107" class="box-sub">_daily_market_close</text>
+          <text x="12" y="117" class="box-sub">_sync  EOD 1D</text>
+
+          <!-- yfinance fallback -->
+          <rect x="4" y="132" width="122" height="32" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="12" y="147" class="box-title">yfinance fallback</text>
+          <text x="12" y="159" class="box-sub">get_stock_data_range</text>
+
+          <!-- STORAGE -->
+          <!-- candles table SSOT -->
+          <rect x="138" y="24" width="130" height="220" fill="var(--green-bg)" stroke="var(--green)" stroke-width="1.5" rx="6"/>
+          <text x="203" y="42" class="box-title" text-anchor="middle" style="fill:var(--green)">candles</text>
+          <text x="203" y="55" class="box-sub" text-anchor="middle" style="fill:var(--green); font-size:8px; font-weight:600">SINGLE SOURCE OF TRUTH</text>
+          <!-- timeframe list -->
+          <text x="148" y="74" class="box-sub">5m   10,170,555 rows</text>
+          <text x="148" y="87" class="box-sub">15m   3,366,296 rows</text>
+          <text x="148" y="100" class="box-sub">30m   1,106,165 rows</text>
+          <text x="148" y="113" class="box-sub">1h    2,417,013 rows</text>
+          <text x="148" y="126" class="box-sub">4h    (on-demand)</text>
+          <line x1="148" y1="134" x2="258" y2="134" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2"/>
+          <text x="148" y="148" class="box-sub" style="fill:var(--green); font-weight:600">1D    1,445,738 rows ←</text>
+          <line x1="148" y1="156" x2="258" y2="156" stroke="var(--green)" stroke-width="0.5" stroke-dasharray="3 2"/>
+          <text x="148" y="170" class="box-sub">1W       2,837 rows</text>
+          <text x="148" y="183" class="box-sub">1M         122 rows</text>
+          <text x="148" y="200" class="box-sub" style="fill:var(--text-3)">uix_candle_key</text>
+          <text x="148" y="212" class="box-sub" style="fill:var(--text-3)">(ticker, tf, ts)</text>
+          <text x="148" y="228" class="box-sub" style="fill:var(--text-3)">ON CONFLICT DO NOTHING</text>
+          <text x="148" y="240" class="box-sub" style="fill:var(--text-3)">(writers) / DO UPDATE</text>
+
+          <!-- Arrows: producers → candles -->
+          <line x1="126" y1="49" x2="137" y2="75" class="arrow-g"/>
+          <line x1="126" y1="101" x2="137" y2="147" class="arrow-g"/>
+          <line x1="126" y1="148" x2="137" y2="148" class="arrow-g"/>
+
+          <!-- RETENTION — Chain A -->
+          <rect x="282" y="28" width="124" height="100" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="288" y="43" class="box-title">Chain A — Intraday</text>
+          <text x="288" y="57" class="chain-label">5m → 15m</text>
+          <text x="288" y="70" class="chain-label">15m → 30m</text>
+          <text x="288" y="83" class="chain-label">30m → 1h</text>
+          <text x="288" y="96" class="chain-label">1h → 4h</text>
+          <text x="288" y="112" class="chain-label" style="fill:var(--text-3)">trading session anchor</text>
+          <text x="288" y="122" class="chain-label" style="fill:var(--text-3)">CandleResampler</text>
+
+          <!-- Chain B -->
+          <rect x="282" y="142" width="124" height="76" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="288" y="157" class="box-title">Chain B — Calendar</text>
+          <text x="288" y="171" class="chain-label">1D → 1W</text>
+          <text x="288" y="184" class="chain-label">1W → 1M</text>
+          <text x="288" y="198" class="chain-label" style="fill:var(--text-3)">Monday midnight TS</text>
+          <text x="288" y="211" class="chain-label" style="fill:var(--text-3)">CandleResampler</text>
+
+          <!-- Arrows: candles → retention -->
+          <line x1="268" y1="78" x2="281" y2="78" class="arrow"/>
+          <line x1="268" y1="180" x2="281" y2="180" class="arrow"/>
+          <!-- retention back to candles (writes) -->
+          <path d="M344,128 Q344,136 310,136 Q282,136 268,145" class="arrow-b"/>
+          <path d="M344,218 Q344,228 310,228 Q282,228 268,236" class="arrow-b"/>
+
+          <!-- API endpoints -->
+          <rect x="420" y="28" width="140" height="50" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="428" y="43" class="box-title">/api/stock-data/range</text>
+          <text x="428" y="56" class="box-sub">Primary: candles(1D)</text>
+          <text x="428" y="68" class="box-sub">Fallbacks → write candles(1D)</text>
+
+          <rect x="420" y="88" width="140" height="42" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="428" y="103" class="box-title">/api/stock-data/intraday</text>
+          <text x="428" y="116" class="box-sub">candles(5m/15m/30m/1h/4h)</text>
+          <text x="428" y="124" class="box-sub">chart_service.py</text>
+
+          <rect x="420" y="142" width="140" height="42" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="428" y="157" class="box-title">Weekly / Monthly</text>
+          <text x="428" y="170" class="box-sub">candles(1W/1M) primary</text>
+          <text x="428" y="182" class="box-sub">candles(1D) fallback resample</text>
+
+          <!-- Arrows: candles → API -->
+          <line x1="268" y1="52" x2="419" y2="52" class="arrow-g"/>
+          <line x1="268" y1="105" x2="419" y2="105" class="arrow"/>
+          <line x1="268" y1="163" x2="419" y2="163" class="arrow"/>
+
+          <!-- Frontend consumers -->
+          <rect x="575" y="28" width="110" height="28" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="583" y="44" class="box-sub">chart.html / market.html</text>
+
+          <rect x="575" y="66" width="110" height="28" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="583" y="82" class="box-sub">dashboard.js</text>
+
+          <rect x="575" y="104" width="110" height="28" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="583" y="120" class="box-sub">compare.html</text>
+
+          <rect x="575" y="142" width="110" height="28" fill="var(--surface-2)" stroke="var(--border)" rx="5"/>
+          <text x="583" y="158" class="box-sub">index.js / nav.js</text>
+
+          <!-- API → Frontend arrows -->
+          <line x1="560" y1="53" x2="574" y2="42" class="arrow"/>
+          <line x1="560" y1="53" x2="574" y2="80" class="arrow"/>
+          <line x1="560" y1="109" x2="574" y2="118" class="arrow"/>
+          <line x1="560" y1="163" x2="574" y2="156" class="arrow"/>
+
+          <!-- Legend -->
+          <rect x="4" y="280" width="620" height="34" fill="var(--surface-2)" stroke="var(--border)" rx="4"/>
+          <line x1="14" y1="300" x2="40" y2="300" stroke="var(--green)" stroke-width="1.5" marker-end="url(#arr-g)"/>
+          <text x="44" y="303" class="chain-label">candles write path</text>
+          <line x1="110" y1="300" x2="136" y2="300" stroke="var(--text-3)" stroke-width="1" marker-end="url(#arr)"/>
+          <text x="140" y="303" class="chain-label">candles read path</text>
+          <line x1="205" y1="300" x2="231" y2="300" stroke="var(--blue)" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arr-b)"/>
+          <text x="235" y="303" class="chain-label">retention writes back to candles</text>
+          <rect x="384" y="292" width="8" height="16" fill="var(--green-bg)" stroke="var(--green)"/>
+          <text x="396" y="303" class="chain-label" style="fill:var(--green)">SSOT</text>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- VALIDATION TABLE -->
+  <div class="section">
+    <div class="section-title">Sections 1–14 — Validation Results</div>
+    <div class="vtable-wrap">
+      <table class="vtable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Area</th>
+            <th>Status</th>
+            <th>Key Evidence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="num">1</td>
+            <td><strong>DB Source-of-Truth</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc"><code>candles(1D)</code>: 1,445,738 rows &gt; <code>stock_data</code>: 792,990. 0 tickers in stock_data-only. META OHLC mismatch is expected (corrupt yfinance USD vs correct Angel One INR).</td>
+          </tr>
+          <tr>
+            <td class="num">2</td>
+            <td><strong>Timestamp Format</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">0 non-midnight timestamps in <code>candles(1D)</code>. Column is <code>timestamp without time zone</code> (IST-naive). 100/100 random rows: epoch matches <code>datetime.date</code> ✓</td>
+          </tr>
+          <tr>
+            <td class="num">3</td>
+            <td><strong>1D Chart Path</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc"><code>chart_service.py</code> imports only <code>Candle</code> model. <code>_fetch_tf()</code> uses <code>db.query(Candle)</code> for all timeframes including <code>1D</code>. One comment-only reference to StockData (line 115).</td>
+          </tr>
+          <tr>
+            <td class="num">4</td>
+            <td><strong>1W Validation</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">Stored 1W timestamps are Monday midnight. Resample from <code>candles(1D)</code> matches stored 1W — no close diff &gt; 1.0. 0 duplicate 1W timestamps.</td>
+          </tr>
+          <tr>
+            <td class="num">5</td>
+            <td><strong>1M Validation</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">Stored 1M timestamps are first-trading-day midnight. Resample from <code>candles(1D)</code> matches stored 1M. Fallback path (<code>_monthly_intraday_from_1d</code>) produces correct IST epoch via <code>_ts_to_epoch()</code>.</td>
+          </tr>
+          <tr>
+            <td class="num">6</td>
+            <td><strong>4H Bucket Anchor</strong></td>
+            <td><span class="chip chip-fixed">✓ FIXED (Phase H)</span></td>
+            <td class="desc"><code>offset='75min'</code> for 4h rule (was <code>'15min'</code>, which gave 08:15 buckets because 555%240=75). First bucket: 09:15. Second bucket: 13:15. Both 5m→4h and 1h→4h paths verified.</td>
+          </tr>
+          <tr>
+            <td class="num">7</td>
+            <td><strong>Retention Chains</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">Chain A (5m→15m→30m→1h→4h) and Chain B (1D→1W→1M) both correct. 30m→1h and 1h→4h SKIPPED (expected: 30m data starts Jan 2026, no rows older than cutoff). Recent runs: 5m→15m COMPLETED for 3,372 tickers.</td>
+          </tr>
+          <tr>
+            <td class="num">8</td>
+            <td><strong>On-Demand Resampling</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc"><code>CandleResampler.resample_5m_to()</code> is pure Python/pandas — zero DB calls. <code>ChartService</code> cache is in-memory LRU only. No DB writes during chart render.</td>
+          </tr>
+          <tr>
+            <td class="num">9</td>
+            <td><strong>Daily Producers</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">Both <code>_daily_market_close_sync</code> and <code>_daily_prefill_all</code> write to <code>candles(1D)</code>. Use <code>ON CONFLICT ... DO UPDATE SET</code> (intentional: live EOD price refinement). Completeness check queries <code>candles WHERE timeframe='1D'</code>.</td>
+          </tr>
+          <tr>
+            <td class="num">10</td>
+            <td><strong>Fallback Writes</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">Both yfinance and AngelOne fallbacks in <code>get_stock_data_range</code> use <code>pg_insert(Candle).on_conflict_do_nothing(constraint="uix_candle_key")</code>. Zero writes to <code>stock_data</code>.</td>
+          </tr>
+          <tr>
+            <td class="num">11</td>
+            <td><strong>API Contract</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">Response: <code>{"time":"YYYY-MM-DD","open","high","low","close","adj_close","volume"}</code>. Ascending order. <code>adj_close == close</code> (no split-adj data in candles — same as before). Range params: 1M/3M/6M/1Y/ALL work. CurrentDayCandle merged last.</td>
+          </tr>
+          <tr>
+            <td class="num">12</td>
+            <td><strong>Frontend Consumers</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc"><code>toTimeNum()</code> parses YYYY-MM-DD as UTC midnight epoch. <code>dashboard.js</code> and <code>market.html</code> use <code>p.time/open/high/low/close</code> correctly. Pre-existing <code>compare.html</code> bugs (<code>range=1MO</code>, <code>c.timestamp</code>) are unchanged by Phase 1.</td>
+          </tr>
+          <tr>
+            <td class="num">13</td>
+            <td><strong>StockData Audit</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc">0 Category-A references (active chart-path reads from <code>stock_data</code>). See audit below.</td>
+          </tr>
+          <tr>
+            <td class="num">14</td>
+            <td><strong>Test Suite</strong></td>
+            <td><span class="chip chip-pass">✓ PASS</span></td>
+            <td class="desc"><strong>543 passed, 0 failed</strong>, 16 deprecation warnings only. Exit code 0 in 13.5s. Covers: 1D candle source, merge logic, price provider, ticker exchange resolution, preflight checks, intraday candles.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- STOCK DATA AUDIT -->
+  <div class="section">
+    <div class="section-title">Section 13 — StockData Reference Audit (main.py)</div>
+    <div class="audit-grid">
+      <div class="audit-card cat-a">
+        <div class="audit-cat">A — Chart path</div>
+        <div class="audit-count">0</div>
+        <div class="audit-desc">Active OHLCV chart reads from <code>stock_data</code>. All chart paths now go through <code>candles</code>.</div>
+      </div>
+      <div class="audit-card cat-b">
+        <div class="audit-cat">B — Non-chart (keep)</div>
+        <div class="audit-count">8</div>
+        <div class="audit-desc">52w range, market distribution, portfolio pricing, ticker-list selection for daily sync. Legitimate ongoing uses.</div>
+      </div>
+      <div class="audit-card cat-c">
+        <div class="audit-cat">C — Dead code</div>
+        <div class="audit-count">1</div>
+        <div class="audit-desc"><code>_merge_daily_candle_records()</code> — defined but never called after Phase J rewrite. Harmless.</div>
+      </div>
+      <div class="audit-card cat-d">
+        <div class="audit-cat">D — Tests</div>
+        <div class="audit-count">3</div>
+        <div class="audit-desc"><code>test_1d_preflight.py</code>, <code>test_daily_candle_merge.py</code>, <code>test_price_provider.py</code>. All 543 pass.</div>
+      </div>
+      <div class="audit-card cat-e">
+        <div class="audit-cat">E — Scripts</div>
+        <div class="audit-count">~20</div>
+        <div class="audit-desc">Historical one-off backfill/migration scripts. Not in production path. Not modified.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RISKS -->
+  <div class="section">
+    <div class="section-title">Remaining Risks</div>
+    <div class="vtable-wrap">
+      <div class="risk-item">
+        <div class="risk-sev sev-low"></div>
+        <div>
+          <div class="risk-title">Daily sync ticker list still sourced from stock_data</div>
+          <div class="risk-desc"><code>_daily_market_close_sync</code> queries <code>stock_metadata WHERE ticker IN (SELECT ticker FROM stock_data)</code> for its watched-ticker set. If <code>stock_data</code> is ever purged, no tickers would be synced. Pre-existing dependency, not a Phase 1 regression.</div>
+        </div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-sev sev-low"></div>
+        <div>
+          <div class="risk-title">_merge_daily_candle_records is dead code</div>
+          <div class="risk-desc">Function defined at <code>main.py:3211</code> but never called after Phase J. Could confuse future developers. Safe to delete in a cleanup pass.</div>
+        </div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-sev sev-low"></div>
+        <div>
+          <div class="risk-title">compare.html pre-existing bugs</div>
+          <div class="risk-desc">Sends <code>range=1MO</code> (unrecognized → returns ALL data) and accesses <code>c.timestamp</code> (field is <code>c.time</code>). Both bugs pre-date Phase 1. Chart renders incorrectly but not broken by this migration.</div>
+        </div>
+      </div>
+      <div class="risk-item">
+        <div class="risk-sev sev-low"></div>
+        <div>
+          <div class="risk-title">4h and older intraday charts always empty until more retention history accumulates</div>
+          <div class="risk-desc">30m data starts 2026-01-01 (~180 trading days), so retention cutoff (180 sessions) means 30m→1h and 1h→4h are always SKIPPED. candles(4h) remains empty; chart falls back to on-demand resampling from candles(1h). Expected — matches timeframe tiering gap noted in memory.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHASES SUMMARY -->
+  <div class="section">
+    <div class="section-title">Phases Implemented</div>
+    <div class="vtable-wrap">
+      <table class="vtable">
+        <thead>
+          <tr><th>Phase</th><th>Change</th><th>Files</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">B</td><td class="desc">Backfilled <code>candles(1D)</code> from <code>stock_data</code> — 64,137 new rows, 728,853 skipped (already existed)</td><td class="num"><code>scripts/backfill_1d_candles.py</code></td></tr>
+          <tr><td class="num">G</td><td class="desc">Weekly/monthly fallbacks now resample from <code>candles(1D)</code> via <code>_ts_to_epoch()</code> — no stock_data dependency</td><td class="num"><code>main.py</code></td></tr>
+          <tr><td class="num">H</td><td class="desc">4h offset fix: <code>offset='75min'</code> (was <code>'15min'</code>) so first bucket is 09:15 not 08:15</td><td class="num"><code>resampler.py</code></td></tr>
+          <tr><td class="num">I</td><td class="desc">Retention chain verified — both chains correct, no cross-chain contamination</td><td class="num">read-only</td></tr>
+          <tr><td class="num">J</td><td class="desc"><code>get_stock_data_range</code> rewritten: primary = <code>candles(1D)</code>; fallbacks write to <code>candles(1D)</code> not <code>stock_data</code></td><td class="num"><code>main.py</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <span>Phase 1 complete · <code>candles</code> is SSOT · 543/543 tests pass · 0 chart-path StockData reads</span>
+    <span>Validated 2026-08-19</span>
+  </div>
+
+</div>

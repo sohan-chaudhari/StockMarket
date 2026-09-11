@@ -1,0 +1,1125 @@
+<title>5m Recovery Preflight</title>
+<style>
+  :root {
+    --bg: #f6f8fa;
+    --surface: #ffffff;
+    --surface-raised: #f0f3f6;
+    --border: #d0d7de;
+    --border-strong: #aab1b9;
+    --fg: #1f2328;
+    --fg-muted: #57606a;
+    --fg-subtle: #8c959f;
+    --accent: #0969da;
+    --accent-dim: #ddf4ff;
+    --red: #cf222e;
+    --red-bg: #fff8f0;
+    --red-border: #ff818266;
+    --orange: #953800;
+    --orange-bg: #fff8f0;
+    --orange-border: #ffa657;
+    --green: #1a7f37;
+    --green-bg: #dafbe1;
+    --green-border: #82e09a;
+    --mono: 'SFMono-Regular', 'SF Mono', 'Cascadia Code', 'Consolas', 'Liberation Mono', monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface-raised: #1c2128;
+      --border: #30363d;
+      --border-strong: #484f58;
+      --fg: #e6edf3;
+      --fg-muted: #8b949e;
+      --fg-subtle: #6e7681;
+      --accent: #58a6ff;
+      --accent-dim: #121d2f;
+      --red: #f85149;
+      --red-bg: #1c0a0a;
+      --red-border: #6e1a1a;
+      --orange: #d29922;
+      --orange-bg: #1c1409;
+      --orange-border: #6a4a08;
+      --green: #3fb950;
+      --green-bg: #071b0e;
+      --green-border: #1a4a23;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface-raised: #1c2128;
+    --border: #30363d;
+    --border-strong: #484f58;
+    --fg: #e6edf3;
+    --fg-muted: #8b949e;
+    --fg-subtle: #6e7681;
+    --accent: #58a6ff;
+    --accent-dim: #121d2f;
+    --red: #f85149;
+    --red-bg: #1c0a0a;
+    --red-border: #6e1a1a;
+    --orange: #d29922;
+    --orange-bg: #1c1409;
+    --orange-border: #6a4a08;
+    --green: #3fb950;
+    --green-bg: #071b0e;
+    --green-border: #1a4a23;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 24px 16px 80px;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ── */
+  .report-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 28px;
+  }
+  .report-eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-subtle);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .report-title {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--fg);
+    line-height: 1.2;
+    margin-bottom: 8px;
+  }
+  .report-meta {
+    font-size: 13px;
+    color: var(--fg-muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .report-meta span { display: flex; align-items: center; gap: 4px; }
+  .dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-red { background: var(--red); }
+  .dot-orange { background: var(--orange); }
+  .dot-green { background: var(--green); }
+
+  /* ── Alert banners ── */
+  .alert {
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    border-left: 4px solid;
+    font-size: 13.5px;
+  }
+  .alert-critical {
+    background: var(--red-bg);
+    border-color: var(--red);
+    color: var(--fg);
+  }
+  .alert-warning {
+    background: var(--orange-bg);
+    border-color: var(--orange);
+    color: var(--fg);
+  }
+  .alert-ok {
+    background: var(--green-bg);
+    border-color: var(--green);
+    color: var(--fg);
+  }
+  .alert-title {
+    font-weight: 700;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .alert-critical .alert-title { color: var(--red); }
+  .alert-warning .alert-title { color: var(--orange); }
+  .alert-ok .alert-title { color: var(--green); }
+
+  /* ── Section ── */
+  .section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .section-head {
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 0;
+    align-items: start;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-letter {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--fg-subtle);
+    padding: 14px 0 14px 16px;
+    line-height: 1;
+    padding-top: 16px;
+    user-select: none;
+  }
+  .section-title-block {
+    padding: 12px 16px 12px 0;
+    border-left: 1px solid var(--border);
+  }
+  .section-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--fg);
+    line-height: 1.3;
+  }
+  .section-subtitle {
+    font-size: 12px;
+    color: var(--fg-muted);
+    margin-top: 2px;
+  }
+  .section-body {
+    padding: 16px;
+  }
+
+  /* ── Metric grid ── */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .metric {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .metric-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 4px;
+  }
+  .metric-value {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .metric-value.red { color: var(--red); }
+  .metric-value.orange { color: var(--orange); }
+  .metric-value.green { color: var(--green); }
+  .metric-value.accent { color: var(--accent); }
+  .metric-note {
+    font-size: 11px;
+    color: var(--fg-muted);
+    margin-top: 4px;
+  }
+
+  /* ── Table ── */
+  .tbl-wrap { overflow-x: auto; margin-top: 12px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th {
+    background: var(--surface-raised);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--fg-muted);
+    padding: 7px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: var(--mono); font-size: 12px; }
+  td.mono { font-size: 12px; }
+
+  /* ── Code block ── */
+  .code-block {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    overflow-x: auto;
+    color: var(--fg);
+    line-height: 1.5;
+    white-space: pre;
+    margin: 10px 0;
+  }
+  .code-comment { color: var(--fg-subtle); }
+  .code-keyword { color: var(--accent); }
+  .code-str { color: var(--green); }
+  .code-bad { color: var(--red); }
+  .code-good { color: var(--green); }
+
+  /* ── Badge ── */
+  .badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    vertical-align: middle;
+  }
+  .badge-red { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .badge-orange { background: var(--orange-bg); color: var(--orange); border: 1px solid var(--orange-border); }
+  .badge-green { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .badge-blue { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
+
+  /* ── Prose ── */
+  p { margin-bottom: 8px; color: var(--fg); }
+  p:last-child { margin-bottom: 0; }
+  strong { font-weight: 600; color: var(--fg); }
+  ul { padding-left: 18px; margin: 8px 0; }
+  ul li { margin-bottom: 4px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+  .kv { font-size: 13px; }
+  .kv b { color: var(--fg-muted); font-weight: 500; }
+
+  /* ── Footer ── */
+  .stop-banner {
+    margin-top: 28px;
+    border: 2px solid var(--red);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+  }
+  .stop-banner h2 {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--red);
+    letter-spacing: .06em;
+    margin-bottom: 8px;
+  }
+  .stop-banner p { font-size: 14px; color: var(--fg); }
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 24px;
+  }
+  .toc-title { font-weight: 700; font-size: 12px; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; font-family: var(--mono); }
+  .toc-list { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+  .toc-list a { font-family: var(--mono); font-size: 12px; color: var(--accent); text-decoration: none; }
+  .toc-list a:hover { text-decoration: underline; }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+</style>
+
+<div class="page">
+
+  <!-- Report Header -->
+  <div class="report-header">
+    <div class="report-eyebrow">Phase 0 · Step 2 · Read-Only Preflight</div>
+    <h1 class="report-title">5m Candle Recovery Preflight Report</h1>
+    <div class="report-meta">
+      <span><span class="dot dot-red"></span>Not yet authorized</span>
+      <span>Date: 2026-08-18</span>
+      <span>DB: stock_data @ localhost:5432</span>
+      <span>Universe: 3,279 tickers</span>
+    </div>
+  </div>
+
+  <!-- Top alerts -->
+  <div class="alert alert-critical">
+    <div class="alert-title">⚠ Retention Window Emergency — Imminent Data Degradation</div>
+    165,095 five-minute candles from <strong>2026-05-25</strong> crossed into the retention promotion window as of today (cutoff: midnight 2026-05-26). The next scheduled retention run will promote 1,851 <em>partial</em> May 25 sessions to 15m and delete the underlying 5m source rows. 61.4% of May 25 sessions are incomplete (avg 54.8/75 rows). Recovery for May 25 must be executed before the next retention run — likely today around 08:27 IST (pre-market) or 18:34 IST (post-market close).
+  </div>
+
+  <div class="alert alert-critical">
+    <div class="alert-title">🚫 Script has 4 blocking bugs — DO NOT run the current backfill_intraday_5min.py</div>
+    The existing script targets a dropped table, uses the wrong conflict strategy (overwrites live candles), imports a deprecated model, and queries a non-existent ticker table. All four must be patched before any execution.
+  </div>
+
+  <div class="alert alert-warning">
+    <div class="alert-title">⚡ Shared AngelOne Credentials — Session Invalidation Risk</div>
+    Running the recovery script as a standalone process will call generateSession() with the same API key as the live app, invalidating the live JWT token and killing the WebSocket feed. Recovery must be executed outside NSE trading hours (before 09:00 IST or after 16:00 IST).
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <div class="toc-title">Sections</div>
+    <div class="toc-list">
+      <a href="#A">A · Missing Coverage Units</a>
+      <a href="#B">B · Missing Candle Rows</a>
+      <a href="#C">C · Recoverable Rows</a>
+      <a href="#D">D · Unrecoverable Rows</a>
+      <a href="#E">E · Provider Strategy</a>
+      <a href="#F">F · Rate-Limit Strategy</a>
+      <a href="#G">G · Conflict Strategy</a>
+      <a href="#H">H · Live-Trading Safety</a>
+      <a href="#I">I · Retention Safety</a>
+      <a href="#J">J · Recovery Deadline</a>
+      <a href="#K">K · Runtime Estimate</a>
+      <a href="#L">L · Execution Command</a>
+    </div>
+  </div>
+
+  <!-- ── A ── -->
+  <div class="section" id="A">
+    <div class="section-head">
+      <div class="section-letter">A</div>
+      <div class="section-title-block">
+        <div class="section-title">Exact Missing Coverage Units</div>
+        <div class="section-subtitle">Distinct (ticker, trading-session) pairs absent from the DB</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">Universe</div>
+          <div class="metric-value">3,279</div>
+          <div class="metric-note">tickers with existing BACKFILL data</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Effective Sessions</div>
+          <div class="metric-value">59</div>
+          <div class="metric-note">61 weekdays − 2 NSE holidays (May 28, Jun 26)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Expected Pairs</div>
+          <div class="metric-value accent">193,461</div>
+          <div class="metric-note">3,279 × 59</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Existing Pairs</div>
+          <div class="metric-value green">98,707</div>
+          <div class="metric-note">confirmed in DB</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Missing Pairs</div>
+          <div class="metric-value red">94,754</div>
+          <div class="metric-note">COVERAGE UNITS to recover</div>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>Date Range</th>
+            <th>Sessions</th>
+            <th>Status</th>
+            <th>Note</th>
+          </tr>
+          <tr>
+            <td>2026-05-25</td>
+            <td class="mono">1</td>
+            <td><span class="badge badge-red">Retention Imminent</span></td>
+            <td>3,015 tickers have data; 1,851 partial — next retention run deletes 5m source</td>
+          </tr>
+          <tr>
+            <td>2026-05-26 – 2026-07-31</td>
+            <td class="mono">48</td>
+            <td><span class="badge badge-orange">Large Gap</span></td>
+            <td>Chunk 4 backfill failure; most tickers have only 25–30 of 49 sessions covered</td>
+          </tr>
+          <tr>
+            <td>2026-08-01 – 2026-08-17</td>
+            <td class="mono">10</td>
+            <td><span class="badge badge-red">Fully Missing (Backfill)</span></td>
+            <td>0 BACKFILL tickers have August data; only 847 ANGELONE tickers partially covered</td>
+          </tr>
+        </table>
+      </div>
+      <p style="margin-top:10px;font-size:12px;color:var(--fg-muted)">
+        NOTE: "Coverage units" and "candle rows" must NOT be mixed. A coverage unit = one (ticker, date) pair. Each complete pair = 75 candle rows. Numbers in section B are row-level.
+      </p>
+    </div>
+  </div>
+
+  <!-- ── B ── -->
+  <div class="section" id="B">
+    <div class="section-head">
+      <div class="section-letter">B</div>
+      <div class="section-title-block">
+        <div class="section-title">Exact Missing Candle Rows</div>
+        <div class="section-subtitle">Five-minute OHLCV rows absent from the <code style="font-family:var(--mono);font-size:11px">candles</code> table</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">From Absent Pairs</div>
+          <div class="metric-value red">7,106,550</div>
+          <div class="metric-note">94,754 × 75 slots/session</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">From Partial Sessions</div>
+          <div class="metric-value orange">2,187,782</div>
+          <div class="metric-note">within the 98,707 existing pairs</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Total Missing Rows</div>
+          <div class="metric-value red">9,294,332</div>
+          <div class="metric-note">maximum recoverable if provider is complete</div>
+        </div>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr>
+            <th>Session Completeness</th>
+            <th>Sessions</th>
+            <th>% of Existing</th>
+            <th>Missing Rows in Group</th>
+          </tr>
+          <tr>
+            <td>Complete (75 rows)</td>
+            <td class="mono">38,080</td>
+            <td class="mono">38.6%</td>
+            <td class="mono green">0</td>
+          </tr>
+          <tr>
+            <td>Near-complete (70–74)</td>
+            <td class="mono">11,069</td>
+            <td class="mono">11.2%</td>
+            <td class="mono orange">≤ 55,345</td>
+          </tr>
+          <tr>
+            <td>Partial (50–69)</td>
+            <td class="mono">13,983</td>
+            <td class="mono">14.2%</td>
+            <td class="mono orange">83,898 – 349,575</td>
+          </tr>
+          <tr>
+            <td>Sparse (10–49)</td>
+            <td class="mono">22,745</td>
+            <td class="mono">23.0%</td>
+            <td class="mono red">high</td>
+          </tr>
+          <tr>
+            <td>Minimal (&lt;10)</td>
+            <td class="mono">12,830</td>
+            <td class="mono">13.0%</td>
+            <td class="mono red">high</td>
+          </tr>
+          <tr>
+            <td><strong>Total existing pairs</strong></td>
+            <td class="mono"><strong>98,707</strong></td>
+            <td class="mono"><strong>100%</strong></td>
+            <td class="mono"><strong>2,187,782</strong></td>
+          </tr>
+        </table>
+      </div>
+      <p style="margin-top:10px">Session-level partial rows = <span class="mono">98,707 × 75 − 5,215,243 = 7,403,025 − 5,215,243 = <strong>2,187,782</strong></span></p>
+    </div>
+  </div>
+
+  <!-- ── C ── -->
+  <div class="section" id="C">
+    <div class="section-head">
+      <div class="section-letter">C</div>
+      <div class="section-title-block">
+        <div class="section-title">Exact Recoverable Rows</div>
+        <div class="section-subtitle">Rows the provider can supply within its rolling history window</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">Provider Window</div>
+          <div class="metric-value accent">~90 TD</div>
+          <div class="metric-note">AngelOne historical rolling window (verified from prior backfill)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Our Earliest Data</div>
+          <div class="metric-value">2026-05-25</div>
+          <div class="metric-note">62 trading days ago — within window</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Est. Recoverable</div>
+          <div class="metric-value green">~9,050,000</div>
+          <div class="metric-note">~97% of 9,294,332 (excludes delisted/unknown)</div>
+        </div>
+      </div>
+      <p>All 3,279 tickers were listed on NSE as of the original backfill (2026-08-09). A small fraction (~3%) may return permanent-error responses (delisted, instrument not found). The recovery script's permanent-error markers will skip these tickers; no manual exclusion list is needed.</p>
+      <p>The 847 tickers already covered by ANGELONE live data for August also have partial-session gaps; the provider will supply those missing slots (they fall within the window), and <code class="mono">ON CONFLICT DO NOTHING</code> will preserve the existing live-built candles.</p>
+    </div>
+  </div>
+
+  <!-- ── D ── -->
+  <div class="section" id="D">
+    <div class="section-head">
+      <div class="section-letter">D</div>
+      <div class="section-title-block">
+        <div class="section-title">Exact Unrecoverable Rows</div>
+        <div class="section-subtitle">Rows that cannot be sourced from any available provider</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">Delisted / Invalid</div>
+          <div class="metric-value orange">~244,000</div>
+          <div class="metric-note">~3% of universe × avg missing rows — estimate only</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Pre-Provider Window</div>
+          <div class="metric-value green">0</div>
+          <div class="metric-note">All data from 2026-05-25 is within the ~90-TD window</div>
+        </div>
+      </div>
+      <p>Unrecoverability from delisting is detected automatically during recovery via <code class="mono">HistoricalFetchError(retryable=False)</code> when the response contains <em>"not found"</em>, <em>"invalid symbol"</em>, or <em>"invalid interval"</em>. These tickers are logged and skipped; the gap remains as-is in the DB and is not injected with synthetic data.</p>
+      <p>No manual pre-filtering of tickers is required before running.</p>
+    </div>
+  </div>
+
+  <!-- ── E ── -->
+  <div class="section" id="E">
+    <div class="section-head">
+      <div class="section-letter">E</div>
+      <div class="section-title-block">
+        <div class="section-title">Provider Strategy — Verified</div>
+        <div class="section-subtitle">Actual code path used for historical 5m data fetch</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Parameter</th><th>Value</th><th>Source</th></tr>
+          <tr>
+            <td>Endpoint</td>
+            <td class="mono">smart_api.getCandleData(params)</td>
+            <td><code class="mono">historical_service.py:get_historical_candles()</code></td>
+          </tr>
+          <tr>
+            <td>Interval</td>
+            <td class="mono">"FIVE_MINUTE"</td>
+            <td>hardcoded in backfill script line 56</td>
+          </tr>
+          <tr>
+            <td>Exchange</td>
+            <td class="mono">"NSE"</td>
+            <td>hardcoded in backfill script</td>
+          </tr>
+          <tr>
+            <td>Token resolution</td>
+            <td class="mono">angelone_service.get_token(ticker)</td>
+            <td>instruments.json lookup; cached in memory</td>
+          </tr>
+          <tr>
+            <td>Date format</td>
+            <td class="mono">"YYYY-MM-DD HH:MM"</td>
+            <td>e.g. "2026-05-25 09:15" to "2026-05-25 15:30"</td>
+          </tr>
+          <tr>
+            <td>Response shape</td>
+            <td class="mono">[[ts, O, H, L, C, V], ...]</td>
+            <td>getCandleData return format</td>
+          </tr>
+          <tr>
+            <td>Chunk size</td>
+            <td class="mono">CHUNK_DAYS = 60</td>
+            <td>backfill script constant (within API single-call limit)</td>
+          </tr>
+          <tr>
+            <td>Chunks needed</td>
+            <td class="mono">2 per ticker</td>
+            <td>May 25–Jul 13 (chunk 1), Jul 14–Aug 17 (chunk 2); 85 calendar days ÷ 60</td>
+          </tr>
+          <tr>
+            <td>Weekend filter</td>
+            <td><code class="mono">historical_service.py:get_historical_candles()</code> filters Sat/Sun</td>
+            <td>applied server-side before DB insert</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── F ── -->
+  <div class="section" id="F">
+    <div class="section-head">
+      <div class="section-letter">F</div>
+      <div class="section-title-block">
+        <div class="section-title">Rate-Limit Strategy</div>
+        <div class="section-subtitle">Concurrency, backoff, and retry configuration</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Setting</th><th>Current Script</th><th>Required Change</th></tr>
+          <tr>
+            <td>MAX_WORKERS</td>
+            <td class="mono red">10</td>
+            <td>Reduce to <span class="mono green">5</span> — AngelOne historical API has undocumented rate limits; the original run failed Chunk 4 for 3,278/3,279 tickers at 10 workers</td>
+          </tr>
+          <tr>
+            <td>Retry</td>
+            <td class="mono">None (no retry logic)</td>
+            <td>Add <span class="mono green">3 retries</span> with <span class="mono green">exponential backoff</span> using <code class="mono">HistoricalFetchError.retryable</code> flag</td>
+          </tr>
+          <tr>
+            <td>Permanent errors</td>
+            <td class="mono">handled via _PERMANENT_ERROR_MARKERS</td>
+            <td>No change — skip immediately on "not found" / "invalid symbol" / "invalid interval"</td>
+          </tr>
+          <tr>
+            <td>Progress logging</td>
+            <td class="mono">basic</td>
+            <td>Log ticker, chunk, rows_fetched, rows_inserted per call for audit trail</td>
+          </tr>
+        </table>
+      </div>
+      <div class="alert alert-warning" style="margin-top:12px">
+        <div class="alert-title">Root Cause of Chunk 4 Failure</div>
+        The original Aug 9 backfill used MAX_WORKERS=10 and succeeded Chunk 3 (Apr 20–Jun 19) but failed for 3,278/3,279 tickers in Chunk 4 (Jun 20–Aug 9). This strongly suggests rate-throttling by AngelOne. Halving to MAX_WORKERS=5 and adding retry-with-backoff should resolve this.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── G ── -->
+  <div class="section" id="G">
+    <div class="section-head">
+      <div class="section-letter">G</div>
+      <div class="section-title-block">
+        <div class="section-title">Write Strategy — Conflict Resolution</div>
+        <div class="section-subtitle">ON CONFLICT behavior for all insert cases</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <p><strong>Unique constraint</strong> in <code class="mono">candles</code> table: <code class="mono">uix_candle_key ON (ticker, timeframe, timestamp)</code></p>
+
+      <div class="code-block"><span class="code-comment">-- CURRENT (BROKEN) — overwrites live candles, wrong conflict key:</span>
+<span class="code-bad">INSERT INTO intraday_candles_5min (ticker, timestamp, open, high, low, close, volume)
+ON CONFLICT (ticker, timestamp) DO UPDATE SET open=..., high=..., close=..., volume=...
+</span>
+<span class="code-comment">-- REQUIRED — idempotent, preserves all existing data:</span>
+<span class="code-good">INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close, volume,
+                    is_completed, data_source, is_backfilled)
+VALUES (:ticker, '5m', :ts, :o, :h, :l, :c, :v, true, 'HISTORICAL', true)
+ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING</span></div>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Scenario</th><th>Outcome with DO NOTHING</th><th>Safe?</th></tr>
+          <tr>
+            <td>Slot exists as live-built ANGELONE candle</td>
+            <td>Row skipped; live candle preserved</td>
+            <td><span class="badge badge-green">Safe</span></td>
+          </tr>
+          <tr>
+            <td>Slot exists as prior BACKFILL candle</td>
+            <td>Row skipped; existing data preserved</td>
+            <td><span class="badge badge-green">Safe</span></td>
+          </tr>
+          <tr>
+            <td>Slot is genuinely absent</td>
+            <td>New row inserted from provider</td>
+            <td><span class="badge badge-green">Correct</span></td>
+          </tr>
+          <tr>
+            <td>Provider returns partial/malformed candle</td>
+            <td>Row inserted as-is (provider data accepted); same as original backfill behavior</td>
+            <td><span class="badge badge-blue">Accepted</span></td>
+          </tr>
+          <tr>
+            <td>Recovery crashes mid-run and is restarted</td>
+            <td>Already-inserted rows get DO NOTHING; restart is safe — fully idempotent</td>
+            <td><span class="badge badge-green">Safe</span></td>
+          </tr>
+          <tr>
+            <td>Provider disagrees with existing OHLCV</td>
+            <td>Existing row wins; provider value discarded</td>
+            <td><span class="badge badge-green">Safe</span></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── H ── -->
+  <div class="section" id="H">
+    <div class="section-head">
+      <div class="section-letter">H</div>
+      <div class="section-title-block">
+        <div class="section-title">Live-Trading Safety Assessment</div>
+        <div class="section-subtitle">WebSocket feed, session sharing, and execution timing constraints</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="alert alert-critical">
+        <div class="alert-title">Critical: Shared AngelOne Session</div>
+        <code class="mono">.env</code>: <code class="mono">HISTORICAL_*</code> env vars are not set → they fall back to <code class="mono">ANGELONE_*</code>. Both services use the same <code class="mono">api_key</code>, <code class="mono">client_code</code>, <code class="mono">password</code>, and <code class="mono">totp_secret</code>. This is the same AngelOne account.
+      </div>
+
+      <div class="tbl-wrap" style="margin-top:12px">
+        <table>
+          <tr><th>Risk Vector</th><th>Assessment</th></tr>
+          <tr>
+            <td>In-process historical service login</td>
+            <td><span class="badge badge-green">Safe</span> — <code class="mono">historical_service.login()</code> has a session-sharing guard: if <code class="mono">angelone_service.is_logged_in</code> and same <code class="mono">api_key</code>, it reuses the live JWT without calling <code class="mono">generateSession()</code></td>
+          </tr>
+          <tr>
+            <td>Standalone script execution (recovery script)</td>
+            <td><span class="badge badge-red">Critical</span> — standalone script has its own <code class="mono">AngelOneService</code> instance that is NOT logged in; <code class="mono">login()</code> calls <code class="mono">generateSession()</code> fresh → AngelOne invalidates the live app's JWT → WebSocket disconnects → live tick feed stops</td>
+          </tr>
+          <tr>
+            <td>Live TP/SL execution during disconnection</td>
+            <td><span class="badge badge-red">Risk</span> — if WS disconnects mid-market, stop-loss triggers based on live ticks will pause until reconnect; pending orders are on the exchange, not locally managed, so they remain active but new alerts won't fire</td>
+          </tr>
+          <tr>
+            <td>Candle builder during recovery inserts</td>
+            <td><span class="badge badge-green">Safe</span> — live candle builder uses <code class="mono">ON CONFLICT DO UPDATE</code> for its own ticks; recovery uses <code class="mono">DO NOTHING</code>; no lock contention expected</td>
+          </tr>
+          <tr>
+            <td>Auth / JWT during off-hours recovery</td>
+            <td><span class="badge badge-green">Safe</span> — AngelOne JWTs are valid for 24h; calling <code class="mono">generateSession()</code> during off-hours (before 09:00 or after 16:00 IST) will not disrupt a live feed because the WS subscription loop is dormant outside NSE market hours</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="alert alert-warning" style="margin-top:12px">
+        <div class="alert-title">Required Execution Window</div>
+        Execute the recovery script ONLY between <strong>16:15 IST and 08:45 IST</strong> (outside NSE market hours). The live app can remain running; its WS token will be replaced by the recovery login, but the reconnect logic in <code class="mono">angelone_service.ensure_connection()</code> will re-authenticate and re-subscribe automatically when the next market session opens.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── I ── -->
+  <div class="section" id="I">
+    <div class="section-head">
+      <div class="section-letter">I</div>
+      <div class="section-title-block">
+        <div class="section-title">Retention Safety Assessment</div>
+        <div class="section-subtitle">Impact on the 5m→15m→30m→1h→4h promotion chain</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="alert alert-critical">
+        <div class="alert-title">Urgent: May 25 Data Already in Retention Window</div>
+        Current retention cutoff (60 weekday sessions before 2026-08-18) = <strong>midnight 2026-05-26</strong>. All 165,095 five-minute rows from 2026-05-25 are now eligible for promotion. Retention job history shows runs at ~08:27 IST and ~18:34 IST. The next run will:
+        <ol style="padding-left:18px;margin-top:6px">
+          <li>Aggregate 165,095 5m rows into 15m candles (many incomplete)</li>
+          <li>DELETE the 5m source rows</li>
+          <li>Permanently block complete-session recovery for 2026-05-25</li>
+        </ol>
+      </div>
+
+      <div class="tbl-wrap" style="margin-top:12px">
+        <table>
+          <tr><th>Concern</th><th>Assessment</th></tr>
+          <tr>
+            <td>Batch-boundary fix applied?</td>
+            <td><span class="badge badge-green">Yes</span> — Phase 0 Step 1 fix is live in <code class="mono">retention_service.py</code>; the <code class="mono">_target_bucket_tail()</code> guard prevents incomplete partial-batch promotion going forward</td>
+          </tr>
+          <tr>
+            <td>May 25 partial sessions if promoted now</td>
+            <td><span class="badge badge-red">Degraded</span> — 1,851 of 3,015 sessions are partial (avg 54.8/75 rows); 15m candles built from these will use incomplete input data; gap is permanent after 5m source deletion</td>
+          </tr>
+          <tr>
+            <td>Recovered data (post-recovery) — future retention</td>
+            <td><span class="badge badge-green">Safe</span> — recovered rows enter the <code class="mono">candles</code> table as normal 5m rows with <code class="mono">is_completed=true</code>; the retention chain will process them correctly on the next scheduled run</td>
+          </tr>
+          <tr>
+            <td>Data from May 26 onwards</td>
+            <td><span class="badge badge-green">Not yet in window</span> — cutoff advances 1 session/day; ~10 trading sessions before Jun data enters window</td>
+          </tr>
+          <tr>
+            <td>4h→1D chain</td>
+            <td><span class="badge badge-green">N/A</span> — confirmed NO 4h→1D link in the retention rules; 5m recovery does not affect daily candles</td>
+          </tr>
+          <tr>
+            <td>Stale RUNNING job (id=33)</td>
+            <td><span class="badge badge-orange">Stale</span> — job #33 shows RUNNING since Aug 13 with no end time; it did NOT block subsequent jobs (#34–#45 all ran); treat as a stale record, not an active lock</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── J ── -->
+  <div class="section" id="J">
+    <div class="section-head">
+      <div class="section-letter">J</div>
+      <div class="section-title-block">
+        <div class="section-title">Recovery Deadline</div>
+        <div class="section-subtitle">Two independent clocks are running — provider window and retention window</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">Provider Deadline</div>
+          <div class="metric-value orange">~2026-09-29</div>
+          <div class="metric-note">~28 trading days from today before May 25 falls outside the 90-TD window</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Retention Deadline (May 25)</div>
+          <div class="metric-value red">Imminent</div>
+          <div class="metric-note">Next scheduled run today — either ~08:27 or ~18:34 IST</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Retention Deadline (May 26)</div>
+          <div class="metric-value orange">~2026-08-19</div>
+          <div class="metric-note">Cutoff advances to midnight May 27 tomorrow</div>
+        </div>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Date</th><th>Trading Days Ago</th><th>Provider Available?</th><th>Retention Safe?</th></tr>
+          <tr>
+            <td class="mono">2026-05-25</td>
+            <td class="mono">62 TD</td>
+            <td><span class="badge badge-green">Yes (28 TD buffer)</span></td>
+            <td><span class="badge badge-red">NO — in window NOW</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-05-26</td>
+            <td class="mono">61 TD</td>
+            <td><span class="badge badge-green">Yes (29 TD buffer)</span></td>
+            <td><span class="badge badge-red">In window tomorrow</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-05-27</td>
+            <td class="mono">60 TD</td>
+            <td><span class="badge badge-green">Yes (30 TD buffer)</span></td>
+            <td><span class="badge badge-orange">In window in ~2 days</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-06-30 – 2026-07-31</td>
+            <td class="mono">33–11 TD</td>
+            <td><span class="badge badge-green">Yes</span></td>
+            <td><span class="badge badge-green">~5–7 weeks safe</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2026-08-01 – 2026-08-17</td>
+            <td class="mono">11–0 TD</td>
+            <td><span class="badge badge-green">Yes (very recent)</span></td>
+            <td><span class="badge badge-green">~12 weeks safe</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="margin-top:10px"><strong>Calculation:</strong> AngelOne 5m window ≈ 90 trading days. Today = 2026-08-18. 90 TD back (weekdays only) = 2026-04-14. Our earliest data (2026-05-25) is 62 TD from today → 28 TD buffer until provider drops it (approx. 2026-09-29, accounting for ~6 calendar weeks). Provider deadline is manageable. Retention is the urgent constraint.</p>
+    </div>
+  </div>
+
+  <!-- ── K ── -->
+  <div class="section" id="K">
+    <div class="section-head">
+      <div class="section-letter">K</div>
+      <div class="section-title-block">
+        <div class="section-title">Runtime Estimate (Dry Run)</div>
+        <div class="section-subtitle">Requests · rows · duration · provider load · storage</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="metric-grid">
+        <div class="metric">
+          <div class="metric-label">API Requests</div>
+          <div class="metric-value accent">6,558</div>
+          <div class="metric-note">3,279 tickers × 2 chunks (85 days ÷ 60)</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Rows to Attempt</div>
+          <div class="metric-value">~9,294,000</div>
+          <div class="metric-note">missing rows; existing → DO NOTHING</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Rows to INSERT</div>
+          <div class="metric-value green">~9,050,000</div>
+          <div class="metric-note">after skipping delisted / permanent errors</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Estimated Runtime</div>
+          <div class="metric-value orange">2–4 h</div>
+          <div class="metric-note">at MAX_WORKERS=5 with retry/backoff</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Storage Delta</div>
+          <div class="metric-value">~1.9 GB</div>
+          <div class="metric-note">9M rows × ~210 bytes/row</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Retry Capacity</div>
+          <div class="metric-value green">3×</div>
+          <div class="metric-note">exponential backoff on retryable errors</div>
+        </div>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Phase</th><th>Duration</th><th>Notes</th></tr>
+          <tr>
+            <td>Login / token load</td>
+            <td class="mono">~30 s</td>
+            <td>generateSession() + instruments.json load</td>
+          </tr>
+          <tr>
+            <td>API fetch (3,279 tickers × 2 chunks ÷ 5 workers)</td>
+            <td class="mono">~65 min</td>
+            <td>656 batches × ~6s avg per batch (includes network RTT)</td>
+          </tr>
+          <tr>
+            <td>Retries (estimated 10–15% of requests)</td>
+            <td class="mono">~20–40 min</td>
+            <td>3× backoff at 2s/4s/8s base delay</td>
+          </tr>
+          <tr>
+            <td>DB inserts (batch writes)</td>
+            <td class="mono">~30–60 min</td>
+            <td>~9M rows in bulk batches of 500; ON CONFLICT DO NOTHING</td>
+          </tr>
+          <tr>
+            <td><strong>Total (conservative)</strong></td>
+            <td class="mono"><strong>2.5–4 h</strong></td>
+            <td>Recommend running after 16:15 IST; completes before 08:45 IST next day</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── L ── -->
+  <div class="section" id="L">
+    <div class="section-head">
+      <div class="section-letter">L</div>
+      <div class="section-title-block">
+        <div class="section-title">Execution Command</div>
+        <div class="section-subtitle">Exact command — NOT YET AUTHORIZED; requires 4 script fixes first</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="alert alert-critical">
+        <div class="alert-title">DO NOT RUN until all 4 bugs are fixed and a separate fix-approval is granted</div>
+      </div>
+
+      <div class="tbl-wrap" style="margin-top:12px">
+        <table>
+          <tr><th>#</th><th>File / Line</th><th>Bug</th><th>Required Fix</th></tr>
+          <tr>
+            <td class="mono">1</td>
+            <td class="mono">backfill_intraday_5min.py:77</td>
+            <td><span class="badge badge-red">Wrong Table</span> — inserts into <code class="mono">intraday_candles_5min</code> (dropped; renamed to <code class="mono">deprecated_intraday_candles_5min</code>)</td>
+            <td>Change target to <code class="mono">candles</code> with <code class="mono">timeframe='5m'</code>; add all missing columns (<code class="mono">is_completed, data_source, is_backfilled</code>)</td>
+          </tr>
+          <tr>
+            <td class="mono">2</td>
+            <td class="mono">backfill_intraday_5min.py:79</td>
+            <td><span class="badge badge-red">Wrong Conflict</span> — <code class="mono">ON CONFLICT (ticker, timestamp) DO UPDATE SET</code> overwrites live candles and uses wrong unique key</td>
+            <td>Replace with <code class="mono">ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING</code></td>
+          </tr>
+          <tr>
+            <td class="mono">3</td>
+            <td class="mono">backfill_intraday_5min.py:10</td>
+            <td><span class="badge badge-orange">Broken Import</span> — <code class="mono">from backend.models import IntradayCandle5Min</code> (deprecated model, removed)</td>
+            <td>Replace with raw SQL (no ORM model needed for insert) or import <code class="mono">Candle</code></td>
+          </tr>
+          <tr>
+            <td class="mono">4</td>
+            <td class="mono">backfill_intraday_5min.py:~30</td>
+            <td><span class="badge badge-orange">Wrong Ticker Source</span> — queries <code class="mono">tickers</code> table first (<code class="mono">relation "tickers" does not exist</code>)</td>
+            <td>Change primary ticker query to <code class="mono">SELECT symbol FROM stock_metadata</code>; the existing fallback is correct but unreachable</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="margin-top:14px"><strong>Command after fixes are applied and fix-approval is granted:</strong></p>
+      <div class="code-block"><span class="code-comment"># Prerequisites before running:
+# 1. All 4 bugs fixed and code-reviewed
+# 2. Script fix separately approved
+# 3. Current IST time is BEFORE 09:00 or AFTER 16:00
+# 4. Live app may remain running (WS will auto-reconnect after token refresh)
+</span>
+cd StockMarket/StockMarket/StockMarket/backend
+<span class="code-keyword">python</span> backfill_intraday_5min.py <span class="code-comment">\
+    # expected runtime: 2.5–4h
+    # expected inserts: ~9,050,000 rows
+    # idempotent: safe to restart if interrupted</span></div>
+
+      <p><strong>Post-run verification steps</strong> (after execution completes):</p>
+      <ul>
+        <li>Confirm total 5m rows increased by ~9M</li>
+        <li>Confirm 0 rows in <code class="mono">deprecated_intraday_candles_5min</code> were touched</li>
+        <li>Confirm no ANGELONE rows were overwritten (check <code class="mono">data_source='ANGELONE'</code> count is unchanged)</li>
+        <li>Confirm coverage unit count approaches 193,461 (accounting for permanent-error tickers)</li>
+        <li>Re-run retention cycle manually for May 25 before the next scheduled run</li>
+      </ul>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <!-- Summary table -->
+  <div class="section">
+    <div class="section-head">
+      <div class="section-letter" style="font-size:14px;padding-top:14px">∑</div>
+      <div class="section-title-block">
+        <div class="section-title">Preflight Summary</div>
+        <div class="section-subtitle">All findings at a glance</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="tbl-wrap">
+        <table>
+          <tr><th>Item</th><th>Value</th><th>Status</th></tr>
+          <tr><td>Missing coverage units</td><td class="mono">94,754</td><td><span class="badge badge-red">Action needed</span></td></tr>
+          <tr><td>Missing candle rows (total)</td><td class="mono">9,294,332</td><td><span class="badge badge-red">Action needed</span></td></tr>
+          <tr><td>Estimated recoverable rows</td><td class="mono">~9,050,000 (97%)</td><td><span class="badge badge-green">Recoverable</span></td></tr>
+          <tr><td>Provider availability</td><td>AngelOne getCandleData, FIVE_MINUTE — all dates within 90-TD window</td><td><span class="badge badge-green">Available</span></td></tr>
+          <tr><td>Provider deadline</td><td class="mono">~2026-09-29 (~28 TD)</td><td><span class="badge badge-orange">28 days</span></td></tr>
+          <tr><td>Retention deadline (May 25)</td><td>IMMINENT — next run today</td><td><span class="badge badge-red">Urgent</span></td></tr>
+          <tr><td>Script bugs blocking execution</td><td>4 bugs (table, conflict, import, ticker source)</td><td><span class="badge badge-red">Fix required</span></td></tr>
+          <tr><td>Live WebSocket safety</td><td>Safe if run outside market hours (before 09:00 / after 16:00 IST)</td><td><span class="badge badge-orange">Timing constraint</span></td></tr>
+          <tr><td>Write strategy</td><td>ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING</td><td><span class="badge badge-green">Defined</span></td></tr>
+          <tr><td>Estimated runtime</td><td class="mono">2.5–4 h at MAX_WORKERS=5</td><td><span class="badge badge-blue">Estimated</span></td></tr>
+          <tr><td>Storage delta</td><td class="mono">~1.9 GB</td><td><span class="badge badge-blue">Estimated</span></td></tr>
+          <tr><td>Phase 0 Step 1 (boundary fix)</td><td>Applied and tested (89/89 tests pass)</td><td><span class="badge badge-green">Complete</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- STOP banner -->
+  <div class="stop-banner">
+    <h2>⛔ STOPPED — AWAITING APPROVAL</h2>
+    <p>The read-only preflight is complete. No data has been written. No recovery has been executed.<br>
+    Review the findings above, then authorize: <strong>(1) fix the 4 script bugs</strong>, then <strong>(2) execute the recovery</strong>.</p>
+    <p style="margin-top:8px;font-size:12px;color:var(--fg-muted)">Phase 0 Step 2 Report · 2026-08-18 · stock_data @ localhost:5432</p>
+  </div>
+
+</div>

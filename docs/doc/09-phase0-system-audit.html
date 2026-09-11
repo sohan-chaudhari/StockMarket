@@ -1,0 +1,698 @@
+<title>LEVERAGE — Phase 0 System Audit</title>
+<style>
+  :root{
+    --paper:#f4f5f2;
+    --paper-raised:#ffffff;
+    --ink-900:#14181f;
+    --ink-700:#2b313b;
+    --ink-600:#454b56;
+    --ink-400:#767d88;
+    --line:#d8dad3;
+    --line-strong:#c3c6bd;
+    --accent:#0f7d70;
+    --accent-ink:#08403a;
+    --accent-soft:#e3f1ee;
+    --sev-critical:#b3271f;
+    --sev-critical-soft:#f8e6e4;
+    --sev-high:#a8620a;
+    --sev-high-soft:#f7ecdb;
+    --sev-medium:#7d6c1a;
+    --sev-medium-soft:#f2eed9;
+    --sev-low:#556072;
+    --sev-low-soft:#e7e9ec;
+    --sev-good:#2f7a4f;
+    --sev-good-soft:#e2f0e6;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --radius: 3px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#12161c;
+      --paper-raised:#181d25;
+      --ink-900:#e9eae6;
+      --ink-700:#c7cad0;
+      --ink-600:#a4aab5;
+      --ink-400:#747c88;
+      --line:#2a2f38;
+      --line-strong:#3a4049;
+      --accent:#4fd8c4;
+      --accent-ink:#bdf3e9;
+      --accent-soft:#16332e;
+      --sev-critical:#f0685f;
+      --sev-critical-soft:#3a1c1a;
+      --sev-high:#e2a353;
+      --sev-high-soft:#392b12;
+      --sev-medium:#d3c165;
+      --sev-medium-soft:#302c14;
+      --sev-low:#9aa3b0;
+      --sev-low-soft:#242830;
+      --sev-good:#6bc48e;
+      --sev-good-soft:#173324;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#12161c;
+    --paper-raised:#181d25;
+    --ink-900:#e9eae6;
+    --ink-700:#c7cad0;
+    --ink-600:#a4aab5;
+    --ink-400:#747c88;
+    --line:#2a2f38;
+    --line-strong:#3a4049;
+    --accent:#4fd8c4;
+    --accent-ink:#bdf3e9;
+    --accent-soft:#16332e;
+    --sev-critical:#f0685f;
+    --sev-critical-soft:#3a1c1a;
+    --sev-high:#e2a353;
+    --sev-high-soft:#392b12;
+    --sev-medium:#d3c165;
+    --sev-medium-soft:#302c14;
+    --sev-low:#9aa3b0;
+    --sev-low-soft:#242830;
+    --sev-good:#6bc48e;
+    --sev-good-soft:#173324;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--paper);
+    color:var(--ink-900);
+    font-family:var(--sans);
+    margin:0;
+    padding:0 20px 120px;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{ background:var(--accent-soft); color:var(--accent-ink); }
+
+  .wrap{ max-width:840px; margin:0 auto; }
+
+  /* ---------- masthead ---------- */
+  .masthead{
+    padding:56px 0 28px;
+    border-bottom:1px solid var(--line-strong);
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--accent);
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:14px;
+  }
+  .eyebrow .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent); }
+  h1{
+    font-family:var(--sans);
+    font-weight:750;
+    font-size:clamp(28px,4.4vw,40px);
+    line-height:1.08;
+    letter-spacing:-0.01em;
+    margin:0 0 12px;
+    text-wrap:balance;
+    color:var(--ink-900);
+  }
+  .dek{
+    font-size:16px;
+    color:var(--ink-600);
+    max-width:60ch;
+    margin:0 0 22px;
+  }
+  .meta-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px 22px;
+    font-family:var(--mono);
+    font-size:12.5px;
+    color:var(--ink-400);
+  }
+  .meta-row b{ color:var(--ink-700); font-weight:600; }
+
+  /* ---------- scoreboard ---------- */
+  .scoreboard{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    margin:28px 0 8px;
+    border-radius:var(--radius);
+    overflow:hidden;
+  }
+  .stat{
+    background:var(--paper-raised);
+    padding:16px 14px;
+    text-align:left;
+  }
+  .stat .n{
+    font-family:var(--mono);
+    font-variant-numeric:tabular-nums;
+    font-size:26px;
+    font-weight:600;
+    line-height:1;
+  }
+  .stat .lbl{
+    margin-top:6px;
+    font-size:11.5px;
+    font-family:var(--mono);
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    color:var(--ink-400);
+  }
+  .stat.crit .n{ color:var(--sev-critical); }
+  .stat.high .n{ color:var(--sev-high); }
+  .stat.med .n{ color:var(--sev-medium); }
+  .stat.low .n{ color:var(--sev-low); }
+  .stat.good .n{ color:var(--sev-good); }
+
+  /* ---------- section chrome ---------- */
+  section{ padding:52px 0 6px; }
+  section + section{ border-top:1px solid var(--line); }
+  .sec-head{
+    display:flex;
+    align-items:baseline;
+    gap:14px;
+    margin-bottom:6px;
+  }
+  .sec-num{
+    font-family:var(--mono);
+    font-size:13px;
+    color:var(--accent);
+    font-weight:600;
+  }
+  h2{
+    font-size:22px;
+    font-weight:700;
+    letter-spacing:-0.005em;
+    margin:0;
+    color:var(--ink-900);
+  }
+  .sec-sub{
+    color:var(--ink-600);
+    font-size:14.5px;
+    max-width:66ch;
+    margin:10px 0 26px;
+  }
+  h3{
+    font-size:15px;
+    font-weight:700;
+    margin:30px 0 10px;
+    color:var(--ink-900);
+  }
+  p{ color:var(--ink-700); margin:0 0 14px; max-width:70ch; }
+  code{
+    font-family:var(--mono);
+    font-size:.86em;
+    background:var(--accent-soft);
+    color:var(--accent-ink);
+    padding:.1em .35em;
+    border-radius:2px;
+  }
+
+  /* ---------- architecture flow blocks ---------- */
+  .flow{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:0;
+    margin:18px 0 26px;
+    font-family:var(--mono);
+    font-size:12.5px;
+  }
+  .flow .node{
+    background:var(--paper-raised);
+    border:1px solid var(--line-strong);
+    border-radius:var(--radius);
+    padding:9px 12px;
+    color:var(--ink-700);
+    white-space:nowrap;
+  }
+  .flow .node.emph{ border-color:var(--accent); color:var(--accent-ink); background:var(--accent-soft); }
+  .flow .arrow{ padding:0 8px; color:var(--ink-400); }
+  .flow-wrap-note{ font-size:12px; color:var(--ink-400); margin-top:-14px; margin-bottom:24px; }
+
+  /* ---------- subsystem table ---------- */
+  table{ width:100%; border-collapse:collapse; font-size:14px; margin:8px 0 28px; }
+  caption{ text-align:left; font-size:12px; color:var(--ink-400); margin-bottom:8px; font-family:var(--mono); }
+  th{
+    text-align:left;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    color:var(--ink-400);
+    font-weight:600;
+    padding:8px 12px;
+    border-bottom:1px solid var(--line-strong);
+    white-space:nowrap;
+  }
+  td{
+    padding:10px 12px;
+    border-bottom:1px solid var(--line);
+    color:var(--ink-700);
+    vertical-align:top;
+  }
+  td.mono, th.mono{ font-family:var(--mono); font-size:12.5px; }
+  tr:last-child td{ border-bottom:1px solid var(--line-strong); }
+  .tbl-scroll{ overflow-x:auto; }
+
+  /* ---------- finding cards ---------- */
+  .register-group{ margin-bottom:8px; }
+  .register-group-head{
+    display:flex; align-items:center; gap:10px;
+    margin:38px 0 16px;
+  }
+  .sev-tag{
+    font-family:var(--mono);
+    font-size:11px;
+    font-weight:700;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding:4px 9px;
+    border-radius:2px;
+  }
+  .sev-tag.crit{ background:var(--sev-critical-soft); color:var(--sev-critical); }
+  .sev-tag.high{ background:var(--sev-high-soft); color:var(--sev-high); }
+  .sev-tag.med{ background:var(--sev-medium-soft); color:var(--sev-medium); }
+  .sev-tag.low{ background:var(--sev-low-soft); color:var(--sev-low); }
+  .sev-tag.good{ background:var(--sev-good-soft); color:var(--sev-good); }
+  .register-group-head .count{ font-family:var(--mono); font-size:12px; color:var(--ink-400); }
+
+  .finding{
+    display:grid;
+    grid-template-columns:4px 1fr;
+    gap:0;
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    margin-bottom:10px;
+    overflow:hidden;
+  }
+  .finding .stripe{ background:var(--sev-low); }
+  .finding.crit .stripe{ background:var(--sev-critical); }
+  .finding.high .stripe{ background:var(--sev-high); }
+  .finding.med .stripe{ background:var(--sev-medium); }
+  .finding.low .stripe{ background:var(--sev-low); }
+  .finding.good .stripe{ background:var(--sev-good); }
+  .finding-body{ padding:16px 18px; }
+  .finding-head{
+    display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+    margin-bottom:6px; flex-wrap:wrap;
+  }
+  .finding-id{ font-family:var(--mono); font-size:12px; color:var(--ink-400); }
+  .finding-title{ font-weight:650; font-size:15px; color:var(--ink-900); }
+  .finding p{ margin:0 0 8px; font-size:13.8px; }
+  .finding .evidence{ font-family:var(--mono); font-size:12px; color:var(--ink-600); background:var(--paper); padding:8px 10px; border-radius:2px; margin:8px 0; overflow-x:auto; }
+  .finding .row-label{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-400); margin-top:10px; margin-bottom:3px; }
+
+  /* ---------- source-of-truth ---------- */
+  .risk-chip{ font-family:var(--mono); font-size:11px; padding:2px 7px; border-radius:2px; }
+  .risk-chip.ok{ background:var(--sev-good-soft); color:var(--sev-good); }
+  .risk-chip.watch{ background:var(--sev-medium-soft); color:var(--sev-medium); }
+  .risk-chip.risk{ background:var(--sev-high-soft); color:var(--sev-high); }
+
+  /* ---------- misc ---------- */
+  ul.plain{ margin:0 0 16px; padding-left:20px; color:var(--ink-700); font-size:14.5px; }
+  ul.plain li{ margin-bottom:6px; }
+  .callout{
+    border:1px solid var(--line-strong);
+    border-left:3px solid var(--accent);
+    background:var(--accent-soft);
+    padding:14px 16px;
+    border-radius:2px;
+    font-size:14px;
+    color:var(--accent-ink);
+    margin:18px 0 26px;
+  }
+  .callout b{ font-weight:700; }
+  footer{
+    margin-top:60px;
+    padding-top:24px;
+    border-top:1px solid var(--line-strong);
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--ink-400);
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  a{ color:var(--accent); }
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow"><span class="dot"></span>LEVERAGE — PLATFORM ENGINEERING AUDIT</div>
+    <h1>Phase 0 — System Discovery &amp; Architecture Map</h1>
+    <p class="dek">A source-verified map of the backend, live-market-data, real-time, and frontend/chart subsystems, plus the consolidated findings register from four independent discovery passes. Scope: platform engineering — backend, live price infrastructure, full-stack product. Recommendation, options-intelligence, and portfolio-intelligence modules are explicitly out of scope.</p>
+    <div class="meta-row">
+      <span><b>Repo</b> StockMarket/StockMarket/StockMarket</span>
+      <span><b>Method</b> 4 parallel source-verified discovery passes</span>
+      <span><b>Coverage</b> 249 tool calls · ~646k tokens of agent analysis</span>
+      <span><b>Stage</b> Phase 0 complete — Pass 2 (correctness) not yet started</span>
+    </div>
+  </div>
+
+  <div class="scoreboard">
+    <div class="stat crit"><div class="n">06</div><div class="lbl">Critical</div></div>
+    <div class="stat high"><div class="n">11</div><div class="lbl">High</div></div>
+    <div class="stat med"><div class="n">14</div><div class="lbl">Medium</div></div>
+    <div class="stat low"><div class="n">06</div><div class="lbl">Low / cleanup</div></div>
+    <div class="stat good"><div class="n">10</div><div class="lbl">Verified sound</div></div>
+  </div>
+
+  <section id="map">
+    <div class="sec-head"><span class="sec-num">01</span><h2>Architecture map</h2></div>
+    <p class="sec-sub">Four pipelines carry the platform. Each is drawn as verified, not assumed — every arrow below corresponds to a real call site found in source.</p>
+
+    <h3>Market data — live</h3>
+    <div class="flow">
+      <div class="node">Angel One WS feed</div><div class="arrow">→</div>
+      <div class="node">angelone_service.py</div><div class="arrow">→</div>
+      <div class="node emph">aggregator.py<br>(Live5mBuilder, in-memory)</div><div class="arrow">→</div>
+      <div class="node">candles table</div><div class="arrow">→</div>
+      <div class="node">/ws/dashboard</div><div class="arrow">→</div>
+      <div class="node">chart / dashboard UI</div>
+    </div>
+    <div class="flow-wrap-note">Parallel path: PricePoller + CriticalIndexPoller (REST) feed the same aggregator via a bridge task, deferring to WS ticks &lt;2–5s old.</div>
+
+    <h3>Historical data</h3>
+    <div class="flow">
+      <div class="node">Angel One REST (historical)</div><div class="arrow">→</div>
+      <div class="node">migration/ pipeline<br>(plan → fetch → stage → promote)</div><div class="arrow">→</div>
+      <div class="node emph">candles table</div><div class="arrow">→</div>
+      <div class="node">retention_service.py<br>(1D→1W→1M cascade)</div>
+    </div>
+    <div class="flow-wrap-note">Legacy parallel path, frozen since 2026-07-10: yfinance → <code>stock_data</code> table, still read by several live endpoints (separate in-flight migration, not re-audited here).</div>
+
+    <h3>Live chart (frontend)</h3>
+    <div class="flow">
+      <div class="node">stock.html opens</div><div class="arrow">→</div>
+      <div class="node">/api/stock-data/range(+/paginated)</div><div class="arrow">→</div>
+      <div class="node emph">window._chartCandles</div><div class="arrow">→</div>
+      <div class="node">lightweight-charts series</div><div class="arrow">→</div>
+      <div class="node">drawing-core.js anchor math</div>
+    </div>
+    <div class="flow-wrap-note">Live ticks update the visible series directly via <code>.update()</code> but do not append to <code>window._chartCandles</code> — see FE-05.</div>
+
+    <h3>Order / execution</h3>
+    <div class="flow">
+      <div class="node">trade_router / trade_service.py</div><div class="arrow">→</div>
+      <div class="node">orders / positions (Postgres, row-locked)</div><div class="arrow">→</div>
+      <div class="node emph">execution_engine.py<br>(2s loop, market-hours gated)</div><div class="arrow">→</div>
+      <div class="node">price_provider.py<br>(4-tier price resolution)</div><div class="arrow">→</div>
+      <div class="node">TP/SL fire</div>
+    </div>
+
+  </section>
+
+  <section id="subsystems">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Subsystem inventory</h2></div>
+    <p class="sec-sub">Grouped by domain. "Trigger" is the literal mechanism that invokes the code — confirmed from <code>main.py</code>'s two startup handlers, not inferred.</p>
+
+    <div class="tbl-scroll">
+    <table>
+      <tr><th>Domain</th><th>Module</th><th class="mono">Trigger</th><th>State held</th></tr>
+      <tr><td rowspan="6">Real-time / live data</td><td>angelone_service.py</td><td class="mono">WS thread + startup login</td><td>latest_ticks, subscribed_tokens (in-memory)</td></tr>
+      <tr><td>aggregator.py</td><td class="mono">module import (threads start immediately)</td><td>active_candles, flush queue (in-memory)</td></tr>
+      <tr><td>price_poller.py (×2 classes)</td><td class="mono">asyncio.create_task / threading.Thread</td><td>token cache, latest_ticks</td></tr>
+      <tr><td>live_timeframe_manager.py</td><td class="mono">called from REST intraday endpoint</td><td>per-(ticker,tf) builders, cap 5,000</td></tr>
+      <tr><td>recovery_service.py</td><td class="mono">first view() of a ticker post-boot</td><td>_recovered set (resets on restart)</td></tr>
+      <tr><td>gap_recovery.py</td><td class="mono">— none. Unwired.</td><td>n/a — dead code</td></tr>
+
+      <tr><td rowspan="3">Execution</td><td>execution_engine.py</td><td class="mono">asyncio task, 2s loop</td><td>stateless — reads DB each cycle</td></tr>
+      <tr><td>trade_service.py</td><td class="mono">HTTP request (trade_router)</td><td>none — DB row-locked ops</td></tr>
+      <tr><td>price_provider.py</td><td class="mono">called by execution_engine</td><td>none — reads live/aggregator/DB tiers</td></tr>
+
+      <tr><td rowspan="5">Database / migration</td><td>migration/* (9 modules)</td><td class="mono">manual CLI run</td><td>staging table, migration_jobs</td></tr>
+      <tr><td>retention_service.py</td><td class="mono">daily poll, market-closed only</td><td>_running flag, retention_jobs (cosmetic)</td></tr>
+      <tr><td>database.py</td><td class="mono">import-time engine + per-request session</td><td>pool_size 10 + overflow 20 = 30 conns</td></tr>
+      <tr><td>candles (table)</td><td class="mono">—</td><td>13.6M rows, unified across 8 timeframes</td></tr>
+      <tr><td>5× legacy per-tf candle tables</td><td class="mono">—</td><td>dead — zero writers outside one-off scripts</td></tr>
+
+      <tr><td rowspan="4">Frontend</td><td>dashboard.js</td><td class="mono">page load (stock.html, home.html, …)</td><td>window._chartCandles, _chartDataCache, WS handlers</td></tr>
+      <tr><td>drawing-core.js / drawings.js</td><td class="mono">loaded on stock.html</td><td>drawing model registry, anchor cache</td></tr>
+      <tr><td>ws.js</td><td class="mono">every page</td><td>DashboardWS singleton, backoff state</td></tr>
+      <tr><td>stock-logic.js</td><td class="mono">stock.html only</td><td>separate /ws/user connection, trade panel state</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section id="sot">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Source-of-truth map</h2></div>
+    <p class="sec-sub">For each piece of state that matters, where the real answer lives — and whether more than one place claims to know it.</p>
+    <div class="tbl-scroll">
+    <table>
+      <tr><th>State</th><th>Authoritative source</th><th>Sync mechanism</th><th>Risk</th></tr>
+      <tr><td>Live price</td><td class="mono">angelone_service.latest_ticks</td><td>WS tick, REST poll as fallback (defers to WS if &lt;2–5s old)</td><td><span class="risk-chip watch">watch</span> session can silently die, §RT-01/02</td></tr>
+      <tr><td>Forming candle</td><td class="mono">aggregator.active_candles</td><td>in-memory only, ephemeral</td><td><span class="risk-chip watch">watch</span> lost on hard crash, §21</td></tr>
+      <tr><td>Completed candle</td><td class="mono">candles table</td><td>aggregator flush worker + migration promote</td><td><span class="risk-chip ok">ok</span> insert path sound; 5 dead legacy tables add confusion only</td></tr>
+      <tr><td>Daily history &gt;2yr</td><td class="mono">stock_data (legacy)</td><td>frozen since 2026-07-10; separate migration in flight</td><td><span class="risk-chip watch">watch</span> dual-source until that migration lands</td></tr>
+      <tr><td>Order / position state</td><td class="mono">orders / positions tables</td><td>DB row-locked (with_for_update)</td><td><span class="risk-chip ok">ok</span> double-execution is DB-safe</td></tr>
+      <tr><td>Chart candle array (client)</td><td class="mono">window._chartCandles</td><td>documented contract, correctly synced on 2 of 3 write paths</td><td><span class="risk-chip risk">risk</span> pagination + live-append both violate it, §FE-01/05</td></tr>
+      <tr><td>AngelOne session health</td><td class="mono">angelone_service.is_logged_in</td><td>set False only on explicit token error</td><td><span class="risk-chip risk">risk</span> poller failures never update it, §RT-02</td></tr>
+      <tr><td>Migration progress</td><td class="mono">migration_jobs.status</td><td>real resume path ignores it — rescans candles coverage instead</td><td><span class="risk-chip ok">ok</span> in effect; status column itself is cosmetic</td></tr>
+    </table>
+    </div>
+  </section>
+
+  <section id="deps">
+    <div class="sec-head"><span class="sec-num">04</span><h2>External dependencies</h2></div>
+    <ul class="plain">
+      <li><b>Angel One SmartAPI</b> — one account serves both the live WS/REST feed (<code>angelone_service.py</code>) and, by credential fallback, historical fetches (<code>historical_service.py</code>). This sharing is the root of RT-01.</li>
+      <li><b>SmartWebSocketV2 SDK</b> (vendor, bundled) — internal reconnect/blocking behavior partially unverified; treated as a black box.</li>
+      <li><b>yfinance</b> — legacy daily source, plus a still-active daily-close backfill and pre-warm job pair.</li>
+      <li><b>Postgres</b> — primary datastore, single instance, no read replica found.</li>
+      <li><b>Sentry</b> — error tracking, imported at <code>main.py</code> top.</li>
+      <li>No Redis, no message broker, no distributed lock — see §05 note on single-process design.</li>
+    </ul>
+    <div class="callout"><b>Architecture constraint.</b> Every service singleton (angelone_service, aggregator, viewed_ticker_mgr, execution engine) is a plain module-level Python object with in-process locks. No Dockerfile/Procfile/uvicorn-workers config was found — consistent with a single-process deployment. If ever scaled to multiple workers, most of this breaks (duplicate AngelOne logins, duplicate aggregators); order double-execution specifically stays safe due to DB row locks.</div>
+  </section>
+
+  <section id="register">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Findings register</h2></div>
+    <p class="sec-sub">47 items, deduplicated across four independent passes — the WebSocket subscription-cap DoS (RT-03) was found twice, independently, from different code paths, which is why it's marked as strongly verified rather than single-source. Every item cites the file:line evidence it rests on.</p>
+
+    <div class="register-group">
+      <div class="register-group-head"><span class="sev-tag crit">Critical</span><span class="count">fix before anything else touches this code</span></div>
+
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="finding-body">
+          <div class="finding-head"><span class="finding-title">Dual Angel One session collision can kill the live feed for every user</span><span class="finding-id">RT-01</span></div>
+          <p><code>HISTORICAL_API_KEY/CLIENT_ID/PASSWORD/TOTP_TOKEN</code> are empty in <code>.env</code>, so <code>historical_service.py</code> silently falls back to the same credentials <code>angelone_service.py</code> uses for the live feed. A second, independent <code>generateSession()</code> call — triggered just by a user viewing a not-yet-recovered ticker — can invalidate the live session platform-wide on brokers that revoke the prior token on new login (common AngelOne behavior).</p>
+          <div class="evidence">.env: HISTORICAL_* empty · historical_service.py:92-98 fallback · triggered via recovery_service.py:110-112, main.py:753-755, main.py:2940-2942</div>
+          <div class="row-label">Recommendation</div>
+          <p style="margin-bottom:0">Provision genuinely separate credentials for historical fetches, or route through the same session singleton as the live feed.</p>
+        </div>
+      </div>
+
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="finding-body">
+          <div class="finding-head"><span class="finding-title">Session failures are invisible for up to 12 hours</span><span class="finding-id">RT-02</span></div>
+          <p><code>is_logged_in</code> only flips false on an explicit "token missing" error from one call path. The REST pollers swallow every other failure and just return <code>False</code> without touching it — so a session killed by RT-01 (or anything else) produces silent zero-data with no self-healing until the 12h proactive-refresh timer.</p>
+          <div class="evidence">angelone_service.py:620,645 (only write sites) · price_poller.py:127-189, 249-329 (never write it)</div>
+          <div class="row-label">Recommendation</div>
+          <p style="margin-bottom:0">Feed poller failures back into the health flag — e.g. force re-login after N consecutive ltpData failures.</p>
+        </div>
+      </div>
+
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="finding-body">
+          <div class="finding-head"><span class="finding-title">Unauthenticated WS endpoint allows a full subscription-cap DoS</span><span class="finding-id">RT-03</span></div>
+          <p><code>/ws/dashboard</code> requires no auth (by design — it's public market data) but accepts an arbitrary, unvalidated ticker string in <code>view_ticker</code> and immediately consumes a real slot against the 2,000-subscription cap before ever checking the ticker resolves to anything. One connection sending 2,000 garbage names exhausts the cap and cuts live prices for every real user. Confirmed independently by two separate discovery passes tracing from opposite ends of the call chain.</p>
+          <div class="evidence">main.py:2350-2392 (no auth) · main.py:2377 (no ticker validation) · main.py:161-197 ViewedTickerManager.view()/_try_subscribe · main.py:4068 max_subscriptions=2000</div>
+          <div class="row-label">Recommendation</div>
+          <p style="margin-bottom:0">Validate ticker against the known instrument set before counting it against the cap; rate-limit inbound WS messages per connection.</p>
+        </div>
+      </div>
+
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="finding-body">
+          <div class="finding-head"><span class="finding-title">/ws/user pins a pooled DB connection for its entire lifetime — hard ~30 concurrent user ceiling</span><span class="finding-id">DB-01</span></div>
+          <p>FastAPI resolves <code>Depends(get_db)</code> at WS-accept time and only closes it on disconnect. The handler uses the session once for auth, then sits in a receive loop for the rest of the connection — holding one of only 30 pooled connections idle the whole time. This caps concurrent logged-in users at ~30 regardless of hardware, on a platform meant to be left open during market hours.</p>
+          <div class="evidence">main.py:961 Depends(get_db) on WS route · database.py:38-44 pool_size=10 + max_overflow=20</div>
+          <div class="row-label">Recommendation</div>
+          <p style="margin-bottom:0">Open a short-lived <code>SessionLocal()</code> for the auth check only; don't inject the pooled dependency into a WebSocket route. The correct pattern already exists elsewhere in the file (main.py:4788).</p>
+        </div>
+      </div>
+
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="finding-body">
+          <div class="finding-head"><span class="finding-title">Drawing anchors silently go wrong after any history-scroll load</span><span class="finding-id">FE-01</span></div>
+          <p><code>window._chartCandles</code> is the documented single source of truth for drawing-anchor math — array index is treated as chart logical index. It's correctly synced on initial load and WS-reconnect, but the infinite-scroll pagination path updates the visible chart series without ever updating this array. Since the whole array shifts on a history load, every existing drawing's recomputed anchor becomes wrong, not just new ones.</p>
+          <div class="evidence">dashboard.js:1619-1671 _fetchMoreData (missing assignment) vs correct pattern at :1696-1697, :1949-1950 · contract documented at drawing-core.js:242-245</div>
+          <div class="row-label">Recommendation</div>
+          <p style="margin-bottom:0">Add <code>window._chartCandles = combined;</code> in <code>_fetchMoreData</code> immediately after <code>_chartDataCache</code> is set.</p>
+        </div>
+      </div>
+
+      <div class="finding crit">
+        <div class="stripe"></div>
+        <div class="finding-body">
+          <div class="finding-head"><span class="finding-title">Closed-positions tab is always empty, silently</span><span class="finding-id">FE-02</span></div>
+          <p>The trading panel's "Closed" tab expects <code>{positions: [...]}</code>; the backend returns a bare array. A different call site in the same file, and <code>portfolio.html</code>, both handle the real shape correctly — this one spot was simply missed. Currently shipping, not hypothetical.</p>
+          <div class="evidence">stock-logic.js:686-699 expects {positions:[...]} · main.py:1022-1067 returns a bare list · duplicate dead route at main.py:2740-2774 also returns bare list</div>
+          <div class="row-label">Recommendation</div>
+          <p style="margin-bottom:0">Fix the one call site to read the array directly, matching the other two working call sites. Also remove the dead duplicate route.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="register-group">
+      <div class="register-group-head"><span class="sev-tag high">High</span><span class="count">real reliability/security gaps, none catastrophic alone</span></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">LiveTimeframeManager never releases a viewer — permanent degradation once the 5,000-builder cap is hit</span><span class="finding-id">RT-04</span></div>
+        <p><code>remove_viewer</code> exists but has zero call sites anywhere outside its own definition and unit tests. Every 15m/30m/1h request adds a viewer that's never removed; once 5,000 distinct (ticker, timeframe) combinations have ever been requested, every new one permanently falls back to the slow DB/resample path — recoverable only by restart.</p>
+        <div class="evidence">live_timeframe_manager.py (definition only) · main.py:3345-3348 add_viewer, no balancing call anywhere</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Chart close doesn't reliably unsubscribe</span><span class="finding-id">RT-03b</span></div>
+        <p>The frontend resends its entire ticker list (not just the delta) on every chart open/switch; the backend calls <code>.view()</code> unconditionally for all of them. Disconnect cleanup only decrements once per ticker. Net effect: subscriptions creep toward the cap over a trading day and essentially never shrink for actively-viewed tickers.</p>
+        <div class="evidence">frontend/ws.js addTickers() resends full list · main.py:2361-2367 no diff before view() · main.py:2384-2392 unview_all decrements once</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Reconnects under 120s at a candle boundary produce a silently wrong candle</span><span class="finding-id">RT-05</span></div>
+        <p>A disconnect/reconnect spanning a 5m boundary finalizes the forming candle with whatever ticks it had before the gap — no backfill triggers below the 120s staleness threshold. Worse, RecoveryService only ever recovers a given ticker once per process lifetime; the second gap for the same ticker that day is never fixed.</p>
+        <div class="evidence">aggregator.py:295-353 finalize on boundary · main.py:4417-4426 &gt;120s gate · recovery_service.py:35-43 one-shot set</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">The purpose-built fix for RT-05 already exists and is dead code</span><span class="finding-id">RT-06</span></div>
+        <p><code>GapRecoveryService.recover_5m_gaps()</code> is fully implemented for exactly the repeated mid-session gap case (cooldown-based, &gt;600s trigger, REST backfill + merge) — and has zero call sites anywhere in the running app.</p>
+        <div class="evidence">gap_recovery.py:18-113 · exhaustive grep confirms no caller outside its own file and a historical audit doc</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Old Angel One WebSocket is never closed on a proactive re-login</span><span class="finding-id">RT-07</span></div>
+        <p>Every 12h relogin overwrites <code>self.sws</code> with a fresh socket but only <code>join()</code>s the old thread — it never calls <code>close()</code> on that path. Over time this can leave duplicate live sockets running, doubling AngelOne connection usage per account.</p>
+        <div class="evidence">angelone_service.py:146-205 (no close on this path) · close() only called at :248, a different branch</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Blocking I/O stalls the shared event loop</span><span class="finding-id">RT-08</span></div>
+        <p>The 30-minute auth-refresh task and the startup subscription handshake both perform synchronous blocking calls (the handshake waits up to 15s) directly on the asyncio loop. For the duration, every concurrent HTTP request and WebSocket broadcast stalls platform-wide.</p>
+        <div class="evidence">angelone_service.py:207-220 ensure_connection() not threaded · subscribe_tickers() time.sleep(0.5) loop, angelone_service.py:393-430</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Rate limiting was removed from every sensitive endpoint except one</span><span class="finding-id">SEC-01</span></div>
+        <p><code>slowapi</code> is wired up but applied to exactly one route. Register, forgot-password, resend-verification, login, and both trade-open/close endpoints have zero rate limiting. A leftover backup file shows these previously had <code>@limiter.limit(...)</code> decorators — a real regression, not a gap that was never filled.</p>
+        <div class="evidence">main.py:425-426, 1470 (only decorated route) · auth_router.py, trade_router.py (zero decorators) · main_recovered.py:1578,1623 (prior protection)</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Aggregator's DB-flush queue has no size cap</span><span class="finding-id">RT-09</span></div>
+        <p>Under a sustained Postgres outage, completed-candle batches accumulate in an unbounded in-memory list with no ceiling — directly contradicting the module's own docstring claim that ticks are "never dropped" via backpressure. In practice there is no pause; the queue just grows.</p>
+        <div class="evidence">aggregator.py:196-200 unbounded list · docstring claim at aggregator.py:11 · drop-after-3-retries at :526-529</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">No Alembic — schema changes run unversioned, in-process, on every boot</span><span class="finding-id">DB-02</span></div>
+        <p>Schema changes are hand-rolled <code>ALTER TABLE ... ADD COLUMN IF NOT EXISTS</code> / <code>CREATE INDEX IF NOT EXISTS</code> blocks inside the FastAPI startup hook, re-checked on every restart with no version tracking. One of them builds a non-<code>CONCURRENTLY</code> index against the 13.6M-row candles table — a first run against a populated table takes an exclusive lock for the full build, and a killed-mid-build index can silently stay invalid forever since "IF NOT EXISTS" treats an invalid index as already existing.</p>
+        <div class="evidence">main.py:4064-4217 ("Migration v005/v006/v007" in comments) · CREATE INDEX at main.py:4198-4217</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">Triple-redundant indexes on the busiest tables</span><span class="finding-id">DB-03</span></div>
+        <p><code>candles</code>, <code>current_day_candle</code>, and <code>stock_data</code> each carry a unique constraint plus two additional btree indexes on the same leading columns — one declared in the model, one injected at every startup. At 13.6M+ rows this roughly triples write cost on the table every live write path touches continuously.</p>
+        <div class="evidence">models.py:127-128 (constraint + duplicate index) · main.py:4203-4206 (third index, startup-injected)</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">The drawing-tools audit was verified on a page users can't reach</span><span class="finding-id">FE-03</span></div>
+        <p><code>chart.html</code> — the page the earlier drawing-tools fix pass was tested against — has zero internal links anywhere in the app. <code>stock.html</code> is the real production entry point. Wiring is structurally identical (same element IDs, same script load order), so the fixes very likely transfer, but this was never live-verified on the actual page.</p>
+        <div class="evidence">exhaustive grep for chart.html references → zero matches · stock.html linked from 8+ files</div>
+      </div></div>
+
+      <div class="finding high"><div class="stripe"></div><div class="finding-body">
+        <div class="finding-head"><span class="finding-title">TP/SL can fire against a stale price</span><span class="finding-id">TP-01</span></div>
+        <p>Only tier 1 (live tick) of the 4-tier price-resolution pipeline enforces a staleness check (30s max age). Tiers 2–3 (forming/completed 5m candle) apply none — if both the WS and REST poller die simultaneously, an hour-old candle can still be returned as "current price" and used to trigger an execution.</p>
+        <div class="evidence">price_provider.py:106-140 (tier 1, has check) vs :142-212 (tiers 2-3, no check)</div>
+      </div></div>
+    </div>
+
+    <div class="register-group">
+      <div class="register-group-head"><span class="sev-tag med">Medium</span><span class="count">real, worth scheduling</span></div>
+      <div class="tbl-scroll">
+      <table>
+        <tr><th class="mono">ID</th><th>Finding</th><th>Evidence</th></tr>
+        <tr><td class="mono">RT-10</td><td>CriticalIndexPoller has no circuit breaker, unlike PricePoller — hammers Angel One indefinitely during an outage.</td><td class="mono">price_poller.py:331-368</td></tr>
+        <tr><td class="mono">TP-02</td><td>~200 lines of fully-built after-market-order (AMO) logic is completely unreachable — never executed in production.</td><td class="mono">trade_service.py:147-354, zero callers</td></tr>
+        <tr><td class="mono">RT-11</td><td>Special/shortened sessions (e.g. Muhurat trading) aren't honored by the market-open check that gates trading and TP/SL.</td><td class="mono">exchange_calendar.py:55-59</td></tr>
+        <tr><td class="mono">RT-12</td><td>A hard crash (SIGKILL/OOM) loses forming candles and unflushed completed candles for tickers nobody's actively viewing.</td><td class="mono">aggregator.py graceful-flush only wired to SIGTERM/atexit</td></tr>
+        <tr><td class="mono">DB-04</td><td>Retention cycle runs synchronously on the event loop (lower impact — gated to market-closed hours only).</td><td class="mono">main.py:4797-4818</td></tr>
+        <tr><td class="mono">DB-05</td><td>Retention's "checkpoint resume" is cosmetic — the checkpoint is written but never read back; safe only by coincidence of idempotent design.</td><td class="mono">retention_service.py:150, 287-308</td></tr>
+        <tr><td class="mono">DB-06</td><td>N+1 queries in portfolio open/closed-positions endpoints and migration reconciliation.</td><td class="mono">trade_service.py:554-564; migration/promotion.py:254-258</td></tr>
+        <tr><td class="mono">DB-07</td><td>No composite (user_id, status) index on positions/orders; no retention policy for these append-only ledgers.</td><td class="mono">models.py:257-320</td></tr>
+        <tr><td class="mono">FE-04</td><td>Pagination fetch has no abort/loadId guard — a slow request can corrupt a chart if the timeframe changes mid-flight.</td><td class="mono">dashboard.js:1619-1671</td></tr>
+        <tr><td class="mono">FE-05</td><td>Live completed candles never get appended to window._chartCandles — compounds FE-01 over a long session.</td><td class="mono">dashboard.js:2090-2141, no push found</td></tr>
+        <tr><td class="mono">FE-06</td><td>"● Live" badge reflects only market-open hours, not actual WebSocket health — stays green through a silent feed drop.</td><td class="mono">dashboard.js:1016-1026</td></tr>
+        <tr><td class="mono">FE-07</td><td>"ALL" chart range silently caps initial load at 500 rows — mislabeled, full history is reachable only by scrolling.</td><td class="mono">main.py:2866-2875</td></tr>
+        <tr><td class="mono">RT-13</td><td>A few shared dict reads happen outside the lock guarding the matching writes — GIL-mitigated, low practical risk.</td><td class="mono">angelone_service.py:287,379; main.py:486,4000-4001</td></tr>
+        <tr><td class="mono">DB-08</td><td>migration_jobs has no index on (tier, status), the columns its summary queries actually filter on.</td><td class="mono">migration/progress_tracker.py:39-166</td></tr>
+      </table>
+      </div>
+    </div>
+
+    <div class="register-group">
+      <div class="register-group-head"><span class="sev-tag low">Low / cleanup</span><span class="count">no urgency, worth a pass</span></div>
+      <ul class="plain">
+        <li><b>RT-14</b> — /ws/user leaks its connection registration on a non-disconnect exception (malformed client message).</li>
+        <li><b>FE-08</b> — <code>window._chartDataCache</code> (with the window. prefix) is read but never written; the crosshair tooltip's change/% display has silently never worked. Cosmetic only.</li>
+        <li><b>FE-09</b> — a fully disconnected React/Vite scaffold sits inside <code>frontend/</code>, unbuildable as configured and unrelated to the live app. Confusing, not harmful.</li>
+        <li><b>DB-09</b> — 5 legacy per-timeframe candle tables plus a ticks table are fully dead in Postgres, superseded by the unified <code>candles</code> table.</li>
+        <li><b>DB-10</b> — 7 stray 0-byte <code>.db</code> files sit in the backend root, confirmed unused by the connection string.</li>
+        <li>Assorted dead frontend files (<code>temp_script.js</code>, <code>insert.js</code>, orphaned page variants, a broken TradingView-library integration attempt) — candidates for deletion once independently confirmed unused.</li>
+      </ul>
+    </div>
+
+    <div class="register-group">
+      <div class="register-group-head"><span class="sev-tag good">Verified sound</span><span class="count">confirmed correct — no action needed</span></div>
+      <ul class="plain">
+        <li>Execution pinning for TP/SL orders (ADR-011) — DB-authoritative, immune to LRU eviction, covered by a dedicated test.</li>
+        <li>Duplicate-subscription prevention — one upstream Angel One subscription per ticker regardless of viewer count, no race found.</li>
+        <li>Angel One reconnect correctly resubscribes every previously-held token.</li>
+        <li>Downstream broadcast backpressure — drops for a slow client rather than queuing, bounding memory correctly.</li>
+        <li>Retention's insert→verify→delete→commit ordering is genuinely atomic and rollback-safe — no premature-delete risk.</li>
+        <li>Migration crash-recovery — the real resume path rescans actual table coverage and every write is idempotent; safe to re-run after a crash despite the job-status state machine having gaps that don't actually matter in practice.</li>
+        <li>Both frontend WebSocket clients implement proper exponential backoff with jitter, plus a visibility-change reconnect.</li>
+        <li>The primary chart timeframe-switch path has solid double-layered race protection (AbortController + monotonic load-id check).</li>
+        <li>Stuck-order recovery on restart carefully reconciles EXECUTING orders against actual position state.</li>
+        <li><code>/ws/user</code> is properly authenticated and push-only — it cannot be used to mutate account state even if compromised.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="plan">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Audit plan — what's next</h2></div>
+    <p class="sec-sub">Phase 0 stops here by design — discovery only, nothing modified. The critical and high findings above are real and independently fixable; they don't require the remaining passes to act on.</p>
+    <div class="tbl-scroll">
+    <table>
+      <tr><th class="mono">Pass</th><th>Focus</th><th>Grounded by Phase 0 in</th></tr>
+      <tr><td class="mono">2 — Correctness</td><td>Live-trace the 5 execution flows above; candle-boundary math, timezone/session edge cases, the FE-01/FE-05 anchor bugs end-to-end in a real browser.</td><td>Architecture map, source-of-truth map</td></tr>
+      <tr><td class="mono">3 — Reliability</td><td>Failure-injection scenarios against RT-01/02/05/09/12 specifically — these are the ones where "what happens on crash/disconnect" is unresolved.</td><td>Findings register, Critical + High</td></tr>
+      <tr><td class="mono">4 — Performance</td><td>Benchmark DB-02/03's index write-amplification and retention's keyset scan at realistic 10×/100× volume.</td><td>Table growth risk (DB section)</td></tr>
+      <tr><td class="mono">5 — Security</td><td>Already substantially covered by RT-03 and SEC-01; remaining scope is CORS, input validation depth, and the trade-endpoint rate-limit gap.</td><td>Findings register</td></tr>
+      <tr><td class="mono">6 — Testing</td><td>Map which of the findings above already have regression-test coverage (ADR-011 does; most others don't) and close the gap for anything fixed.</td><td>Verified-sound section</td></tr>
+      <tr><td class="mono">7 — Architecture</td><td>Revisit the single-process constraint (§04) explicitly — is multi-worker deployment ever planned, and if so what breaks first.</td><td>External dependencies</td></tr>
+    </table>
+    </div>
+    <div class="callout"><b>Recommendation before continuing breadth-first:</b> the six Critical items are each independently small, verifiable fixes (none requires a redesign). Fixing those first, with a regression test per fix, gets more real risk off the table than proceeding straight into Pass 2's full-breadth correctness sweep.</div>
+  </section>
+
+  <footer>
+    <span>LEVERAGE — Phase 0 discovery report</span>
+    <span>Scope excludes: stock recommendation, options intelligence, portfolio intelligence</span>
+  </footer>
+
+</div>

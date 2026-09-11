@@ -28,7 +28,7 @@ If prompted for password, try:
 Once connected to `psql`, run this SQL command:
 
 ```sql
-ALTER USER postgres WITH PASSWORD 'medikart@3145';
+ALTER USER postgres WITH PASSWORD 'YOUR_POSTGRES_PASSWORD';
 ```
 
 You should see: `ALTER ROLE`
@@ -47,7 +47,7 @@ Test if the new password works:
 psql -U postgres -h localhost -d stock_data
 ```
 
-Enter password: `medikart@3145`
+Enter password: `YOUR_POSTGRES_PASSWORD`
 
 If successful, you'll see:
 ```
@@ -86,7 +86,7 @@ Check that `backend\.env` has:
 
 ```env
 DB_USER=postgres
-DB_PASSWORD=medikart@3145
+DB_PASSWORD=YOUR_POSTGRES_PASSWORD
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=stock_data
@@ -172,7 +172,7 @@ Try resetting via pg_hba.conf:
 psql -U postgres
 
 # 2. Reset password
-ALTER USER postgres WITH PASSWORD 'medikart@3145';
+ALTER USER postgres WITH PASSWORD 'YOUR_POSTGRES_PASSWORD';
 
 # 3. Create database
 CREATE DATABASE stock_data;

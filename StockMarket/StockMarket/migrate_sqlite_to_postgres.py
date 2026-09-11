@@ -18,7 +18,7 @@ import sys
 PG_CONFIG = {
     'dbname': 'stock_data',
     'user': 'postgres',
-    'password': 'medikart@3145',
+    'password': 'YOUR_POSTGRES_PASSWORD',
     'host': 'localhost',
     'port': '5432'
 }

@@ -1,0 +1,300 @@
+<title>LEVERAGE — Phase 2 Prioritization Report</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+}
+:root[data-theme="dark"]{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+:root[data-theme="light"]{ --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7; }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1340px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.8rem;padding:.24rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:940px}
+header.hero{margin-bottom:2.2rem;padding-bottom:1.8rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2.1rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:1rem;max-width:66ch}
+.statusbar{display:flex;gap:.6rem;margin-top:1.2rem;flex-wrap:wrap;font-family:var(--mono);font-size:.72rem}
+.statusbar span{padding:.3rem .7rem;border-radius:99px;border:1px solid var(--border);color:var(--text-dim)}
+.statusbar span.stop{border-color:var(--crit);color:var(--crit);font-weight:600}
+section{margin:2.6rem 0}
+section > h2{font-family:var(--serif);font-size:1.35rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:1rem}
+section > .lede{color:var(--text-dim);margin-bottom:1rem;font-size:.92rem;max-width:70ch}
+h3{font-family:var(--serif);font-size:1.08rem;margin:1.2rem 0 .4rem;font-weight:600}
+h4{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin:1rem 0 .4rem;font-weight:600}
+p{margin:.55rem 0}
+code{font-family:var(--mono);font-size:.84em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.chip{display:inline-flex;align-items:center;gap:.35em;font-family:var(--mono);font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;padding:.2em .55em;border-radius:99px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-soft);color:var(--crit)} .chip.high{background:var(--high-soft);color:var(--high)}
+.chip.med{background:var(--med-soft);color:var(--med)} .chip.low{background:var(--low-soft);color:var(--low)}
+.tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.6rem;letter-spacing:.05em;padding:.14em .48em;border-radius:4px;font-weight:600;text-transform:uppercase}
+.tag.V{border:1px solid var(--low);color:var(--low)}
+.tag.I{border:1px dashed var(--med);color:var(--med)}
+.tag.NV{border:1px dotted var(--text-dim);color:var(--text-dim)}
+.tag.RD{border:1px dotted var(--crit);color:var(--crit)}
+table{width:100%;border-collapse:collapse;font-size:.83rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:.9rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.64rem;color:var(--text-dim);padding:.5rem .68rem;border-bottom:1px solid var(--border)}
+td{padding:.5rem .68rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:.9rem 0;overflow-x:auto}
+.diagram .cap{font-size:.77rem;color:var(--text-dim);margin-top:.6rem;padding-top:.6rem;border-top:1px dashed var(--border)}
+.candcard{border:1px solid var(--border);border-radius:12px;padding:1.3rem 1.5rem;margin:1.1rem 0;background:var(--surface)}
+.candcard > .chead{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;margin-bottom:.4rem}
+.candcard > .chead h3{margin:0;font-size:1.2rem}
+.dims{display:grid;grid-template-columns:150px 1fr;gap:.35rem .9rem;font-size:.84rem;margin:.8rem 0}
+.dims dt{color:var(--text-dim);font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.2rem}
+.dims dd{margin:0}
+.callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.9rem}
+.callout b{color:var(--accent)}
+.warncall{background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.9rem}
+.warncall b{color:var(--crit)}
+.order{display:flex;gap:1rem;align-items:flex-start;margin:.9rem 0;padding:1rem;background:var(--surface);border:1px solid var(--border);border-radius:8px}
+.order .rank{font-family:var(--serif);font-size:1.5rem;color:var(--accent);flex:0 0 2rem}
+.approve{display:flex;gap:1rem;align-items:flex-start;margin:.9rem 0;padding:1rem;background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px}
+.approve .an{font-family:var(--serif);font-size:1.3rem;color:var(--crit);flex:0 0 1.8rem}
+ul,ol{padding-left:1.2rem} li{margin:.3rem 0}
+.phasebox{border:1px solid var(--border);border-radius:10px;padding:1.2rem 1.4rem;background:var(--surface);margin:1rem 0}
+.phasebox h4{margin-top:0}
+footer{color:var(--text-dim);font-size:.76rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.3rem;margin-top:2.6rem}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Graph Engineering — Prioritization</span>
+  <a href="#s1">§1 Current graph state</a>
+  <a href="#s2">§2 Candidate A</a>
+  <a href="#s3">§3 Candidate B</a>
+  <a href="#s4">§4 Candidate C</a>
+  <a href="#s5">§5 Other issues found</a>
+  <a href="#s6">§6 Dependency graph</a>
+  <a href="#s7">§7 Risk matrix</a>
+  <a href="#s8">§8 Recommended order</a>
+  <a href="#s9">§9 Human decisions required</a>
+  <a href="#s10">§10 Proposed Phase 2</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Graph Engineering — Prioritization Step</span>
+  <h1>Phase 2 Prioritization Report</h1>
+  <p class="dek">No code changed in this step. Three candidate phases traced through the actual dependency graph — user → frontend → API → service → database → market-data layer — to determine which one most improves correctness and structural integrity, not which is easiest.</p>
+  <div class="statusbar">
+    <span>0 files modified</span>
+    <span>0 data queried</span>
+    <span>Analysis only</span>
+    <span class="stop">STOP after §10 — awaiting approval</span>
+  </div>
+</header>
+
+<section id="s1">
+<h2><span class="num">§1</span> Current graph state</h2>
+<p>Phase 1 closed: holiday calendar desync, duplicate-tick volume, special-session aggregator plumbing, soft builder cap. 230/230 tests passing. Target architecture unchanged. Options/Recommendation Intelligence untouched — still <code>TEAM-OWNED · NOT YET BUILT</code>.</p>
+<p>Deliberately still open: Decision 1 (daily source), Decision 2 (canonical resolution, frozen pending Team 1), Decision 6 (unbounded query), the <code>chart_service.py</code> timeframe-case bug, and the <code>live_timeframe_manager.py</code> special-session residual.</p>
+</section>
+
+<section id="s2">
+<h2><span class="num">§2</span> Candidate A — API &amp; Query Safety</h2>
+<div class="candcard">
+<div class="chead"><span class="chip low">Low risk</span><span class="chip med">Small scope</span><h3><code>/api/stock-data/chart</code> + timeframe-case bug</h3></div>
+<div class="dims">
+<dt>Graph position</dt><dd>User → Frontend → <b>API (<code>/api/stock-data/chart</code>)</b> → <code>chart_service.py</code> → <code>candles</code>/<code>stock_data</code>. <span class="tag V">V</span> Re-confirmed this endpoint is not called by any current frontend page or any other backend route (unchanged since the earlier re-verification pass; <code>chart_service.py</code> and <code>main.py</code>'s route decorator were not touched in Phase 1).</dd>
+<dt>Business impact</dt><dd>None today (unreachable). Becomes real the moment anything is wired to it — including, notably, <b>Candidate B</b>: this session's deeper dive found <code>chart_service._fetch_tf</code> (<code>chart_service.py:98-99</code>) already hardcodes <code>StockData</code> as the model for daily timeframes, meaning this file is a plausible landing spot for a future consolidated daily-read path. <span class="tag I">I</span></dd>
+<dt>Data-integrity impact</dt><dd>None — read-path only, never writes.</dd>
+<dt>Dependency impact</dt><dd>Low today, but rises if Candidate B's later cutover stage chooses <code>chart_service.py</code> as the unified read layer — fixing it now means B doesn't inherit a known bug.</dd>
+<dt>Risk</dt><dd>Low — isolated string-case fix + a bounds check, no schema/API-contract change for any real caller (there are none).</dd>
+<dt>Reversibility</dt><dd>Fully reversible, pure code.</dd>
+<dt>Scope</dt><dd>1-2 files (<code>chart_service.py</code>, <code>main.py</code> route signature).</dd>
+<dt>Testing difficulty</dt><dd>Low — both fixes were already scoped as pure unit tests in the approved decision package (Decisions 4/6's siblings).</dd>
+<dt>Production risk</dt><dd>Minimal — no live traffic touches this path today.</dd>
+<dt>Team dependency</dt><dd>None.</dd>
+<dt>Blocking potential</dt><dd>Low on its own; moderate as a prerequisite if Candidate B later routes through this file.</dd>
+</div>
+</div>
+</section>
+
+<section id="s3">
+<h2><span class="num">§3</span> Candidate B — Historical Data Consolidation (read-only diff stage only)</h2>
+<div class="candcard">
+<div class="chead"><span class="chip crit">High impact</span><span class="chip high">Wide scope</span><h3><code>stock_data</code> vs <code>candles</code></h3></div>
+<div class="dims">
+<dt>Graph position</dt><dd>Sits directly in the path every user's daily/weekly/monthly chart takes, and directly upstream of any future Recommendation Intelligence training pipeline — the highest-traffic, most consequential node of the three candidates.</dd>
+<dt>Business impact</dt><dd><b>High.</b> <span class="tag V">V</span> Confirmed: daily reads (<code>/api/stock-data/range</code>, <code>price_provider.py</code> tier 4, <code>chart_service.py</code>'s daily branch) are hard-wired to <code>stock_data</code>; weekly/monthly and the health/monitoring endpoint (<code>/api/candle-health</code>) are hard-wired to <code>candles</code>. This is a real architectural split affecting what users see every day, not just latent duplication.</dd>
+<dt>Data-integrity impact</dt><dd><b>High, and worse than previously characterized.</b> Three new, verified facts this pass surfaced:
+<ol style="margin:.4rem 0 0">
+<li><span class="tag V">V</span> <b>1D timestamp convention differs from the rest of the app.</b> <code>candles</code> rows for every other timeframe are 09:15-IST-session-anchored; 1D rows are stored at <b>midnight</b> (<code>resampler.py:69</code> explicitly excludes <code>'1D'</code> from the 09:15-offset logic; the daily background sync jobs insert yfinance's midnight-indexed timestamps as-is). <code>stock_data.date</code> is a plain <code>Date</code> column with no time component at all — a third convention.</li>
+<li><span class="tag V">V</span> <code>adj_close</code> is only a genuine adjusted price on <code>stock_data</code>'s yfinance-sourced rows — the AngelOne-fallback and <code>candles</code>-fallback write paths just copy raw <code>close</code> into <code>adj_close</code>. It is not reliably meaningful today.</li>
+<li><span class="tag V">V</span> No <code>4h→1D</code> retention downgrade exists. <code>retention_service.py:14</code> explicitly documents daily/weekly as handled separately — this contradicts what the earlier Decision 1 analysis left as an open question ("may also write candles(1D) over time... not conclusively ruled out"). <b>It's now resolved: retention does not feed <code>candles</code>' 1D tier at all.</b> All 1D rows in <code>candles</code> come from three independent yfinance-based jobs (<code>backfill_daily.py</code>, the "DailySync" and "DailyPreFill" background jobs in <code>main.py</code>).</li>
+</ol>
+</dd>
+<dt>Dependency impact</dt><dd><b>Directly gates the approved Decision 1 target</b> ("<code>candles</code> becomes canonical"). Also — this is new — <b>the shared <code>Candle</code> contract already handed to future Team 1/Team 2 promises IST-naive, 09:15-session-anchored timestamps</b> (Decision Package §Shared Contracts). The 1D convention violates that promise today. Any Recommendation Intelligence work consuming daily candles inherits this inconsistency unless it's resolved first.</dd>
+<dt>Risk (this stage only — read-only diff)</dt><dd>Very low. No writes, no schema change, no production code path touched.</dd>
+<dt>Reversibility</dt><dd>The diff/analysis stage is trivially reversible (it changes nothing). Later stages (comparison → mismatch investigation → cutover) each need their own approval gate per Decision 1's already-approved phased process — this report does not propose skipping any of them.</dd>
+<dt>Scope</dt><dd>Wide for the <i>eventual</i> full consolidation (<code>historical_service.py</code>, <code>backfill_daily.py</code>, the two daily background jobs, <code>chart_service.py</code>, <code>price_provider.py</code>). Narrow for <i>this stage</i>: one new read-only comparison, no production path changes.</dd>
+<dt>Testing difficulty</dt><dd>Straightforward for the diff itself (row-by-row comparison, mismatch report). <span class="tag NV">NOT VERIFIED</span> whether the two tables' values actually differ in practice — that specifically requires live DB access this analysis pass didn't perform, which is exactly what the diff stage exists to produce.</dd>
+<dt>Production risk</dt><dd>None for the diff stage.</dd>
+<dt>Team dependency</dt><dd>Diff/analysis stage: Core-only. Per Decision 1's original owner note, Team 2 (Recommendation Intelligence) should be briefed before any actual cutover — not required for this stage.</dd>
+<dt>Blocking potential</dt><dd><b>High.</b> Blocks trustworthy AI/ML readiness work and leaves an already-published contract promise (09:15-anchored <code>Candle</code> timestamps) inconsistent with real data.</dd>
+</div>
+<div class="callout"><b>Existing tool found, not built this pass:</b> <code>count_active_tickers.py</code> (backend root) already prints per-table ticker counts and date ranges for both tables, with comments <code>"(Legacy Table)"</code> / <code>"(Future Storage)"</code> — evidence the migration intent was anticipated by a prior author. Worth running manually before the diff-stage script is built, as a fast sanity check.</div>
+</div>
+</section>
+
+<section id="s4">
+<h2><span class="num">§4</span> Candidate C — Special-Session Completion</h2>
+<div class="candcard">
+<div class="chead"><span class="chip low">Low value</span><span class="chip med">Elevated risk-for-value</span><h3><code>live_timeframe_manager.py</code> residual</h3></div>
+<div class="dims">
+<dt>Graph position</dt><dd>Leaf node — a single-file bucket-alignment detail inside higher-timeframe derivation, exercised only when a special session actually occurs.</dd>
+<dt>Business impact</dt><dd>Very low. <span class="tag V">V</span> Confirmed unchanged since Phase 1: no code anywhere calls <code>nse_calendar.add_special_session()</code> with real dates. The path this would fix is entirely inert.</dd>
+<dt>Data-integrity impact</dt><dd>None currently exercised — an inert code path cannot produce wrong data.</dd>
+<dt>Dependency impact</dt><dd>None found — no other component or future phase depends on this being resolved first.</dd>
+<dt>Risk</dt><dd>Touches the same hot-path bucket math a second time, on the specific file Phase 1's own analysis flagged as the higher-risk half of this consolidation. Fixing an inert path risks introducing a regression to the well-tested, currently-correct standard-day math that runs on every single trading day.</dd>
+<dt>Reversibility</dt><dd>Reversible (code-only), but not zero-risk to attempt.</dd>
+<dt>Scope</dt><dd>1 file, but hot-path-adjacent.</dd>
+<dt>Testing difficulty</dt><dd>Hard to prove correct — no real special-session dates exist to validate against, the same absence of a data source that makes this low-value also makes it low-confidence to verify.</dd>
+<dt>Production risk</dt><dd>Low probability of ever being hit (no data source), but any regression introduced while fixing it would affect every ordinary trading day, not just the rare special session.</dd>
+<dt>Team dependency</dt><dd>None.</dd>
+<dt>Blocking potential</dt><dd>None identified.</dd>
+</div>
+<p><b>Conclusion: stays deferred.</b> The dependency analysis doesn't surface anything that changes Phase 1's original deferral — if anything it reinforces it. This is a data/product gap (no special-session calendar source exists), not an engineering-priority gap. Revisit only when a real special-session data source is identified.</p>
+</div>
+</section>
+
+<section id="s5">
+<h2><span class="num">§5</span> Other issues found this pass</h2>
+<div class="warncall"><b>Correction to a previous report:</b> the Decision 1 analysis (prior session) left open whether <code>retention_service.py</code>'s downsample pipeline might also populate <code>candles</code>' 1D tier over time. <span class="tag V">V</span> This is now resolved and the earlier hedge was too generous — <code>retention_service.py:14</code> explicitly states 4h is the final intraday tier and daily/weekly are handled separately. <b>Retention does not feed 1D data at all.</b> All <code>candles</code> 1D rows come from three independent yfinance jobs. This doesn't change Decision 1's recommendation, but it removes an unresolved caveat and should replace the earlier hedged statement.</div>
+<ul>
+<li><span class="tag V">V</span> <b>yfinance version pin mismatch</b>: <code>requirements.txt</code> pins <code>yfinance==0.2.50</code>; the environment this analysis ran in has <code>1.4.1</code> installed. Both versions default <code>auto_adjust=True</code> where checked, so the practical effect is likely benign, but the pin doesn't reflect reality — worth a low-priority cleanup independent of any candidate above.</li>
+<li><span class="tag I">I</span> <b><code>adj_close</code> is not a reliable field today</b> outside the yfinance-sourced <code>stock_data</code> rows — AngelOne- and <code>candles</code>-fallback paths just copy raw <code>close</code> into it. Anything reading <code>adj_close</code> expecting a genuine split/dividend-adjusted price should not trust it universally. Relevant context for Candidate B, not a new standalone issue.</li>
+<li><span class="tag V">V</span> <b><code>price_provider.py</code>'s tier-4 fallback</b> (used outside market hours) is a load-bearing, code-level dependency on <code>stock_data</code> specifically — any Candidate B cutover must update this, not just the obvious chart-facing endpoints.</li>
+</ul>
+</section>
+
+<section id="s6">
+<h2><span class="num">§6</span> Dependency graph</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+  Current["Current Architecture<br/>(Phase 1 complete)"]
+  A["Candidate A — API/Query Safety"]
+  B["Candidate B — Historical Data Diff"]
+  C["Candidate C — Special-Session Completion"]
+  ChartSvc["chart_service.py<br/>(shared resampling engine)"]
+  DailySrc["Single canonical daily source<br/>(Decision 1 target)"]
+  Contract["Shared Candle contract<br/>(09:15-anchored — currently violated by 1D rows)"]
+  AIReady["AI/ML readiness<br/>(point-in-time correctness)"]
+  RecFuture["Recommendation Intelligence<br/>TEAM-OWNED, future"]
+  OptFuture["Options Intelligence<br/>TEAM-OWNED, future"]
+
+  Current --> A
+  Current --> B
+  Current --> C
+  A -->|cleans up before it may become the read layer for| ChartSvc
+  B -->|feeds| ChartSvc
+  ChartSvc -->|serves| DailySrc
+  B -->|resolves the 1D-anchor violation in| Contract
+  DailySrc --> Contract
+  Contract --> AIReady
+  AIReady --> RecFuture
+  Contract -.->|underlying price history| OptFuture
+  C -.->|no dependents found| Current
+</pre>
+<div class="cap">B is the only candidate on the path to the shared contract and AI/ML readiness. A is a low-risk cleanup of a file B is likely to depend on. C has no downstream dependents at all.</div>
+</div>
+</section>
+
+<section id="s7">
+<h2><span class="num">§7</span> Risk matrix</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Candidate</th><th>Impact</th><th>Correctness value</th><th>Risk to implement</th><th>Effort</th><th>Reversibility</th><th>Dependencies</th><th>Blocking potential</th></tr>
+<tr><td>A — API/Query Safety</td><td>Low (today)</td><td>Low</td><td>Low</td><td>Small</td><td>Full</td><td>None</td><td>Low, rising if B lands on chart_service.py</td></tr>
+<tr><td>B — Historical Diff (this stage)</td><td>High</td><td>High</td><td>Very low (read-only)</td><td>Small (this stage) / Large (full consolidation, later)</td><td>Full (this stage)</td><td>Team 2 briefing before eventual cutover</td><td>High — blocks AI/ML readiness &amp; contract integrity</td></tr>
+<tr><td>C — Special-Session Completion</td><td>Very low</td><td>None (inert path)</td><td>Elevated relative to its value</td><td>Small file, hot-path-adjacent</td><td>Reversible but risky to touch</td><td>None</td><td>None</td></tr>
+</table></div>
+</section>
+
+<section id="s8">
+<h2><span class="num">§8</span> Recommended order</h2>
+<div class="order"><div class="rank">1</div><div><b>Candidate A — API &amp; Query Safety.</b> Small, low-risk, fast, and it cleans up the exact file (<code>chart_service.py</code>) that Candidate B's later cutover stage is likely to depend on. Doing it first means B builds on a known-clean foundation instead of inheriting a live bug.</div></div>
+<div class="order"><div class="rank">2</div><div><b>Candidate B, read-only diff stage only.</b> This is the candidate that most improves correctness and structural integrity — it's the only one that unblocks AI/ML readiness and resolves a contract-integrity problem (the 09:15-anchoring violation) that's already been promised to future teams. Scoped strictly to the diff/analysis stage per Decision 1's approved phased process — no writes, no cutover, no destructive operation, consistent with this session's explicit instruction.</div></div>
+<div class="order"><div class="rank">—</div><div><b>Candidate C — not scheduled.</b> Not ranked third as "coming up next" — the analysis found no dependents and an unfavorable risk/value ratio right now. It drops out of the near-term queue entirely and should only return once a real special-session data source exists, which is a data/product gap, not an engineering backlog item.</div></div>
+</section>
+
+<section id="s9">
+<h2><span class="num">§9</span> Human decisions required</h2>
+<div class="approve"><div class="an">1</div><div><b>Approval to implement Candidate A</b> as scoped (chart_service.py case fix + query bound) — low risk, but still a production code change.</div></div>
+<div class="approve"><div class="an">2</div><div><b>Approval to run the Candidate B read-only diff</b> — no writes, but it does query production data (ticker/date-range comparison across both tables). Confirm this is acceptable to run against the live database, and confirm scope (all tickers, or a representative sample first).</div></div>
+<div class="approve"><div class="an">3</div><div><b>Acknowledge the 1D-timestamp-convention finding</b> before any Signal/Candle contract work proceeds with Team 2 — the contract as currently drafted promises something the data doesn't yet deliver for daily candles specifically. This doesn't require a decision today, but it should not be silently carried forward.</div></div>
+<div class="approve"><div class="an">4</div><div><b>Decision 2 (canonical resolution) stays frozen</b>, as instructed — no action needed, listed here only to confirm it was not reopened by this analysis.</div></div>
+</section>
+
+<section id="s10">
+<h2><span class="num">§10</span> Proposed Phase 2</h2>
+<div class="phasebox">
+<h4>Scope</h4>
+<p>Candidate A in full (chart_service.py timeframe-case fix + bounded query on <code>/api/stock-data/chart</code>), plus Candidate B's read-only diff/analysis stage only (compare <code>stock_data</code> and <code>candles</code>(1D) per ticker, report mismatches beyond a defined tolerance, quantify how much the 1D-anchor and <code>adj_close</code> issues actually affect stored values).</p>
+<h4>Goals</h4>
+<ul>
+<li>Close the last known correctness gap in <code>chart_service.py</code> before it becomes load-bearing.</li>
+<li>Produce a concrete, evidence-based answer to "do the two daily tables actually disagree, and by how much" — currently <span class="tag NV">NOT VERIFIED</span> without live data.</li>
+<li>Quantify the practical impact of the 1D-anchor and <code>adj_close</code> inconsistencies discovered this pass.</li>
+</ul>
+<h4>Non-goals</h4>
+<ul>
+<li>No cutover of any read path to a new canonical daily source.</li>
+<li>No schema changes, no data writes, no table deletion.</li>
+<li>No work on Candidate C.</li>
+<li>No reinterpretation of Decision 2 (canonical resolution stays frozen).</li>
+<li>No Options/Recommendation Intelligence code.</li>
+</ul>
+<h4>Entry criteria</h4>
+<ul>
+<li>This report approved.</li>
+<li>Explicit go-ahead to query production data for the diff stage (Human Decision #2 above).</li>
+</ul>
+<h4>Exit criteria</h4>
+<ul>
+<li>chart_service.py case bug fixed and tested; unbounded query bounded and tested; full backend suite green.</li>
+<li>A diff report exists showing, per ticker, whether <code>stock_data</code> and <code>candles</code>(1D) values agree, and characterizing any systematic pattern in disagreements (e.g. around known split/dividend dates).</li>
+<li>No production write path changed.</li>
+</ul>
+<h4>Expected tests</h4>
+<ul>
+<li>Unit tests for the case fix and query bound (already scoped in the approved decision package).</li>
+<li>The diff itself is a report, not a pass/fail test — its "test" is human review of the mismatch findings before any cutover decision is made in a future phase.</li>
+</ul>
+<h4>Expected graph changes</h4>
+<ul>
+<li>Graph A: <code>chart_service.py</code> node loses its "case-bug, unreachable" annotation.</li>
+<li>Graph C: the Candidate A delta row closes. The Candidate B delta row updates from "unchanged" to "diff complete, cutover decision pending" — it does not close, since cutover is explicitly out of this phase's scope.</li>
+<li>Graph B (target): unchanged.</li>
+</ul>
+</div>
+</section>
+
+<footer>LEVERAGE — Phase 2 Prioritization Report · Graph Engineering Mode · analysis only, zero files modified · awaiting approval before any implementation begins</footer>
+</main>
+</div>

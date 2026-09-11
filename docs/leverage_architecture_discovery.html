@@ -1,0 +1,540 @@
+<title>LEVERAGE — Core Platform Architecture (Refined)</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2;
+  --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0;
+  --low:#3d7a5e; --low-soft:#e1f0e7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17;
+    --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312;
+    --low:#7fd4ac; --low-soft:#123023;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17;
+  --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312;
+  --low:#7fd4ac; --low-soft:#123023;
+}
+:root[data-theme="light"]{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2;
+  --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0;
+  --low:#3d7a5e; --low-soft:#e1f0e7;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1340px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:260px;flex:0 0 260px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.82rem;padding:.26rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:920px}
+header.hero{margin-bottom:2.4rem;padding-bottom:2rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2.3rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:1.02rem;max-width:64ch;text-wrap:balance}
+.scopebar{display:flex;gap:1.2rem;margin-top:1.4rem;flex-wrap:wrap}
+.scopebox{flex:1;min-width:220px;border:1px solid var(--border);border-radius:8px;padding:.9rem 1rem;background:var(--surface)}
+.scopebox h5{margin:0 0 .4rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim)}
+.scopebox.own{border-left:3px solid var(--low)}
+.scopebox.notown{border-left:3px solid var(--text-dim)}
+.scopebox ul{margin:0;padding-left:1.1rem;font-size:.85rem}
+section{margin:3rem 0}
+section > h2{font-family:var(--serif);font-size:1.5rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:1.05rem}
+section > .lede{color:var(--text-dim);margin-bottom:1.1rem;font-size:.95rem;max-width:70ch}
+h3{font-family:var(--serif);font-size:1.1rem;margin:1.5rem 0 .5rem;font-weight:600}
+h4{font-size:.82rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin:1.2rem 0 .5rem;font-weight:600}
+p{margin:.65rem 0}
+code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.2rem 1.4rem;margin:.9rem 0}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+@media(max-width:760px){.grid2{grid-template-columns:1fr}main{padding:2rem 1.1rem 4rem}.wrap{flex-direction:column}nav.toc{position:relative;width:100%;flex:none;max-height:none}}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:1rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.68rem;color:var(--text-dim);padding:.55rem .75rem;border-bottom:1px solid var(--border)}
+td{padding:.5rem .75rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td code{font-family:var(--mono);font-size:.8em}
+.chip{display:inline-flex;align-items:center;gap:.35em;font-family:var(--mono);font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;padding:.2em .55em;border-radius:99px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-soft);color:var(--crit)}
+.chip.high{background:var(--high-soft);color:var(--high)}
+.chip.med{background:var(--med-soft);color:var(--med)}
+.chip.low{background:var(--low-soft);color:var(--low)}
+.tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.64rem;letter-spacing:.05em;padding:.16em .5em;border-radius:4px;font-weight:600;text-transform:uppercase}
+.tag.V{border:1px solid var(--low);color:var(--low)}
+.tag.I{border:1px dashed var(--med);color:var(--med)}
+.tag.A{border:1px dotted var(--text-dim);color:var(--text-dim)}
+.tag.PC{border:1px dashed var(--high);color:var(--high)}
+.tag.UNK{border:1px dotted var(--crit);color:var(--crit)}
+.finding{border-left:3px solid var(--border);padding:.15rem 0 .15rem 1rem;margin:1rem 0}
+.finding.crit{border-color:var(--crit)} .finding.high{border-color:var(--high)}
+.finding.med{border-color:var(--med)} .finding.low{border-color:var(--low)}
+.finding .head{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-bottom:.3rem}
+.finding .head b{font-size:.95rem}
+.finding .ev{font-family:var(--mono);font-size:.76rem;color:var(--text-dim)}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:1rem 0;overflow-x:auto}
+.diagram .cap{font-size:.78rem;color:var(--text-dim);margin-top:.65rem;padding-top:.65rem;border-top:1px dashed var(--border)}
+ul,ol{padding-left:1.25rem} li{margin:.3rem 0}
+.callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.9rem}
+.callout b{color:var(--accent)}
+.phase{display:flex;gap:1rem;margin:.9rem 0}
+.phase .ph-num{font-family:var(--serif);font-size:1.5rem;color:var(--accent);flex:0 0 2.2rem}
+.phase .ph-body{flex:1;border-bottom:1px solid var(--border);padding-bottom:.9rem}
+.phase .ph-body h4{margin-top:0}
+.approve{display:flex;gap:1rem;align-items:flex-start;margin:.9rem 0;padding:1rem;background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px}
+.approve .an{font-family:var(--serif);font-size:1.3rem;color:var(--crit);flex:0 0 1.8rem}
+.contract{border:1px solid var(--border);border-radius:10px;padding:1.2rem 1.4rem;margin:1rem 0;background:var(--surface)}
+.contract h4.name{font-family:var(--serif);font-size:1.25rem;color:var(--accent);text-transform:none;letter-spacing:0;margin:0 0 .6rem;font-weight:600}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:.3rem .8rem;font-size:.85rem;margin:.3rem 0}
+.kv dt{color:var(--text-dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.15rem}
+.kv dd{margin:0}
+hr{border:none;border-top:1px solid var(--border);margin:2.2rem 0}
+footer{color:var(--text-dim);font-size:.78rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.4rem;margin-top:3rem}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.78rem;margin:.8rem 0 1.2rem;color:var(--text-dim)}
+.legend span{display:flex;align-items:center;gap:.4rem}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Refinement Pass — Contents</span>
+  <a href="#scope">1. Scope &amp; ownership</a>
+  <a href="#verified">2. Verified current architecture</a>
+  <a href="#graph">3. Current architecture graph</a>
+  <a href="#flow">4. Data flow graph</a>
+  <a href="#candle">5. Candle architecture review</a>
+  <a href="#db">6. Database architecture</a>
+  <a href="#critical">7. Current critical issues</a>
+  <a href="#hidden">8. Hidden risks</a>
+  <a href="#boundary">9. Core / team boundary</a>
+  <a href="#contracts">10. Shared contracts</a>
+  <a href="#integration">11. Future integration graph</a>
+  <a href="#aiml">12. AI/ML readiness</a>
+  <a href="#target">13. Target core architecture</a>
+  <a href="#roadmap">14. Migration roadmap</a>
+  <a href="#approval">15. Decisions requiring approval</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Architecture Refinement Pass</span>
+  <h1>Core Platform architecture, re-verified line by line</h1>
+  <p class="dek">A second, adversarial pass over the Phase 1 discovery report. Every major finding below is re-checked against the actual code and tagged with a confidence level. No production code was modified.</p>
+  <div class="legend">
+    <span><span class="tag V">V</span> Verified — read the exact code</span>
+    <span><span class="tag I">I</span> Inferred — strong evidence, not proof</span>
+    <span><span class="tag PC">PC</span> Partially confirmed — real but narrower than first reported</span>
+    <span><span class="tag A">A</span> Assumption — not yet proven</span>
+    <span><span class="tag UNK">UNK</span> Unknown — requires a team decision</span>
+  </div>
+  <div class="scopebar">
+    <div class="scopebox own"><h5>This report owns</h5><ul><li>Market data (Angel One WS/REST)</li><li>Candle engine &amp; canonical resolution</li><li>Retention, recovery, migration</li><li>PostgreSQL / API / auth / security</li><li>Frontend chart integration</li><li>Shared data contracts</li></ul></div>
+    <div class="scopebox notown"><h5>Explicitly out of scope</h5><ul><li>Options Intelligence internals — Team 1</li><li>Recommendation Intelligence internals — Team 2</li><li>Neither exists in this repository today</li></ul></div>
+  </div>
+</header>
+
+<section id="scope">
+<h2><span class="num">01</span> Scope &amp; ownership</h2>
+<p>This pass covers everything Core Platform is responsible for: market-data ingestion, the candle/timeframe engine, historical data, retention/materialization, recovery, migrations, PostgreSQL, the FastAPI/API layer, frontend chart integration, authentication, security, observability, performance, testing, and deployment. It does <b>not</b> redesign Options Intelligence or Recommendation Intelligence — those are team-owned systems whose internals are out of scope here. Where this report touches them at all, it is only to define the <b>integration boundary</b>: what Core must hand them, and what they must hand back.</p>
+<p>Neither system has any code in this repository — confirmed by repeated repo-wide search in both the original discovery pass and this refinement pass. They are represented below strictly as <em>future, team-owned, integration-boundary-only</em> nodes, never as if they already exist.</p>
+</section>
+
+<section id="verified">
+<h2><span class="num">02</span> Verified current architecture</h2>
+<p class="lede">The Phase 1 report's biggest claims, re-checked against actual code. Full evidence trails are in the findings below; this is the corrected summary.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Claim</th><th>Status</th><th>What changed on re-check</th></tr>
+<tr><td>Daily data has two disagreeing sources of truth</td><td><span class="tag V">V</span></td><td>Confirmed and sharper: precedence isn't just undeclared, it's <b>inconsistent</b> — the daily endpoint favors <code>stock_data</code>, the weekly/monthly endpoints favor <code>candles</code>.</td></tr>
+<tr><td>ChartService timeframe-case bug empties daily/weekly/monthly charts</td><td><span class="tag PC">PC</span></td><td>The defect is real, but <b>no current frontend or backend caller ever invokes it</b> with <code>1D/1W/1M</code> — every real page bypasses <code>ChartService</code> for those timeframes and hits <code>stock_data</code>/<code>candles</code> directly. Dead-but-loaded gun, not an active user-facing bug today.</td></tr>
+<tr><td>Dashboard duplicate <code>/api/live-prices</code> fetch on load</td><td><span class="tag V">V</span></td><td>Confirmed exactly as reported, with the precise trigger chain below.</td></tr>
+<tr><td>No rate limiting on auth endpoints</td><td><span class="tag V">V</span></td><td>Confirmed, and worse than reported: <code>/register</code> also leaks account existence via its 400 response, and <code>/resend-verification</code>'s two different messages leak verified-vs-unverified status.</td></tr>
+<tr><td>Hybrid candle architecture is "fundamentally sound"</td><td><span class="tag PC">PC</span></td><td><b>Retracted as stated.</b> The core shape (5m canonical → in-memory higher-TF → checkpointed downsampling) is reasonable, but adversarial review found four concrete, code-verifiable flaws: disconnected calendar logic for special sessions, an unpatched duplicate-tick volume double-count on reconnect, a soft (not hard) cap on in-memory timeframe builders, and one unbounded query path. See §5.</td></tr>
+</table></div>
+</section>
+
+<section id="graph">
+<h2><span class="num">03</span> Current architecture graph</h2>
+<p class="lede">Everything that exists in the repository, with dead/orphaned paths visually distinguished (dotted, labeled). Nothing here represents Options or Recommendation Intelligence as existing — because it doesn't.</p>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+  subgraph Client["Frontend — vanilla JS/HTML (verified live path)"]
+    Pages["market.html / stock.html / index.html / dashboard.js"]
+    LWC["Lightweight Charts"]
+  end
+  subgraph Dead1["Orphaned frontend code — present, not reachable"]
+    React["React/Vite scaffold (src/) — does not build"]
+    TVFiles["tv-chart.html + tv-datafeed.js — unlinked from any page"]
+  end
+
+  subgraph API["FastAPI — backend/main.py (5,035 lines, monolith)"]
+    Routes["Inline routes: stock-data, watchlist, portfolio, news, screener, health"]
+    AuthR["routers/auth_router.py"]
+    TradeR["routers/trade_router.py"]
+    WSUser["/ws/user — authenticated"]
+    WSDash["/ws/dashboard — NOT authenticated"]
+    ChartSvc["chart_service.py — reachable only via /api/stock-data/chart,\nwhich no current client calls"]
+  end
+
+  subgraph Engine["Candle / timeframe engine"]
+    Aggregator["aggregator.py — Live5mBuilder, canonical 5m"]
+    LiveTF["live_timeframe_manager.py — 15m/30m/1h/4h, in-memory, soft-capped"]
+    Resampler["resampler.py"]
+    Retention["retention_service.py — checkpointed, checksum-verified"]
+    Recovery["recovery_service.py — lazy, per-ticker"]
+  end
+  subgraph Dead2["Dead/parallel backend paths"]
+    GapRec["gap_recovery.py — broken import, unreachable"]
+    Timescale["migrations/timescaledb/ + models_timescale.py — never mounted"]
+    LegacyTF["intraday_candles_1min/5min/15min/30min/1h — superseded, never dropped"]
+  end
+
+  subgraph MD["Market data"]
+    AngelWS["Angel One SmartWebSocketV2"]
+    AngelREST["Angel One REST"]
+    YF["yfinance — fallback"]
+  end
+
+  subgraph DB["PostgreSQL"]
+    Candles[("candles — unified, ticker+timeframe+timestamp")]
+    StockData[("stock_data — legacy daily, still primary read")]
+    Trading[("positions / orders / transactions")]
+    AuthTbl[("users / tokens")]
+    ChartSettings[("user_chart_settings — schema exists, zero reads/writes")]
+  end
+
+  Pages --> Routes
+  Pages --> WSDash
+  Pages -->|token in payload| WSUser
+  LWC --> Pages
+  Pages -.->|orphaned, never called| ChartSvc
+  React -.-> Pages
+  TVFiles -.-> Pages
+
+  AngelWS --> Aggregator --> Candles
+  Aggregator --> LiveTF
+  Recovery --> AngelREST
+  Recovery --> YF
+  Recovery --> Candles
+  Retention --> Candles
+  ChartSvc --> Resampler --> Candles
+  Routes --> StockData
+  Routes --> Candles
+  GapRec -.->|ImportError if ever wired| Aggregator
+  Timescale -.->|unwired| DB
+  LegacyTF -.-> DB
+
+  TradeR --> Trading
+  AuthR --> AuthTbl
+</pre>
+<div class="cap">Solid = live, exercised paths. Dotted = present in the repository but not reachable from any current entrypoint. Everything under <code>Dead1</code>/<code>Dead2</code> is real code, but it is not part of the running system today.</div>
+</div>
+</section>
+
+<section id="flow">
+<h2><span class="num">04</span> Data flow graph — market data to frontend</h2>
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+  participant AO as Angel One WS
+  participant AG as Live5mBuilder
+  participant PC as PendingCandleManager
+  participant DB as Postgres candles
+  participant API as FastAPI route
+  participant FE as Frontend chart
+
+  AO->>AG: tick (price/100, exchange ts)
+  AG->>AG: reject if tick_ts < last_ts (V: aggregator.py:225-230)
+  Note over AG: does NOT reject tick_ts == last_ts —<br/>reconnect replay can double-count volume (V)
+  AG->>PC: buffer in 5m bucket, 60s late window
+  PC->>AG: finalize on next differing bucket
+  AG->>DB: batch upsert, ON CONFLICT DO UPDATE
+  FE->>API: GET /api/stock-data/intraday/paginated
+  API->>DB: query candles directly (bypasses ChartService)
+  DB-->>API: rows
+  API-->>FE: JSON candles
+  Note over FE,API: daily/weekly/monthly requests go to<br/>/range, /weekly, /monthly — none touch ChartService (V)
+</pre>
+<div class="cap">The frontend's real request path for every timeframe bypasses <code>chart_service.py</code> entirely — confirmed by tracing every fetch call in <code>dashboard.js</code>, <code>tv-datafeed.js</code>, and <code>market.html</code>.</div>
+</div>
+</section>
+
+<section id="candle">
+<h2><span class="num">05</span> Candle architecture review</h2>
+<p class="lede">Re-examined adversarially across ten specific failure modes, per your request, rather than accepted on the strength of the retention/resampling logic alone.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Area</th><th>Verdict</th><th>Evidence</th></tr>
+<tr><td>Holiday handling</td><td><span class="chip med">Flaw</span></td><td>Holiday list is DB-driven with a manual admin-triggered refresh only — no automatic sync. An unscheduled/missed holiday silently lets ticks aggregate into real candles. <code>aggregator.py:45-50</code></td></tr>
+<tr><td>Partial / special sessions (e.g. Muhurat trading)</td><td><span class="chip high">Flaw</span></td><td><b>Two disconnected calendar implementations.</b> <code>exchange_calendar.py</code> has real special-session scaffolding (<code>add_special_session()</code>) that is never called in production. The live aggregator hardcodes 09:15–15:30 independently and never imports the calendar module at all — a special session would build zero candles. <code>aggregator.py:27-30</code>, confirmed no import of <code>exchange_calendar</code></td></tr>
+<tr><td>Missing candles / mid-session gaps</td><td><span class="chip med">Flaw</span></td><td>Fully-missing buckets are handled correctly (no row, resampler drops empty bins). But a candle only finalizes when a <em>new</em> tick arrives in a different bucket — an illiquid ticker or WS outage with no further ticks leaves a forming candle that never persists as completed. <code>aggregator.py:260-262, 316-340</code></td></tr>
+<tr><td>Duplicate ticks</td><td><span class="chip high">Flaw</span></td><td>Dedup only rejects <code>tick_ts &lt; last_ts</code>, not <code>tick_ts == last_ts</code>. A reconnect replaying the last trade at the same exchange timestamp is not rejected and its volume is added again. <code>aggregator.py:225-230, 274</code></td></tr>
+<tr><td>Recovery/live overlap</td><td><span class="chip med">Flaw</span></td><td>Recovery-fetched REST candles default <code>is_completed=True</code> even when the range includes the still-forming current bucket, with no explicit "recovery only touches closed buckets" boundary. <code>recovery_service.py:74-79,106-164</code>, <code>aggregator.py:584,598</code></td></tr>
+<tr><td>Historical/live chart boundary</td><td><span class="chip low">Sound</span></td><td>Dedup-by-timestamp merge in <code>chart_service.py:63-73</code> produces a clean seam — verified by code, not by a running system.</td></tr>
+<tr><td>Resampling math at session-end edge buckets</td><td><span class="chip low">Sound</span></td><td>09:15-anchored offset correctly produces a legitimately shorter final bucket at 15:30, not corrupted data. <code>resampler.py:69-81</code></td></tr>
+<tr><td>Volume aggregation across tiers</td><td><span class="chip low">Sound, inherits flaw</span></td><td>Sums correctly across tiers, but any volume inflated by the duplicate-tick issue above propagates unchanged through every higher timeframe — retention's checksum only verifies internal consistency, not ground truth.</td></tr>
+<tr><td>Concurrent viewers / memory growth</td><td><span class="chip high">Flaw</span></td><td><code>MAX_BUILDERS=5000</code> is soft, not hard: eviction correctly never touches active viewers, but if none are evictable, new builders are created past the cap with no bound. Plausible under a market-hours traffic spike. <code>live_timeframe_manager.py:256-264,340-351</code></td></tr>
+<tr><td>Large historical range requests</td><td><span class="chip high">Flaw</span></td><td><code>/api/stock-data/range/paginated</code> and <code>/intraday/paginated</code> correctly cap at 50,000 rows — but <code>/api/stock-data/chart</code> has no upper bound on <code>limit</code>, and resampling multiplies the source query by up to 60x, creating an unpaginated, unbounded query against the 5m table. <code>main.py:3297-3299</code>, <code>chart_service.py:94-111,154</code></td></tr>
+</table></div>
+<div class="callout"><b>Revised verdict:</b> the hybrid shape — 5-minute canonical from ticks, in-memory derivation of higher intraday timeframes, checkpointed/checksum-verified historical downsampling — is the right shape and should be kept. But "fundamentally sound" was too generous a conclusion the first time: it reviewed the well-tested retention and resampling logic without stress-testing the seams. Four of the ten areas above are concrete, code-verifiable flaws, not theoretical edge cases, and should be treated as real defects to schedule, not merely noted.</div>
+</section>
+
+<section id="db">
+<h2><span class="num">06</span> Database architecture</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Table</th><th>Owner</th><th>Written by</th><th>Note</th></tr>
+<tr><td><code>candles</code></td><td>Core</td><td>Live aggregator, recovery, retention, manual <code>backfill_daily.py</code></td><td>Correctly unique on (ticker, timeframe, timestamp); the one table with real idempotency discipline across all writers.</td></tr>
+<tr><td><code>stock_data</code></td><td>Core</td><td>Ad hoc, request-triggered fallback chain inside <code>/api/stock-data/range</code></td><td>Populated independently of <code>candles</code>(1D) — no shared write path, confirmed can diverge. Primary read path for daily history today.</td></tr>
+<tr><td><code>current_day_candle</code></td><td>Core</td><td>Live tick pipeline</td><td>Ephemeral per trading day.</td></tr>
+<tr><td>Legacy <code>intraday_candles_*</code></td><td>Core</td><td>Historically, pre-unification</td><td>Migration to <code>candles</code> never completed — <code>DROP TABLE</code> left commented out.</td></tr>
+<tr><td><code>retention_jobs</code></td><td>Core</td><td><code>retention_service.py</code></td><td>DB-native checkpoint (<code>last_ticker</code>) — the correct pattern, not replicated by the file-based backfill checkpoints elsewhere.</td></tr>
+<tr><td><code>users</code> / <code>login_attempts</code> / <code>verification_tokens</code> / <code>token_blacklist</code></td><td>Core</td><td><code>auth.py</code> / <code>auth_router.py</code></td><td><code>token_blacklist</code> and <code>login_attempts</code> have no observed purge job — unbounded growth.</td></tr>
+<tr><td><code>positions</code> / <code>orders</code> / <code>transactions</code></td><td>Core</td><td><code>trade_service.py</code>, triggered by <code>execution_engine.py</code></td><td>No DB-level uniqueness guard against a duplicate fill — correctness depends on application logic alone.</td></tr>
+<tr><td><code>user_chart_settings</code></td><td>Core (schema), nobody (usage)</td><td>Nothing — zero reads/writes anywhere</td><td>The intended server-side drawing-persistence table; currently dead schema.</td></tr>
+<tr><td><code>stock_metadata</code></td><td>Core</td><td>Seeding scripts, <code>is_premium</code> backfill migration</td><td>Governs differentiated retention tier per ticker — this is exactly the kind of field a future <code>Instrument</code> contract needs to expose stably (§10).</td></tr>
+</table></div>
+</section>
+
+<section id="critical">
+<h2><span class="num">07</span> Current critical issues</h2>
+<div class="finding crit"><div class="head"><span class="chip crit">Critical</span><b>Daily-candle dual source of truth, inconsistent precedence</b><span class="tag V">V</span></div>
+<p><code>stock_data</code> and <code>candles</code>(1D) are populated by completely independent code paths with no shared writer, and different endpoints prefer different tables (daily favors <code>stock_data</code>; weekly/monthly favor <code>candles</code>). They can and do diverge.</p>
+<div class="ev">main.py:2899,2955,3001 (stock_data writes) · backfill_daily.py:99 (candles 1D writes, manual-only script, no scheduler) · main.py:3225 ("prefer... unified pipeline" comment, contradicted by range endpoint's own precedence)</div>
+</div>
+<div class="finding high"><div class="head"><span class="chip high">High</span><b>Duplicate-tick volume double-count on reconnect</b><span class="tag V">V</span></div>
+<p>Dedup guard only rejects strictly-older ticks; a same-timestamp replayed tick on WS reconnect is added to volume again.</p>
+<div class="ev">aggregator.py:225-230,274</div>
+</div>
+<div class="finding high"><div class="head"><span class="chip high">High</span><b>Special/partial trading sessions build zero candles</b><span class="tag V">V</span></div>
+<p>The live aggregator never imports the calendar module that has special-session support; it hardcodes standard hours only.</p>
+<div class="ev">aggregator.py:27-30, exchange_calendar.py add_special_session() never called in production</div>
+</div>
+<div class="finding high"><div class="head"><span class="chip high">High</span><b>Unbounded query path on <code>/api/stock-data/chart</code></b><span class="tag V">V</span></div>
+<p>No upper bound on <code>limit</code>, multiplied up to 60x on resample — a real OOM/DoS vector against the 5m table, even though this route isn't currently called by any client (still worth closing before something calls it).</p>
+<div class="ev">main.py:3297-3299, chart_service.py:94-111,154</div>
+</div>
+<div class="finding med"><div class="head"><span class="chip med">Medium</span><b>Dashboard duplicate <code>/api/live-prices</code> fetch on load</b><span class="tag V">V</span></div>
+<p><code>index.js</code>'s <code>DOMContentLoaded</code> handler has no page-type guard and always calls <code>updatePrices()</code>; <code>dashboard.js</code> independently and correctly guards on <code>.dashboard-main</code> but has no awareness that <code>index.js</code> already fired an overlapping request.</p>
+<div class="ev">index.js:991-998 (no guard) vs dashboard.js:210-214 (guarded) — both POST /api/live-prices with overlapping ticker sets on the same DOMContentLoaded tick</div>
+</div>
+<div class="finding med"><div class="head"><span class="chip med">Medium</span><b>Soft, not hard, cap on in-memory timeframe builders</b><span class="tag V">V</span></div>
+<p>If eviction has no candidates (all builders actively viewed), new builders are created past <code>MAX_BUILDERS=5000</code> with no bound — the docstring's "upper bound" claim doesn't match the code.</p>
+<div class="ev">live_timeframe_manager.py:256-264,340-351</div>
+</div>
+</section>
+
+<section id="hidden">
+<h2><span class="num">08</span> Hidden risks</h2>
+<ul>
+<li><b><span class="tag V">V</span> <code>/register</code> leaks account existence</b> via a distinguishable 400 response for an already-registered email, before password-format validation runs. <span class="ev">auth_router.py:26-27</span></li>
+<li><b><span class="tag V">V</span> <code>/resend-verification</code> leaks verified-vs-unverified status</b> through two different response messages for the two cases. <span class="ev">auth_router.py:144-149</span></li>
+<li><b><span class="tag I">I</span> <code>/forgot-password</code>'s uniform response message may still leak via timing</b> (a real send only happens on the existing-user branch), though this is inferred, not measured. <span class="ev">auth_router.py:164-182</span></li>
+<li><b><span class="tag V">V</span> No endpoint anywhere in the app is tested at the HTTP layer.</b> All 13 backend test files exercise service classes directly, in-process — none import <code>main.py</code>'s <code>app</code> or use <code>TestClient</code>. Breaking a route's decorator, request schema, or wiring would go completely undetected.</li>
+<li><b><span class="tag V">V</span> No CI/CD exists</b> — no <code>.github/workflows/</code>, no Dockerfile for this app (only for the sibling News_Sentiment service), no automated migration runner (no Alembic; migrations are hand-run <code>psql</code>/a manual script).</li>
+<li><b><span class="tag V">V</span> A hardcoded fallback DB password is present in a maintenance script</b> — <code>run_sql_migration.py</code>'s <code>DB_PASSWORD = os.getenv("DB_PASSWORD", "medikart@3145")</code> — this defaults to a real-looking credential if the env var is ever unset, in a script that runs arbitrary SQL against the database.</li>
+<li><b><span class="tag V">V</span> No environment-tier separation</b> (dev/staging/prod) anywhere in config — one flat <code>.env</code>, no feature flags, no <code>ENVIRONMENT</code> variable read anywhere.</li>
+<li><b><span class="tag V">V</span> <code>/api/health</code> is not wired to any deployment tooling</b> — it exists but nothing (no Docker healthcheck, no probe, because none of that infra exists) actually consumes it.</li>
+</ul>
+</section>
+
+<section id="boundary">
+<h2><span class="num">09</span> Core / team boundary — what belongs where</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Subsystem</th><th>Classification</th><th>Note</th></tr>
+<tr><td>Angel One WS/REST ingestion</td><td><span class="chip low">Core-owned</span></td><td>Options Intelligence will need option-chain instrument subscriptions — an extension of this, not a separate integration (see §10, §12).</td></tr>
+<tr><td>Candle engine (5m canonical, retention, recovery)</td><td><span class="chip low">Core-owned</span></td><td></td></tr>
+<tr><td>PostgreSQL / schema / migrations</td><td><span class="chip low">Core-owned</span></td><td>Team-owned tables (future <code>signals</code>, <code>option_contracts</code>) live in the same DB, namespaced, migrated through Core's process.</td></tr>
+<tr><td>FastAPI app, auth, security, observability</td><td><span class="chip low">Core-owned</span></td><td></td></tr>
+<tr><td>Frontend chart integration</td><td><span class="chip low">Core-owned</span></td><td>Options/Recommendation UI (if any) is team-owned but mounts inside Core's frontend shell.</td></tr>
+<tr><td>Instrument / Candle / LivePrice contracts</td><td><span class="chip med">Shared contract</span></td><td>Core defines and publishes; both teams consume read-only.</td></tr>
+<tr><td>Signal contract shape</td><td><span class="chip med">Shared contract</span></td><td>Core defines the envelope (timestamps, instrument reference, versioning); Team 2 defines the payload semantics.</td></tr>
+<tr><td>WS subscription capacity for option tokens</td><td><span class="chip high">Integration-only</span></td><td>Core must extend <code>ViewedTickerManager</code> to support option instrument tokens if Team 1 needs live option prices — not yet built.</td></tr>
+<tr><td>Recommendation Intelligence internals (models, features, scoring)</td><td><span class="chip crit">Team-owned</span></td><td>Out of scope for this report entirely.</td></tr>
+<tr><td>Options Intelligence internals (strategy, Greeks, IV)</td><td><span class="chip crit">Team-owned</span></td><td>Out of scope for this report entirely.</td></tr>
+<tr><td>Option contract / option price data source</td><td><span class="chip crit">Future/unknown</span></td><td>Does Team 1 build this against Core's Angel One integration, or source it independently? <span class="tag UNK">UNK</span></td></tr>
+<tr><td>1-minute (or finer) candle resolution</td><td><span class="chip crit">Future/unknown</span></td><td>Not yet requested by either team; a real requirement here changes Core's canonical-resolution decision (§13). <span class="tag UNK">UNK</span></td></tr>
+</table></div>
+</section>
+
+<section id="contracts">
+<h2><span class="num">10</span> Shared contracts</h2>
+<p class="lede">The principle: team-owned intelligence systems should depend on a stable contract, never on Core's internal tables or implementation details. Only the contracts with a concrete, evidenced need are designed below in full — the rest are flagged for a joint decision rather than invented.</p>
+
+<div class="contract">
+<h4 class="name">Instrument</h4>
+<div class="kv">
+<dt>Purpose</dt><dd>One stable identity per tradable symbol, so "RELIANCE" means the same thing to every system.</dd>
+<dt>Owner</dt><dd>Core</dd>
+<dt>Producer</dt><dd>Core — backed by the existing <code>stock_metadata</code> table + Angel One instrument-master sync</dd>
+<dt>Consumers</dt><dd>Recommendation, Options, Frontend</dd>
+<dt>Required fields</dt><dd><code>ticker, exchange, instrument_token, name, segment, is_active</code></dd>
+<dt>Timestamps</dt><dd><code>last_updated</code> — when the instrument master was last refreshed</dd>
+<dt>Versioning</dt><dd>Identity fields immutable once created; <b>corporate-action re-tokenization is not handled anywhere in the current code</b> — a relisting/token change today is a silent break, not a versioned event. Needs a <code>superseded_by</code> pointer before either team relies on token stability long-term.</dd>
+<dt>Validation</dt><dd><code>(ticker, exchange)</code> unique; <code>instrument_token</code> unique among active instruments</dd>
+<dt>Mutability</dt><dd>Metadata mutable, identity immutable</dd>
+<dt>Backing</dt><dd>Database-backed, exposed through a read API rather than direct table access</dd>
+</div>
+</div>
+
+<div class="contract">
+<h4 class="name">Candle</h4>
+<div class="kv">
+<dt>Purpose</dt><dd>Canonical OHLCV bar per ticker+timeframe+timestamp — the one thing every downstream system trains or triggers on.</dd>
+<dt>Owner</dt><dd>Core</dd>
+<dt>Producer</dt><dd>Live aggregator (real-time), retention service (historical tiers), recovery/backfill</dd>
+<dt>Consumers</dt><dd>Frontend, Recommendation (feature generation), Options (underlying price history)</dd>
+<dt>Required fields</dt><dd><code>ticker, timeframe, timestamp, open, high, low, close, volume, is_completed, data_source</code></dd>
+<dt>Timestamps</dt><dd><b>Bucket start time, IST-naive, snapped to the 09:15 NSE session anchor</b> — must be documented explicitly to every consumer; the dead <code>v002</code> migration shows exactly what goes wrong when a consumer assumes midnight-anchored buckets instead.</dd>
+<dt>Versioning</dt><dd>A row is mutable while forming and should be treated as immutable once <code>is_completed=True</code> — not currently enforced at the DB level. <b>Any model training pipeline must filter to <code>is_completed=True</code> or risk training on values that later changed</b> — a direct data-leakage vector today.</dd>
+<dt>Validation</dt><dd>Standard OHLC bounds; unique <code>(ticker, timeframe, timestamp)</code></dd>
+<dt>Mutability</dt><dd>Mutable until completed, then immutable (by convention, not yet by constraint)</dd>
+<dt>Backing</dt><dd>Database-backed; recommend an API layer in front of it so Core can evolve the schema without breaking either team</dd>
+</div>
+</div>
+
+<div class="contract">
+<h4 class="name">LivePrice</h4>
+<div class="kv">
+<dt>Purpose</dt><dd>Latest tick/quote snapshot for real-time display and fast decision paths.</dd>
+<dt>Owner</dt><dd>Core</dd>
+<dt>Producer</dt><dd><code>angelone_service.py</code>, exposed via <code>/api/live-prices</code> and the two WebSocket channels</dd>
+<dt>Consumers</dt><dd>Frontend (display), Options (if strategy triggers need sub-candle latency)</dd>
+<dt>Required fields</dt><dd><code>ticker, ltp, tick_timestamp, day_open, day_high, day_low, day_volume</code></dd>
+<dt>Timestamps</dt><dd>Must distinguish exchange tick time from server-received time explicitly — currently conflated in places in the live pipeline.</dd>
+<dt>Versioning</dt><dd>None — ephemeral by design. <b>Must never be used as historical/training data</b>; that is exactly what the Candle contract is for.</dd>
+<dt>Mutability</dt><dd>Fully transient</dd>
+<dt>Backing</dt><dd><b>Not database-backed</b> — event/API only (WS push + REST snapshot). This is the one deliberate asymmetry with Candle worth calling out to both teams explicitly.</dd>
+</div>
+</div>
+
+<div class="contract">
+<h4 class="name">Signal <span class="tag UNK">UNK — shape needs Team 2</span></h4>
+<div class="kv">
+<dt>Purpose</dt><dd>Recommendation Intelligence's output artifact — the boundary through which Frontend/Options can consume a recommendation without knowing the model.</dd>
+<dt>Owner</dt><dd>Team 2 (Recommendation Intelligence) owns the payload; Core hosts the storage/timestamp contract it must obey.</dd>
+<dt>Producer</dt><dd>Team 2's system exclusively</dd>
+<dt>Consumers</dt><dd>Frontend, optionally Options — never Core itself for decision-making</dd>
+<dt>Required fields (proposed, not final)</dt><dd><code>ticker, generated_at, signal_type, score, horizon, model_version</code></dd>
+<dt>Timestamps</dt><dd><b>Point-in-time discipline is the one non-negotiable Core requirement</b>: <code>generated_at</code> must be the true decision time, and the signal must only be computed from <code>Candle</code>/<code>Instrument</code> data timestamped at or before it — this is the leakage guard, see §12.</dd>
+<dt>Versioning</dt><dd><code>model_version</code> required on every row so a historical signal is reproducible against the exact model that produced it.</dd>
+<dt>Mutability</dt><dd>Append-only / immutable — corrections are new rows, never in-place edits, to preserve backtest integrity.</dd>
+<dt>Backing</dt><dd>Database-backed, schema owned by Team 2, migrated through Core's process</dd>
+</div>
+</div>
+
+<div class="contract">
+<h4 class="name">Position <span class="tag V">Exists today</span></h4>
+<div class="kv">
+<dt>Purpose</dt><dd>User's trade record — already implemented for spot LONG/SHORT paper trading.</dd>
+<dt>Owner</dt><dd>Core (<code>trade_service.py</code> is the sole writer)</dd>
+<dt>Recommendation</dt><dd><b>Options Intelligence should extend this ledger, not duplicate it.</b> Add an instrument-type discriminator (or reuse <code>position_type</code>) rather than build a parallel options position/order/transaction schema — the immutable-ledger discipline already built into <code>transactions</code> is worth reusing, not re-deriving.</dd>
+</div>
+</div>
+
+<div class="contract">
+<h4 class="name">OptionContract <span class="tag UNK">UNK — does not exist, needs Team 1 + Core joint design</span></h4>
+<div class="kv">
+<dt>Purpose</dt><dd>Identity for a specific option (strike, expiry, right) on an underlying Instrument.</dd>
+<dt>Owner</dt><dd>Team 1 owns the contract schema and strategy use; Core owns the underlying price feed and WS subscription capacity it depends on.</dd>
+<dt>What Core must provide first</dt><dd>Angel One does expose option instrument tokens via its instrument master, but <code>angelone_service.py</code>'s current subscription/token-resolution logic is equity-focused only (confirmed: <code>hardcoded_tokens.py</code> and the token-resolution fallback chain target equities/indices, not option chains). <b>This is a real, concrete integration gap Team 1 will hit immediately</b> — Core needs to extend the subscription manager before Options Intelligence can get live option prices.</dd>
+<dt>Status</dt><dd>Fields, expiry-timestamp semantics, and whether option price history is a new time-series or reuses the Candle shape are all <span class="tag UNK">UNKNOWN — REQUIRES TEAM DECISION</span> with Team 1 before design.</dd>
+</div>
+</div>
+</section>
+
+<section id="integration">
+<h2><span class="num">11</span> Future integration graph</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+  Core["CORE PLATFORM<br/>(everything in §3 — the only part that exists today)"]
+  Contracts["Shared Contracts<br/>Instrument · Candle · LivePrice · Signal(shape) · Position"]
+  Rec["Recommendation Intelligence<br/>TEAM-OWNED · NOT YET BUILT"]
+  Opt["Options Intelligence<br/>TEAM-OWNED · NOT YET BUILT"]
+
+  Core -->|publishes, read-only| Contracts
+  Contracts -->|Instrument, Candle, LivePrice| Rec
+  Contracts -->|Instrument, Candle, LivePrice| Opt
+  Rec -.->|Signal — UNKNOWN: exact payload TBD with Team 2| Core
+  Opt -.->|OptionContract + strategy output — UNKNOWN: exact payload TBD with Team 1| Core
+  Opt -.->|needs: option-token WS subscriptions — UNKNOWN: not yet built| Core
+  Rec -.->|needs: point-in-time Candle guarantee — see §12| Core
+</pre>
+<div class="cap">Solid arrows are the direction Core can commit to today (publishing read-only market data). Dashed arrows are flows that depend on decisions neither team has made yet — labeled rather than guessed.</div>
+</div>
+</section>
+
+<section id="aiml">
+<h2><span class="num">12</span> AI/ML readiness</h2>
+<p class="lede">Not building the AI system — only assessing whether Core's current data foundation could support one without a rework.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Dimension</th><th>Status</th><th>Evidence</th></tr>
+<tr><td>Point-in-time correctness</td><td><span class="chip high">Gap</span></td><td>Forming candles are mutable and not distinguished from completed ones at the DB-constraint level; a naive training query without an explicit <code>is_completed=True</code> filter would leak future information.</td></tr>
+<tr><td>Data leakage risk (daily data)</td><td><span class="chip crit">Gap</span></td><td>Two divergent daily sources (§7) means a model trained against one and served against the other learns and predicts on different numbers.</td></tr>
+<tr><td>Timestamp correctness</td><td><span class="chip low">Ready</span></td><td>Consistently IST-naive, session-anchored — a real strength, as long as it's documented in the Candle contract (§10) rather than assumed.</td></tr>
+<tr><td>Historical consistency across timeframes</td><td><span class="chip med">Gap</span></td><td>Retention's checksum verifies internal consistency (source sum = target sum) but not ground truth — the duplicate-tick volume flaw (§5) would pass that check while still being wrong.</td></tr>
+<tr><td>Reproducibility of features/signals</td><td><span class="chip crit">Gap</span></td><td>No versioning concept exists yet anywhere in the codebase — the proposed <code>Signal.model_version</code> field (§10) is a new requirement, not something to retrofit later.</td></tr>
+<tr><td>Instrument identity stability</td><td><span class="chip high">Gap</span></td><td>No corporate-action/re-tokenization handling exists — a backtest spanning a relisting event would silently break.</td></tr>
+<tr><td>Data versioning / lineage</td><td><span class="chip crit">Gap</span></td><td>No concept of "what did this table look like as of date X" exists — retention physically deletes and downsamples source rows, which is correct for storage but means a backtest can't reconstruct exactly what 5m data looked like before it was compressed to 15m.</td></tr>
+</table></div>
+<p><b>Overall:</b> Core is <i>not yet</i> AI/ML-ready, but the gaps are addressable without a rework — they're additive (versioning fields, a completed-only read path, a single daily source of truth) rather than structural. This should be resolved before Team 2 starts training against real data, not after.</p>
+</section>
+
+<section id="target">
+<h2><span class="num">13</span> Target core architecture</h2>
+<p class="lede">Scoped strictly to what belongs to Core. Recommendation and Options are drawn only as the boundary they connect through — their internals are not designed here.</p>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+  User(("User")) --> FE["Frontend — cleaned up, one framework choice made deliberately"]
+  FE --> API["FastAPI — routers split by domain instead of one 5,000-line file"]
+  API --> MarketData["Market Data Module<br/>(today's aggregator + retention + recovery, hardened per §5/§7)"]
+  MarketData --> PG[("PostgreSQL — single daily source, versioned Candle rows")]
+  API --> Contracts["Shared Contracts layer<br/>Instrument · Candle · LivePrice"]
+  Contracts -.->|read-only, external to this diagram| TeamSystems["Team-owned systems<br/>(Recommendation, Options)"]
+  API --> Obs["Observability: structured logging + scrubbed Sentry + wired health checks"]
+  API --> AuthMod["Auth: rate-limited, enumeration-safe"]
+</pre>
+<div class="cap">This is a hardening of what exists, not a rewrite: split the monolith into domain routers, fix the daily-source duality, close the calendar/dedup/cap gaps, publish the contracts layer. No new infrastructure category is introduced.</div>
+</div>
+<p>Compared against the prior pass's proposal (modular monolith with Market/Recommendation/Options modules inside one FastAPI app): that shape is <b>not yet the correct target</b>, precisely because Recommendation and Options don't exist yet and their scale/isolation needs are unknown. The safer immediate target is Core alone, publishing contracts at a clean boundary — whether the other two systems eventually live in this same process or a separate one is a decision for when they actually start being built, not one to pre-decide now.</p>
+</section>
+
+<section id="roadmap">
+<h2><span class="num">14</span> Migration roadmap</h2>
+<div class="phase"><div class="ph-num">0</div><div class="ph-body"><h4>Correctness fixes (no architecture change)</h4><p>Fix the same-timestamp tick dedup gap. Add a hard cap (reject, don't silently exceed) to <code>MAX_BUILDERS</code>. Add an upper bound to <code>/api/stock-data/chart</code>'s <code>limit</code>. Fix the <code>index.js</code> duplicate-fetch guard. These are isolated, low-risk, and don't touch the daily-data question.</p></div></div>
+<div class="phase"><div class="ph-num">1</div><div class="ph-body"><h4>Daily-data reconciliation</h4><p>Compare <code>stock_data</code> and <code>candles</code>(1D) for the same tickers to quantify actual drift before choosing a winner. Then declare one authoritative source and migrate reads — this needs a verification step, not a unilateral pick (see §15).</p></div></div>
+<div class="phase"><div class="ph-num">2</div><div class="ph-body"><h4>Calendar unification</h4><p>Wire the live aggregator to <code>exchange_calendar.py</code> instead of its own hardcoded constants, so special/partial sessions are handled once, correctly, in one place.</p></div></div>
+<div class="phase"><div class="ph-num">3</div><div class="ph-body"><h4>Publish the Instrument/Candle/LivePrice contracts</h4><p>Formalize the read-only API surface described in §10 before either team writes code against internal tables directly.</p></div></div>
+<div class="phase"><div class="ph-num">4</div><div class="ph-body"><h4>AI/ML foundation</h4><p>Add <code>is_completed</code>-aware read paths, a versioning convention, and resolve the corporate-action gap — before Team 2 trains against real data.</p></div></div>
+<div class="phase"><div class="ph-num">5</div><div class="ph-body"><h4>Integration onboarding — only after Team 1/Team 2 scope is known</h4><p>Extend the WS subscription manager for option tokens if and when Team 1 confirms that requirement. Revisit canonical resolution (§ prior report) only if either team demonstrates a concrete need for finer-than-5m data.</p></div></div>
+</section>
+
+<section id="approval">
+<h2><span class="num">15</span> Decisions requiring human/team approval</h2>
+<div class="approve"><div class="an">1</div><div><b>Which daily-data table becomes authoritative</b> — <code>stock_data</code> or <code>candles</code>(1D). This changes what every existing endpoint reads and should not be picked without seeing the actual drift between the two first.</div></div>
+<div class="approve"><div class="an">2</div><div><b>Whether 5-minute stays canonical, or a finer resolution is needed</b> — this is a one-way door: historical 5m-only data cannot be un-aggregated back to 1-minute resolution later. If Options Intelligence is likely to need sub-5-minute data, that should surface now, not after a year of 5m-only history has accumulated.</div></div>
+<div class="approve"><div class="an">3</div><div><b>The exact <code>Signal</code> and <code>OptionContract</code> payload shapes</b> — Core can commit to the timestamp/versioning discipline they must follow, but the business fields are Team 2's and Team 1's to define.</div></div>
+<div class="approve"><div class="an">4</div><div><b>Whether Options Intelligence gets its own live option-price integration or extends Core's Angel One subscription manager</b> — a real architecture decision with cost either way, not something to default into.</div></div>
+<div class="approve"><div class="an">5</div><div><b>Whether Recommendation/Options end up as modules in this same FastAPI process or separate services</b> — deliberately left open in §13 until team scale/isolation needs are known; should be revisited explicitly when either team starts, not assumed now.</div></div>
+<div class="approve"><div class="an">6</div><div><b>Retiring dead code</b> (gap_recovery.py, the TimescaleDB folder, the React scaffold, orphaned TV files, legacy per-timeframe tables) — flagged, not deleted, per the standing instruction not to modify production code in this phase.</div></div>
+</section>
+
+<footer>LEVERAGE Core Platform — Architecture Refinement Pass · read-only, no production code modified · every VERIFIED/INFERRED/PARTIALLY-CONFIRMED tag reflects a direct re-read of the cited file:line by an independent verification pass, distinct from the original Phase 1 discovery</footer>
+</main>
+</div>

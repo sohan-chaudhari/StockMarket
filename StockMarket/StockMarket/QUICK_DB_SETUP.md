@@ -1,15 +1,15 @@
 # Quick PostgreSQL Password Setup
 
-## Your New Universal Password: `medikart@3145`
+## Your New Universal Password: `YOUR_POSTGRES_PASSWORD`
 
-### ✅ Step 1: Set PostgreSQL Password to medikart@3145
+### ✅ Step 1: Set PostgreSQL Password to YOUR_POSTGRES_PASSWORD
 
 **Using pgAdmin (Easiest):**
 1. Open **pgAdmin 4**
 2. Expand: Servers → PostgreSQL 18 → Login/Group Roles
 3. Right-click **postgres** → Properties
 4. Go to **Definition** tab
-5. Enter password: `medikart@3145`
+5. Enter password: `YOUR_POSTGRES_PASSWORD`
 6. Click **Save**
 
 **Using Command Line:**
@@ -22,7 +22,7 @@ psql -U postgres
 
 Then run:
 ```sql
-ALTER USER postgres WITH PASSWORD 'medikart@3145';
+ALTER USER postgres WITH PASSWORD 'YOUR_POSTGRES_PASSWORD';
 \q
 ```
 
@@ -33,7 +33,7 @@ cd "C:\Program Files\PostgreSQL\18\bin"
 psql -U postgres -c "CREATE DATABASE stock_data;"
 ```
 
-Enter password when prompted: `medikart@3145`
+Enter password when prompted: `YOUR_POSTGRES_PASSWORD`
 
 ### ✅ Step 3: Test Connection
 
@@ -42,7 +42,7 @@ cd "C:\Program Files\PostgreSQL\18\bin"
 psql -U postgres -h localhost -d stock_data
 ```
 
-Password: `medikart@3145`
+Password: `YOUR_POSTGRES_PASSWORD`
 
 If successful, type `\q` to exit.
 
@@ -76,7 +76,7 @@ You should now see the server start without PostgreSQL errors!
 ## Your Configuration Summary
 
 - **DB User:** `postgres`
-- **DB Password:** `medikart@3145`
+- **DB Password:** `YOUR_POSTGRES_PASSWORD`
 - **DB Host:** `localhost`
 - **DB Port:** `5432`
 - **DB Name:** `stock_data`

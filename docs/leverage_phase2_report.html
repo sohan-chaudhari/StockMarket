@@ -1,0 +1,309 @@
+<title>LEVERAGE — Phase 2 Report: Query Safety + Historical Data Diff</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+}
+:root[data-theme="dark"]{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+:root[data-theme="light"]{ --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7; }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1340px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.79rem;padding:.22rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:960px}
+header.hero{margin-bottom:2.2rem;padding-bottom:1.8rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2.05rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:1rem;max-width:66ch}
+.statusbar{display:flex;gap:.55rem;margin-top:1.2rem;flex-wrap:wrap;font-family:var(--mono);font-size:.7rem}
+.statusbar span{padding:.3rem .65rem;border-radius:99px;border:1px solid var(--border);color:var(--text-dim)}
+.statusbar span.go{border-color:var(--low);color:var(--low);font-weight:600}
+.statusbar span.stop{border-color:var(--crit);color:var(--crit);font-weight:600}
+section{margin:2.6rem 0}
+section > h2{font-family:var(--serif);font-size:1.32rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:1rem}
+section > .lede{color:var(--text-dim);margin-bottom:1rem;font-size:.92rem;max-width:70ch}
+h3{font-family:var(--serif);font-size:1.05rem;margin:1.1rem 0 .4rem;font-weight:600}
+h4{font-size:.76rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin:1rem 0 .35rem;font-weight:600}
+p{margin:.55rem 0}
+code{font-family:var(--mono);font-size:.83em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.chip{display:inline-flex;align-items:center;gap:.35em;font-family:var(--mono);font-size:.63rem;text-transform:uppercase;letter-spacing:.05em;padding:.2em .55em;border-radius:99px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-soft);color:var(--crit)} .chip.high{background:var(--high-soft);color:var(--high)}
+.chip.med{background:var(--med-soft);color:var(--med)} .chip.low{background:var(--low-soft);color:var(--low)}
+.tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.6rem;letter-spacing:.05em;padding:.14em .48em;border-radius:4px;font-weight:600;text-transform:uppercase}
+.tag.V{border:1px solid var(--low);color:var(--low)}
+.tag.I{border:1px dashed var(--med);color:var(--med)}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:.9rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.63rem;color:var(--text-dim);padding:.48rem .65rem;border-bottom:1px solid var(--border)}
+td{padding:.48rem .65rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td code, .num-cell{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:.82em}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:.9rem 0;overflow-x:auto}
+.diagram .cap{font-size:.77rem;color:var(--text-dim);margin-top:.6rem;padding-top:.6rem;border-top:1px dashed var(--border)}
+.querybox{font-family:var(--mono);font-size:.78rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:.9rem 1rem;margin:.7rem 0;white-space:pre-wrap;overflow-x:auto}
+.finding{border-left:3px solid var(--border);padding:.2rem 0 .2rem 1rem;margin:1rem 0}
+.finding.crit{border-color:var(--crit)} .finding.high{border-color:var(--high)}
+.finding.med{border-color:var(--med)} .finding.low{border-color:var(--low)}
+.finding .head{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-bottom:.3rem}
+.finding .head b{font-size:.95rem}
+.callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.9rem}
+.callout b{color:var(--accent)}
+.warncall{background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.9rem}
+.warncall b{color:var(--crit)}
+.approve{display:flex;gap:1rem;align-items:flex-start;margin:.9rem 0;padding:1rem;background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px}
+.approve .an{font-family:var(--serif);font-size:1.3rem;color:var(--crit);flex:0 0 1.8rem}
+ul,ol{padding-left:1.2rem} li{margin:.3rem 0}
+.stat{display:inline-block;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:.15em .5em;font-family:var(--mono);font-size:.85em}
+footer{color:var(--text-dim);font-size:.76rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.3rem;margin-top:2.6rem}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Graph Engineering — Phase 2</span>
+  <a href="#s1">§1 Phase 2A summary</a>
+  <a href="#s2">§2 Phase 2A tests</a>
+  <a href="#s3">§3 Phase 2B methodology</a>
+  <a href="#s4">§4 Coverage findings</a>
+  <a href="#s5">§5 Value-level findings</a>
+  <a href="#s6">§6 Timestamp convention</a>
+  <a href="#s7">§7 adj_close / corp actions</a>
+  <a href="#s8">§8 Other discrepancies</a>
+  <a href="#s9">§9 Findings summary</a>
+  <a href="#s10">§10 Next phase &amp; open decisions</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Graph Engineering — Phase 2</span>
+  <h1>Phase 2 — Query Safety + Historical Data Diff</h1>
+  <p class="dek">Phase 2A (Candidate A) implemented and tested. Phase 2B (Candidate B) executed as a read-only comparison — no writes, no schema changes, no cutover. Phase 2 ends here per the safety rule; consolidation is not started.</p>
+  <div class="statusbar">
+    <span class="go">233/233 backend tests passing</span>
+    <span>2 files modified (chart_service.py, main.py)</span>
+    <span>1 test file extended</span>
+    <span>0 writes to the database</span>
+    <span class="stop">STOP — awaiting approval before any cutover work</span>
+  </div>
+</header>
+
+<section id="s1">
+<h2><span class="num">§1</span> Phase 2A — files changed</h2>
+<div class="tbl-wrap"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>chart_service.py</code></td><td><code>SOURCE_HIERARCHY</code> changed from <code>["5m","15m","30m","1h","4h","1d","1w","1m"]</code> to <code>["5m","15m","30m","1h","4h","1D","1W","1M"]</code> — matches <code>config/timeframe_registry.py</code>'s actual casing exactly. Added <code>MAX_SOURCE_QUERY_ROWS = 50000</code> and clamped every derived source-tier query size to it inside <code>_fetch_tf</code> (one line, covers both the direct-target fetch and the resampling-source fetch).</td></tr>
+<tr><td><code>main.py</code></td><td><code>/api/stock-data/chart</code>'s <code>limit</code> query parameter changed from unbounded <code>Query(5000)</code> to <code>Query(5000, ge=1, le=50000)</code> — matches the ceiling already used by the sibling <code>/range/paginated</code> and <code>/intraday/paginated</code> endpoints.</td></tr>
+<tr><td><code>tests/test_chart_service.py</code></td><td>3 new tests added (below).</td></tr>
+</table></div>
+<p>No other files touched. No schema, migration, retention policy, canonical-resolution, Options, or Recommendation Intelligence code was modified, per the stated scope.</p>
+</section>
+
+<section id="s2">
+<h2><span class="num">§2</span> Phase 2A — tests run and results</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Test</th><th>Proves</th></tr>
+<tr><td><code>test_source_hierarchy_matches_registry_casing</code></td><td>Direct regression test for the exact defect: <code>"1D"/"1W"/"1M"</code> are present in both <code>TIMEFRAME_REGISTRY</code> and <code>SOURCE_HIERARCHY</code>, and <code>.index()</code> no longer raises <code>ValueError</code>. Confirmed empirically that the pre-fix list would raise (<code>'1D' is not in list</code>) before writing the fix.</td></tr>
+<tr><td><code>test_get_chart_1D_does_not_return_unknown_timeframe_error</code></td><td>End-to-end: <code>get_chart("RELIANCE", "1D")</code> no longer falls through to the broad-except empty-result path.</td></tr>
+<tr><td><code>test_source_query_limit_is_capped_even_for_huge_client_limit</code></td><td>Requesting <code>limit=10,000,000</code> on a <code>1h</code> chart (whose source-tier multiplier is ×60) still issues a bounded <code>.limit(...)</code> call against the database — never exceeds <code>MAX_SOURCE_QUERY_ROWS</code>.</td></tr>
+</table></div>
+<div class="querybox">$ python -m pytest tests/test_chart_service.py -q
+..........
+10 passed, 1 warning in 2.10s
+
+$ python -m py_compile chart_service.py main.py  →  OK
+
+$ python -m pytest tests/ -q
+233 passed, 15 warnings in 24.88s</div>
+<p>233 = the 230 passing after Phase 1 + 3 new tests this phase. No existing test changed behavior or required modification.</p>
+</section>
+
+<section id="s3">
+<h2><span class="num">§3</span> Phase 2B — diff methodology</h2>
+<p class="lede">Before running anything, cheap aggregate queries (<code>COUNT</code>/<code>MIN</code>/<code>MAX</code>, sub-100ms each) were run first to size the comparison and decide full-vs-sampled — per the instruction to report a sampling strategy only if full comparison wasn't affordable.</p>
+<div class="querybox">stock_data:      792,832 rows · 3,285 distinct tickers · dates 2015-01-01 → 2026-07-10
+candles(1D):      28,721 rows · 2,643 distinct tickers · dates 2026-07-21 → 2026-08-10</div>
+<p><b>Decision: full comparison, no sampling.</b> Combined row count (~820K) and every query in this report completed in well under one second against the local Postgres instance — sampling would have traded completeness for no measurable benefit. All queries below ran against every ticker and every date in both tables.</p>
+<h4>Exact queries executed (all read-only <code>SELECT</code>, no <code>db.execute</code> call in this phase wrote, inserted, updated, or deleted anything)</h4>
+<div class="querybox">-- connectivity + sizing
+SELECT 1;
+SELECT COUNT(*) FROM stock_data;
+SELECT COUNT(DISTINCT ticker) FROM stock_data;
+SELECT MIN(date), MAX(date) FROM stock_data;
+SELECT COUNT(*) FROM candles WHERE timeframe='1D';
+SELECT COUNT(DISTINCT ticker) FROM candles WHERE timeframe='1D';
+SELECT MIN(timestamp), MAX(timestamp) FROM candles WHERE timeframe='1D';
+SELECT DISTINCT timeframe FROM candles;
+
+-- row-level overlap (the core diff)
+SELECT COUNT(*) FROM stock_data sd
+  JOIN candles c ON c.ticker = sd.ticker AND c.timeframe = '1D'
+                AND c.timestamp::date = sd.date;
+SELECT COUNT(DISTINCT sd.ticker) FROM stock_data sd
+  JOIN candles c ON c.ticker = sd.ticker AND c.timeframe = '1D'
+                AND c.timestamp::date = sd.date;
+
+-- ticker-set overlap
+WITH sd AS (SELECT DISTINCT ticker FROM stock_data),
+     cd AS (SELECT DISTINCT ticker FROM candles WHERE timeframe='1D')
+SELECT (SELECT COUNT(*) FROM sd), (SELECT COUNT(*) FROM cd),
+       (SELECT COUNT(*) FROM sd JOIN cd USING(ticker)),
+       (SELECT COUNT(*) FROM sd LEFT JOIN cd USING(ticker) WHERE cd.ticker IS NULL),
+       (SELECT COUNT(*) FROM cd LEFT JOIN sd USING(ticker) WHERE sd.ticker IS NULL);
+
+-- boundary/gap inspection
+SELECT COUNT(*) FROM stock_data WHERE date > '2026-07-10';
+SELECT COUNT(*) FROM stock_data WHERE date BETWEEN '2026-07-11' AND '2026-07-20';
+SELECT COUNT(*) FROM candles WHERE timeframe='1D' AND timestamp < '2026-07-21';
+SELECT date, COUNT(*) FROM stock_data GROUP BY date ORDER BY date DESC LIMIT 8;
+SELECT timestamp::date, COUNT(*) FROM candles WHERE timeframe='1D'
+  GROUP BY timestamp::date ORDER BY 1 ASC LIMIT 8;
+
+-- timestamp convention
+SELECT timestamp::time, COUNT(*) FROM candles WHERE timeframe='1D' GROUP BY 1 ORDER BY 2 DESC;
+
+-- adj_close semantics
+SELECT COUNT(*) FROM stock_data WHERE adj_close IS NOT NULL;
+SELECT COUNT(*) FROM stock_data WHERE adj_close IS NULL;
+SELECT COUNT(*) FROM stock_data WHERE adj_close IS NOT NULL AND ABS(adj_close - close) > 0.01;
+SELECT ticker, date, close, adj_close, ROUND((1 - adj_close/close)*100, 2) AS pct_diff
+  FROM stock_data WHERE adj_close IS NOT NULL AND close > 0
+  ORDER BY ABS(1 - adj_close/close) DESC LIMIT 8;
+SELECT COUNT(*) FROM stock_data WHERE ticker='VEDL' AND adj_close IS NOT NULL;
+
+-- OHLC / volume / data-quality sanity, both tables
+SELECT COUNT(*) FROM candles WHERE timeframe='1D' AND high < low;
+SELECT COUNT(*) FROM candles WHERE timeframe='1D' AND volume = 0;
+SELECT is_completed, data_source, COUNT(*) FROM candles WHERE timeframe='1D' GROUP BY 1,2;
+SELECT COUNT(*) FROM stock_data WHERE high < low;
+SELECT COUNT(*) FROM stock_data WHERE volume = 0;
+SELECT COUNT(*) FROM stock_data WHERE close = 'NaN';
+SELECT COUNT(*) FROM stock_data WHERE adj_close = 'NaN';
+SELECT COUNT(*) FROM candles WHERE timeframe='1D' AND close = 'NaN';</div>
+<p>Run interactively via <code>SessionLocal()</code> (the app's own SQLAlchemy session factory) from a Python one-off in the backend directory — not a saved script, since each query built on the previous result. All queries and their raw results are reproduced verbatim in §4-§8 below; nothing is summarized without the underlying number shown.</p>
+</section>
+
+<section id="s4">
+<h2><span class="num">§4</span> Coverage findings — the headline result</h2>
+<div class="warncall"><b>The two tables currently have zero overlapping (ticker, date) rows.</b> <code>stock_data</code>'s most recent date is <b>2026-07-10</b>; <code>candles</code>(1D)'s earliest date is <b>2026-07-21</b>. A direct join on <code>(ticker, date)</code> returns <span class="stat">0</span> matching rows across the entire dataset. This is <span class="tag V">VERIFIED</span> by direct query, not inferred.</div>
+<p>This changes what "diff" means in practice today: there is no shared ground truth to compare OHLC/volume values against row-by-row, because the two tables cover <i>disjoint time periods</i>, not the same period from two sources. The sections below report what <i>can</i> be determined given that.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Metric</th><th><code>stock_data</code></th><th><code>candles</code> (1D)</th></tr>
+<tr><td>Total rows</td><td class="num-cell">792,832</td><td class="num-cell">28,721</td></tr>
+<tr><td>Distinct tickers</td><td class="num-cell">3,285</td><td class="num-cell">2,643</td></tr>
+<tr><td>Date range</td><td class="num-cell">2015-01-01 → 2026-07-10</td><td class="num-cell">2026-07-21 → 2026-08-10</td></tr>
+<tr><td>Data source</td><td>Mixed (yfinance / AngelOne / candles-copy fallback chain)</td><td>100% <code>data_source='YFINANCE'</code>, 100% <code>is_completed=True</code> <span class="tag V">V</span></td></tr>
+</table></div>
+<h4>Ticker-set overlap (regardless of date)</h4>
+<div class="tbl-wrap"><table>
+<tr><th>Segment</th><th>Count</th></tr>
+<tr><td>Tickers in both tables</td><td class="num-cell">2,638</td></tr>
+<tr><td>Tickers only in <code>stock_data</code></td><td class="num-cell">647</td></tr>
+<tr><td>Tickers only in <code>candles</code>(1D)</td><td class="num-cell">5</td></tr>
+</table></div>
+<h4>The boundary looks like a clean handoff, not a gap</h4>
+<ul>
+<li><span class="tag V">V</span> Zero <code>stock_data</code> rows exist after 2026-07-10 (not "sparse" — literally zero).</li>
+<li><span class="tag V">V</span> Zero <code>stock_data</code> rows exist in the 2026-07-11 → 2026-07-20 window either — there is no partial coverage attempt in that gap from the legacy side.</li>
+<li><span class="tag V">V</span> Zero <code>candles</code>(1D) rows exist before 2026-07-21.</li>
+<li><span class="tag I">Inferred</span> — not provable from static data alone, but consistent with the code read in the Phase 2 Prioritization Report: <code>stock_data</code> is populated by request-triggered fallback logic inside <code>/api/stock-data/range</code>, not a scheduled job, while <code>candles</code>(1D) is fed by the scheduled "DailySync"/"DailyPreFill" background jobs in <code>main.py</code>. The clean 11-day gap with zero rows on either side is more consistent with <i>nobody having recently requested daily data far enough back to trigger a <code>stock_data</code> self-heal write</i> than with an active, ongoing dual-write regime.</li>
+</ul>
+<div class="callout"><b>Practical implication:</b> if <code>/api/stock-data/range</code> is still being called in production for recent dates, its own fallback chain is almost certainly what's populating <code>stock_data</code> live and keeping it looking current from the user's perspective — this diff only sees the DB's state at query time, not request traffic. Confirming that fallback is actually firing in practice is outside what a read-only DB query can determine.</div>
+</section>
+
+<section id="s5">
+<h2><span class="num">§5</span> OHLC / volume value-level findings</h2>
+<p>Because §4 establishes zero overlapping rows, a row-by-row OHLC/volume diff between the two tables is <b>not possible with the data as it exists today</b> — there's nothing to line up. What follows instead is data-quality sanity within each table, run identically on both so any asymmetry is visible.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Check</th><th><code>stock_data</code></th><th><code>candles</code> (1D)</th></tr>
+<tr><td>Rows where <code>high &lt; low</code> (impossible OHLC)</td><td class="num-cell">0</td><td class="num-cell">0</td></tr>
+<tr><td>Zero-volume rows</td><td class="num-cell">4,557 (0.57%)</td><td class="num-cell">39 (0.14%)</td></tr>
+<tr><td>Rows with <code>close = NaN</code></td><td class="num-cell">1 (COALINDIA, 2026-06-02)</td><td class="num-cell">0</td></tr>
+</table></div>
+<p><span class="tag V">V</span> OHLC internal consistency is clean in both tables — no structurally invalid candles found in either. <span class="tag V">V</span> One literal <code>NaN</code> float value is stored in <code>stock_data.close</code> (and the same row's <code>adj_close</code>) for COALINDIA — a single bad data point from an earlier fetch, not a systemic problem, but worth a one-row cleanup note since a NaN silently propagates through any downstream arithmetic that doesn't explicitly guard for it.</p>
+</section>
+
+<section id="s6">
+<h2><span class="num">§6</span> Timestamp convention — confirmed with real data, not just code</h2>
+<div class="finding high"><div class="head"><span class="chip high">Confirmed</span><b>100% of <code>candles</code>(1D) rows are stored at midnight (00:00:00)</b><span class="tag V">V</span></div>
+<p>All 28,721 rows return <code>timestamp::time = 00:00:00</code> — no exceptions. This validates, with live data rather than just code-reading, the earlier finding that 1D candles break the 09:15-IST-session-anchoring convention every other timeframe in the same table follows.</p>
+<p><code>stock_data.date</code> is a plain <code>DATE</code> column — no time component exists to compare, which is itself the third, structurally different convention flagged previously.</p>
+<p><b>Practical impact:</b> because there is currently no overlapping data (§4), this inconsistency has not yet caused an observable wrong-answer for any user — but it becomes load-bearing the moment any consolidation or resampling logic needs to align a 1D candle's timestamp with the 09:15-anchored intraday tiers it's nominally derived from (e.g. computing a session boundary, or joining 1D against 4h/1h data for validation). Any future cutover must explicitly decide and normalize this, not inherit it silently.</p>
+</div>
+</section>
+
+<section id="s7">
+<h2><span class="num">§7</span> adj_close semantics and corporate-action signal</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Metric</th><th>Value</th></tr>
+<tr><td>Rows with <code>adj_close IS NOT NULL</code></td><td class="num-cell">73,213 / 792,832 (9.2%)</td></tr>
+<tr><td>Rows with <code>adj_close IS NULL</code></td><td class="num-cell">719,619 / 792,832 (90.8%)</td></tr>
+<tr><td>Of the populated rows, differing from <code>close</code> by &gt;0.01</td><td class="num-cell">15,407 / 73,213 (21.0%)</td></tr>
+</table></div>
+<p><span class="tag V">V</span> <code>adj_close</code> is far sparser than the earlier code-only analysis characterized it — it isn't just "unreliable on some write paths," it's <b>absent entirely on over 90% of rows</b>. Only a small, inconsistent slice of the table's history has a populated, genuinely-adjusted value at all. <code>candles</code>(1D) has no <code>adj_close</code> column, so this comparison has nothing to be checked against there.</p>
+<h4>A real, detectable corporate-action signature</h4>
+<p>The largest divergences all belong to a single ticker, <b>VEDL</b>, across many different 2015 dates, each showing an almost identical <span class="stat">~68.32%</span> gap between <code>close</code> and <code>adj_close</code> (e.g. close 173.20 vs adj_close 54.86 on 2015-06-18; close 212.40 vs adj_close 67.28 on 2015-05-04 and again on 2015-03-04). <span class="tag V">V</span> 2,817 of VEDL's rows carry a non-null <code>adj_close</code>. The near-constant ratio across unrelated dates is the signature of a single retroactive adjustment factor applied by yfinance across VEDL's pre-event history — consistent with a real corporate action, though this analysis does not assert which specific event, since that would require external verification beyond what the stored data alone proves.</p>
+<div class="callout"><b>Why this matters for Decision 1:</b> a consolidation onto <code>candles</code> as canonical would currently mean <i>losing</i> whatever genuine adjustment signal exists in that 9.2% slice of <code>stock_data</code>, since <code>candles</code> has no adjusted-price concept at all today. That's a real (if narrow) capability regression to weigh, not just a schema simplification.</div>
+</section>
+
+<section id="s8">
+<h2><span class="num">§8</span> Other discrepancies found</h2>
+<ul>
+<li><span class="tag V">V</span> <b><code>candles</code>(1D) has a data gap of its own</b>: 2026-07-22 is missing entirely (dates jump from 07-21 straight to 07-23), and 07-23 itself only has 1,005 tickers versus ~2,600 on every surrounding day — a partial day. Whether 07-22 was a legitimate market holiday or a job failure was not determined by this analysis (would need the <code>holidays</code>/<code>market_sessions</code> tables cross-referenced, out of this phase's scope).</li>
+<li><span class="tag V">V</span> <code>candles</code>(1D) is <b>100% <code>data_source='YFINANCE'</code></b> — despite <code>historical_service.py</code> supporting an Angel One REST path for daily data in principle, nothing in the current 1D data actually came from it.</li>
+<li><span class="tag I">Inferred</span> — <code>stock_data</code>'s 647 exclusive tickers (present there but not in <code>candles</code>) are plausibly delisted, renamed, or otherwise-inactive symbols that predate the current active-ticker universe the newer background jobs iterate over — this wasn't cross-checked against <code>stock_metadata.is_active</code> in this pass and should be confirmed before any cutover, since silently dropping 647 tickers' history would be a real regression for anyone who navigates to one of them.</li>
+</ul>
+</section>
+
+<section id="s9">
+<h2><span class="num">§9</span> Findings summary</h2>
+<div class="tbl-wrap"><table>
+<tr><th>Question asked</th><th>Answer</th><th>Confidence</th></tr>
+<tr><td>Ticker/date coverage in both tables</td><td>792,832 rows / 3,285 tickers / 2015-2026-07-10 vs 28,721 rows / 2,643 tickers / 2026-07-21 to 08-10</td><td><span class="tag V">V</span></td></tr>
+<tr><td>Missing rows on either side</td><td>No temporal overlap at all — each table is "missing" the other's entire date range by construction, not by accident</td><td><span class="tag V">V</span></td></tr>
+<tr><td>OHLC differences</td><td>Not computable (no overlapping rows); internal OHLC validity is clean in both tables independently</td><td><span class="tag V">V</span></td></tr>
+<tr><td>Volume differences</td><td>Not computable directly; zero-volume rate is 0.57% (<code>stock_data</code>) vs 0.14% (<code>candles</code> 1D)</td><td><span class="tag V">V</span></td></tr>
+<tr><td>Timestamp differences</td><td>Confirmed with live data: 100% midnight-anchored in <code>candles</code>(1D) vs plain date in <code>stock_data</code> — a real, load-bearing convention mismatch</td><td><span class="tag V">V</span></td></tr>
+<tr><td><code>adj_close</code> differences</td><td>90.8% of <code>stock_data</code> rows have no <code>adj_close</code> at all; of the 9.2% that do, 21% meaningfully diverge from <code>close</code>; <code>candles</code> has no equivalent field</td><td><span class="tag V">V</span></td></tr>
+<tr><td>Systematic differences around corporate actions</td><td>Found — VEDL's ~68.32% constant-ratio divergence across 2,817 rows in 2015 is a clear adjustment-factor signature</td><td><span class="tag V">V</span> (the pattern) / <span class="tag I">I</span> (which specific event)</td></tr>
+<tr><td>Practical impact of midnight vs 09:15 convention</td><td>Zero observable impact <i>today</i> (no overlapping consumers cross-reference 1D against intraday tiers yet) — becomes load-bearing the moment consolidation or cross-timeframe validation logic is built</td><td><span class="tag V">V</span></td></tr>
+<tr><td>Any other meaningful discrepancy</td><td>A missing/partial day in <code>candles</code>(1D) around 2026-07-22/23; a single NaN row in <code>stock_data</code>; 647 tickers present only in <code>stock_data</code>, plausibly inactive symbols, not yet confirmed</td><td><span class="tag V">V</span> facts / <span class="tag I">I</span> explanation</td></tr>
+</table></div>
+</section>
+
+<section id="s10">
+<h2><span class="num">§10</span> Recommended next phase and open decisions</h2>
+<p>Per the safety rule, Phase 2 ends here. No consolidation, cutover, or migration work is proposed or started. The most useful next step this diff points to is <b>not</b> "pick a winner and migrate" — it's resolving the specific unknowns this diff surfaced, since several of them change what a safe migration would even look like:</p>
+<ol>
+<li>Confirm whether the 647 <code>stock_data</code>-only tickers are inactive/delisted (check against <code>stock_metadata.is_active</code>) — determines whether a <code>candles</code>-only future loses real, still-relevant history.</li>
+<li>Decide how (or whether) to preserve the 9.2% adjusted-price signal currently only in <code>stock_data.adj_close</code> — <code>candles</code> has no field for it today.</li>
+<li>Decide the 1D timestamp convention explicitly (adopt 09:15-anchoring for consistency, or formally accept midnight-anchoring as 1D's own convention) rather than let it stay an unexamined inconsistency.</li>
+<li>Investigate the 2026-07-22/23 gap/partial-day in <code>candles</code>(1D) — holiday or job failure — before trusting that pipeline as a sole source going forward.</li>
+</ol>
+<div class="approve"><div class="an">1</div><div><b>Whether to proceed to a "resolve the unknowns" sub-phase</b> covering the four items above, before any cutover-planning phase begins. This report does not assume yes.</div></div>
+<div class="approve"><div class="an">2</div><div><b>The adjusted-price capability question (#2 above)</b> is a product decision as much as an engineering one — worth flagging to whoever owns the "what should a daily close price mean" question, not just deciding silently in code.</div></div>
+<p>Decision 2 (canonical resolution) remains frozen and was not touched. Candidate C remains not scheduled. No Options or Recommendation Intelligence code was read or modified this phase.</p>
+</section>
+
+<footer>LEVERAGE — Phase 2 Report · Graph Engineering Mode · 2A implemented &amp; tested (233/233 passing) · 2B read-only diff complete, zero writes · awaiting direction on the four open unknowns before any consolidation work begins</footer>
+</main>
+</div>

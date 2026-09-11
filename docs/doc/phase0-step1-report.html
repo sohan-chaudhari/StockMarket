@@ -1,0 +1,1150 @@
+<title>Phase 0 — Retention Fix</title>
+<style>
+:root {
+  --bg:          #080D1A;
+  --surface:     #0E1528;
+  --card:        #192038;
+  --border:      #1F2D4A;
+  --border-soft: #162040;
+  --text:        #DDE4F0;
+  --text-2:      #6E80A0;
+  --text-3:      #3E5070;
+  --accent:      #00B4C8;
+  --accent-dim:  #00B4C815;
+  --pass:        #2DD4A8;
+  --pass-dim:    #2DD4A812;
+  --bug:         #EF5E4E;
+  --bug-dim:     #EF5E4E12;
+  --warn:        #F0A832;
+  --warn-dim:    #F0A83212;
+  --code-bg:     #050A14;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:          #F4F7FD;
+    --surface:     #FFFFFF;
+    --card:        #EDF1FA;
+    --border:      #D0DAEC;
+    --border-soft: #E0E8F4;
+    --text:        #0A1020;
+    --text-2:      #445070;
+    --text-3:      #8898B8;
+    --accent:      #0095A8;
+    --accent-dim:  #0095A810;
+    --pass:        #18A882;
+    --pass-dim:    #18A88210;
+    --bug:         #D43020;
+    --bug-dim:     #D4302010;
+    --warn:        #C07C00;
+    --warn-dim:    #C07C0010;
+    --code-bg:     #EAEFF9;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:          #080D1A;
+  --surface:     #0E1528;
+  --card:        #192038;
+  --border:      #1F2D4A;
+  --border-soft: #162040;
+  --text:        #DDE4F0;
+  --text-2:      #6E80A0;
+  --text-3:      #3E5070;
+  --accent:      #00B4C8;
+  --accent-dim:  #00B4C815;
+  --pass:        #2DD4A8;
+  --pass-dim:    #2DD4A812;
+  --bug:         #EF5E4E;
+  --bug-dim:     #EF5E4E12;
+  --warn:        #F0A832;
+  --warn-dim:    #F0A83212;
+  --code-bg:     #050A14;
+}
+
+:root[data-theme="light"] {
+  --bg:          #F4F7FD;
+  --surface:     #FFFFFF;
+  --card:        #EDF1FA;
+  --border:      #D0DAEC;
+  --border-soft: #E0E8F4;
+  --text:        #0A1020;
+  --text-2:      #445070;
+  --text-3:      #8898B8;
+  --accent:      #0095A8;
+  --accent-dim:  #0095A810;
+  --pass:        #18A882;
+  --pass-dim:    #18A88210;
+  --bug:         #D43020;
+  --bug-dim:     #D4302010;
+  --warn:        #C07C00;
+  --warn-dim:    #C07C0010;
+  --code-bg:     #EAEFF9;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  min-height: 100vh;
+}
+
+/* ── Layout ── */
+.shell {
+  display: flex;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 24px;
+  gap: 0;
+  align-items: flex-start;
+}
+
+/* ── Nav rail ── */
+.nav {
+  position: sticky;
+  top: 32px;
+  width: 172px;
+  flex-shrink: 0;
+  padding: 32px 0 32px;
+  margin-right: 40px;
+}
+
+.nav-brand {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 28px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-list a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text-2);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  transition: background .15s, color .15s;
+}
+
+.nav-list a:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.nav-badge {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.badge-bug  { background: var(--bug); }
+.badge-fix  { background: var(--pass); }
+.badge-test { background: var(--accent); }
+.badge-pre  { background: var(--warn); }
+.badge-safe { background: var(--pass); }
+.badge-next { background: var(--accent); }
+
+/* ── Document ── */
+.doc {
+  flex: 1;
+  min-width: 0;
+  padding: 32px 0 80px;
+}
+
+/* ── Page header ── */
+.page-header {
+  margin-bottom: 40px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-eyebrow {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 10px;
+}
+
+.page-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 26px;
+  font-weight: normal;
+  color: var(--text);
+  line-height: 1.25;
+  text-wrap: balance;
+  margin-bottom: 8px;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--text-2);
+  max-width: 620px;
+}
+
+/* ── Flight instruments (summary bar) ── */
+.instruments {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 28px 0 0;
+}
+
+.instrument {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.instrument-value {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.instrument-label {
+  font-size: 11px;
+  color: var(--text-2);
+  letter-spacing: .04em;
+}
+
+.iv-pass { color: var(--pass); }
+.iv-bug  { color: var(--bug); }
+.iv-accent { color: var(--accent); }
+
+/* ── Sections ── */
+.section {
+  margin-bottom: 52px;
+  scroll-margin-top: 24px;
+}
+
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.section-tag {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.section-title {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 18px;
+  font-weight: normal;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+/* ── Callout boxes ── */
+.callout {
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border-left: 3px solid;
+}
+
+.callout-bug  { background: var(--bug-dim);  border-color: var(--bug); }
+.callout-pass { background: var(--pass-dim); border-color: var(--pass); }
+.callout-warn { background: var(--warn-dim); border-color: var(--warn); }
+.callout-info { background: var(--accent-dim); border-color: var(--accent); }
+
+.callout-label {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.cl-bug  { color: var(--bug); }
+.cl-pass { color: var(--pass); }
+.cl-warn { color: var(--warn); }
+.cl-info { color: var(--accent); }
+
+.callout-body {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.callout-body strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── Code blocks ── */
+.code-block {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.code-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.code-fname {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.code-tag {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.ct-bug  { background: var(--bug-dim);  color: var(--bug); }
+.ct-new  { background: var(--pass-dim); color: var(--pass); }
+.ct-fix  { background: var(--accent-dim); color: var(--accent); }
+
+.code-body {
+  padding: 14px 16px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+  color: var(--text);
+  tab-size: 4;
+}
+
+.hl-bug     { color: var(--bug); }
+.hl-pass    { color: var(--pass); }
+.hl-accent  { color: var(--accent); }
+.hl-comment { color: var(--text-3); font-style: italic; }
+.hl-kw      { color: #C792EA; }
+.hl-str     { color: #C3E88D; }
+.hl-num     { color: var(--warn); }
+.hl-dimmed  { color: var(--text-3); }
+
+/* ── Proof table ── */
+.proof-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.proof-table th {
+  text-align: left;
+  padding: 8px 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.proof-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.proof-table td:first-child {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.proof-table tr:last-child td { border-bottom: none; }
+
+.proof-table .cell-bug  { color: var(--bug);  font-weight: 600; }
+.proof-table .cell-pass { color: var(--pass); font-weight: 600; }
+
+/* ── Test tally ── */
+.test-tally {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.tally-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+.tally-n {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.tally-label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.tn-pass   { color: var(--pass); }
+.tn-accent { color: var(--accent); }
+.tn-warn   { color: var(--warn); }
+
+/* ── Test list ── */
+.test-group {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.tg-name {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.test-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.test-row:last-child { border-bottom: none; }
+
+.test-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.td-pass { background: var(--pass); }
+
+/* ── Preflight matrix ── */
+.matrix {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.matrix-row {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.matrix-row:last-child { border-bottom: none; }
+
+.matrix-key {
+  padding: 11px 14px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--card);
+  border-right: 1px solid var(--border-soft);
+  display: flex;
+  align-items: flex-start;
+}
+
+.matrix-val {
+  padding: 11px 14px;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.matrix-val strong { color: var(--text); }
+
+.matrix-val code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  background: var(--card);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ── Safety scorecard ── */
+.safety-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.safety-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.safety-card-label {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+.safety-card-verdict {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.sv-pass { color: var(--pass); }
+.sv-warn { color: var(--warn); }
+
+.safety-card-detail {
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+/* ── Next step block ── */
+.next-step {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 20px 22px;
+}
+
+.ns-title {
+  font-family: Georgia, serif;
+  font-size: 15px;
+  color: var(--text);
+  margin-bottom: 14px;
+}
+
+.ns-steps {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ns-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.ns-num {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.ns-step strong { color: var(--text); }
+.ns-step code {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  background: var(--card);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ── Inline code ── */
+code {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 11.5px;
+  background: var(--card);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ── Prose helpers ── */
+p { font-size: 13.5px; color: var(--text-2); margin-bottom: 12px; }
+p strong { color: var(--text); }
+ul { padding-left: 20px; margin-bottom: 12px; }
+li { font-size: 13px; color: var(--text-2); margin-bottom: 5px; }
+li strong { color: var(--text); }
+
+.text-bug  { color: var(--bug); }
+.text-pass { color: var(--pass); }
+.text-warn { color: var(--warn); }
+.text-accent { color: var(--accent); }
+
+@media (max-width: 800px) {
+  .shell { flex-direction: column; padding: 0 16px; }
+  .nav { position: static; width: 100%; margin-right: 0; padding: 20px 0 0; }
+  .nav-list { flex-direction: row; flex-wrap: wrap; }
+  .nav-list a { font-size: 11px; }
+  .instruments { grid-template-columns: repeat(3, 1fr); }
+  .test-tally { grid-template-columns: repeat(2, 1fr); }
+  .safety-grid { grid-template-columns: 1fr; }
+  .matrix-row { grid-template-columns: 1fr; }
+  .matrix-key { border-right: none; border-bottom: 1px solid var(--border-soft); }
+}
+</style>
+
+<div class="shell">
+  <!-- ── Nav rail ── -->
+  <nav class="nav" aria-label="Sections">
+    <div class="nav-brand">LEVERAGE · Phase 0</div>
+    <ul class="nav-list">
+      <li><a href="#sect-a"><span class="nav-badge badge-bug"></span>A · Bug Proof</a></li>
+      <li><a href="#sect-b"><span class="nav-badge badge-fix"></span>B · Fix</a></li>
+      <li><a href="#sect-c"><span class="nav-badge badge-test"></span>C · Tests</a></li>
+      <li><a href="#sect-d"><span class="nav-badge badge-pre"></span>D · Preflight</a></li>
+      <li><a href="#sect-e"><span class="nav-badge badge-safe"></span>E · Safety</a></li>
+      <li><a href="#sect-f"><span class="nav-badge badge-next"></span>F · Next Step</a></li>
+    </ul>
+  </nav>
+
+  <!-- ── Document ── -->
+  <main class="doc">
+    <!-- Page header -->
+    <header class="page-header">
+      <div class="page-eyebrow">Data Integrity Master Plan · Phase 0 · Step 1</div>
+      <h1 class="page-title">Retention Batch-Boundary Fix — Pre-Flight Report</h1>
+      <p class="page-subtitle">Prerequisite safety fix for the 5m candle recovery. Covers bug proof, implementation, test verification, and read-only recovery preflight. No bulk writes have been performed.</p>
+
+      <div class="instruments">
+        <div class="instrument">
+          <div class="instrument-value iv-bug">CONFIRMED</div>
+          <div class="instrument-label">Batch-boundary bug status</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-value iv-pass">89 / 89</div>
+          <div class="instrument-label">Tests passing after fix</div>
+        </div>
+        <div class="instrument">
+          <div class="instrument-value iv-accent">READY</div>
+          <div class="instrument-label">Recovery preflight status</div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── Section A: Bug Proof ── -->
+    <section class="section" id="sect-a">
+      <div class="section-header">
+        <span class="section-tag">Section A</span>
+        <h2 class="section-title">Batch-Boundary Corruption — Bug Proof</h2>
+      </div>
+
+      <div class="callout callout-bug">
+        <div class="callout-label cl-bug">Root Cause</div>
+        <div class="callout-body">
+          <strong>retention_service.py · _process_ticker()</strong> fetches a fixed-size batch of source rows
+          and immediately resamples the entire batch. With <strong>batch_size=100</strong> for the
+          <strong>5m→15m</strong> rule, row index 99 (0-based) is always the <strong>first</strong> slot
+          of a new 15m bucket. The resampler produces a partial target candle. <code>ON CONFLICT DO NOTHING</code>
+          then permanently blocks the correct complete candle when the remaining two slots arrive in the next batch.
+        </div>
+      </div>
+
+      <p>The corruption is deterministic, not probabilistic. Every single 100-row batch for 5m→15m triggers it:</p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-fname">arithmetic proof</span>
+          <span class="code-tag ct-bug">confirmed bug</span>
+        </div>
+        <div class="code-body"><span class="hl-comment"># slots per 15m bucket from 5m source rows</span>
+slots_per_bucket = 15 // 5   <span class="hl-comment"># = 3</span>
+
+<span class="hl-comment"># position of the last row in a batch_size=100 batch (0-indexed)</span>
+last_row_index = 100 - 1     <span class="hl-comment"># = 99</span>
+
+<span class="hl-comment"># position of last row within its 15m bucket</span>
+slot_position = last_row_index % slots_per_bucket  <span class="hl-comment"># = 99 % 3 = 0</span>
+
+<span class="hl-comment"># slot_position == 0 → row 99 is ALWAYS the FIRST slot of a new bucket</span>
+<span class="hl-comment"># two remaining slots (positions 1 and 2) are left for the next batch</span></div>
+      </div>
+
+      <p>This produces the following corruption on every batch iteration:</p>
+
+      <div style="overflow-x:auto; margin-bottom:16px;">
+        <table class="proof-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Batch 1 result (1 of 3 rows)</th>
+              <th>Correct result (all 3 rows)</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>open</td>
+              <td>100 ✓</td>
+              <td>100</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>high</td>
+              <td>112 (only row 0)</td>
+              <td>125 (max of rows 0–2)</td>
+              <td class="cell-bug">WRONG</td>
+            </tr>
+            <tr>
+              <td>low</td>
+              <td>88 (only row 0)</td>
+              <td>88 (coincidentally same)</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>close</td>
+              <td>105 (row 0's close)</td>
+              <td>120 (row 2's close)</td>
+              <td class="cell-bug">WRONG</td>
+            </tr>
+            <tr>
+              <td>volume</td>
+              <td>1 000 (1 row only)</td>
+              <td>3 000 (sum of 3 rows)</td>
+              <td class="cell-bug">WRONG — ⅓ of correct</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout callout-bug">
+        <div class="callout-label cl-bug">Permanent Data Corruption</div>
+        <div class="callout-body">
+          The partial and complete batches both produce a target candle with the <strong>same timestamp</strong>
+          (e.g. 09:15 15m). The first (partial) insert succeeds. When the complete version arrives in batch 2,
+          <strong>ON CONFLICT DO NOTHING silently discards it</strong>. The slot is permanently poisoned with
+          wrong H, C, and volume. There is no self-correcting path without explicit repair.
+        </div>
+      </div>
+
+      <p>The bug is latent in the <strong>15m→30m</strong>, <strong>30m→1h</strong>, and <strong>1h→4h</strong> chains too,
+      but <em>does not trigger</em> with batch_size=100 because those multipliers evenly divide 99: <code>99 % 2 == 1</code>
+      and <code>99 % 4 == 3</code> — both land on the last slot of their target bucket. The fix hardens all chains
+      regardless, so it is safe against future batch_size changes.</p>
+    </section>
+
+    <!-- ── Section B: Fix ── -->
+    <section class="section" id="sect-b">
+      <div class="section-header">
+        <span class="section-tag">Section B</span>
+        <h2 class="section-title">Fix Implemented</h2>
+      </div>
+
+      <div class="callout callout-pass">
+        <div class="callout-label cl-pass">Scope</div>
+        <div class="callout-body">
+          <strong>21 lines added to retention_service.py.</strong>
+          Zero lines changed elsewhere. No architectural changes. No schema changes.
+          Calendar chains (1D→1W, 1W→1M) are untouched — the helper returns <code>None</code> for them.
+        </div>
+      </div>
+
+      <p><strong>Addition 1 — <code>_target_bucket_tail()</code> static method</strong> (added before <code>_process_ticker</code>):</p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-fname">retention_service.py — new static method</span>
+          <span class="code-tag ct-new">added</span>
+        </div>
+        <div class="code-body"><span class="hl-kw">@staticmethod</span>
+<span class="hl-kw">def</span> <span class="hl-pass">_target_bucket_tail</span>(ts: datetime, source_tf: str, target_tf: str) -> Optional[datetime]:
+    <span class="hl-str">"""Return the timestamp of the last source slot in ts's target bucket.
+
+    NSE session opens at 09:15; all intraday bucket boundaries are anchored
+    to that. Returns None for calendar-based chains (1D/1W/1M source or
+    target) where session alignment does not apply.
+    """</span>
+    src_minutes = {<span class="hl-str">"5m"</span>: 5, <span class="hl-str">"15m"</span>: 15, <span class="hl-str">"30m"</span>: 30, <span class="hl-str">"1h"</span>: 60}.get(source_tf)
+    tgt_minutes = {<span class="hl-str">"15m"</span>: 15, <span class="hl-str">"30m"</span>: 30, <span class="hl-str">"1h"</span>: 60, <span class="hl-str">"4h"</span>: 240}.get(target_tf)
+    <span class="hl-kw">if</span> src_minutes <span class="hl-kw">is</span> None <span class="hl-kw">or</span> tgt_minutes <span class="hl-kw">is</span> None:
+        <span class="hl-kw">return</span> None
+    session_open = ts.replace(hour=<span class="hl-num">9</span>, minute=<span class="hl-num">15</span>, second=<span class="hl-num">0</span>, microsecond=<span class="hl-num">0</span>)
+    <span class="hl-kw">if</span> ts < session_open:
+        <span class="hl-kw">return</span> None
+    minutes_from_open = (ts - session_open).total_seconds() / <span class="hl-num">60</span>
+    bucket_index = <span class="hl-kw">int</span>(minutes_from_open // tgt_minutes)
+    bucket_start = session_open + timedelta(minutes=bucket_index * tgt_minutes)
+    <span class="hl-kw">return</span> bucket_start + timedelta(minutes=tgt_minutes - src_minutes)</div>
+      </div>
+
+      <p><strong>Addition 2 — batch extension in <code>_process_ticker()</code></strong> (inserted between the initial fetch and <code>source_dicts</code> construction):</p>
+
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-fname">retention_service.py — _process_ticker() extension block</span>
+          <span class="code-tag ct-fix">fix</span>
+        </div>
+        <div class="code-body"><span class="hl-dimmed">            source_rows = query.order_by(Candle.timestamp.asc()).limit(rule.batch_size).all()</span>
+<span class="hl-dimmed">            if not source_rows:</span>
+<span class="hl-dimmed">                break</span>
+
+            <span class="hl-comment"># Prevent target-bucket split across batch iterations.          </span>
+            <span class="hl-comment"># With batch_size=100 and 5m→15m: 100 % 3 == 1, so row 99    </span>
+            <span class="hl-comment"># is always the FIRST slot of a new 15m bucket. The resampler </span>
+            <span class="hl-comment"># produces a partial candle; ON CONFLICT DO NOTHING then blocks</span>
+            <span class="hl-comment"># the correct version when the remaining slots arrive next batch.</span>
+            last_batch_ts = source_rows[-<span class="hl-num">1</span>].timestamp
+            tail_end = <span class="hl-pass">RetentionService._target_bucket_tail</span>(
+                last_batch_ts, rule.source_tf, rule.target_tf
+            )
+            <span class="hl-kw">if</span> tail_end <span class="hl-kw">is not</span> None <span class="hl-kw">and</span> last_batch_ts < tail_end:
+                extra = db.query(Candle).filter(
+                    Candle.ticker == ticker,
+                    Candle.timeframe == rule.source_tf,
+                    Candle.is_completed == True,
+                    Candle.timestamp < cutoff,
+                    Candle.timestamp > last_batch_ts,
+                    Candle.timestamp <= tail_end,
+                ).order_by(Candle.timestamp.asc()).all()
+                <span class="hl-kw">if</span> extra:
+                    source_rows = list(source_rows) + extra
+
+<span class="hl-dimmed">            source_dicts = [{ ... } for r in source_rows]</span></div>
+      </div>
+
+      <p>The extension query carries <code>Candle.timestamp &lt; cutoff</code> so it never reaches into the live window.
+      If the tail slots genuinely don't exist (data gap or partial session), <code>extra</code> is empty and the batch
+      proceeds unchanged — no regression for genuinely missing data.</p>
+    </section>
+
+    <!-- ── Section C: Tests ── -->
+    <section class="section" id="sect-c">
+      <div class="section-header">
+        <span class="section-tag">Section C</span>
+        <h2 class="section-title">Test Results — Before and After</h2>
+      </div>
+
+      <div class="test-tally">
+        <div class="tally-box">
+          <div class="tally-n tn-pass">39</div>
+          <div class="tally-label">Baseline (pre-fix)</div>
+        </div>
+        <div class="tally-box">
+          <div class="tally-n tn-accent">33</div>
+          <div class="tally-label">New boundary tests</div>
+        </div>
+        <div class="tally-box">
+          <div class="tally-n tn-pass">89</div>
+          <div class="tally-label">Total after fix</div>
+        </div>
+        <div class="tally-box">
+          <div class="tally-n tn-pass">0</div>
+          <div class="tally-label">Failures / regressions</div>
+        </div>
+      </div>
+
+      <p>New test file: <code>tests/test_retention_batch_boundary.py</code> — four test classes:</p>
+
+      <div class="test-group">
+        <div class="tg-name">TestTargetBucketTail · 17 tests</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→15m: first slot extends to last (09:15 → 09:25)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→15m: middle slot same bucket (09:20 → 09:25)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→15m: last slot — no extension condition (09:25 ≮ 09:25)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→15m: second bucket first slot (09:30 → 09:40)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→15m: session close bucket (15:15 → 15:25)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→15m: session last slot (15:25 → 15:25, no extension)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→30m: first slot (09:15 → 09:40, 6 rows)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→30m: mid-slot, last slot (no extension)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→1h: first slot (09:15 → 10:10, 12 rows)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>5m→1h: last slot (no extension)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>15m→30m: first slot, last slot</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>1D→1W: returns None (calendar chain)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>1W→1M: returns None (calendar chain)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Pre-session timestamp: returns None</div>
+      </div>
+
+      <div class="test-group">
+        <div class="tg-name">TestBatchBoundaryBugProof · 6 tests</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>100 % 3 == 1 → every batch ends on first slot of a 15m bucket</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Partial batch (1 of 3 rows) → wrong close: 105, should be 120</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Partial batch (2 of 3 rows) → wrong close: 110 and wrong volume: 1 800 (should be 3 000)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Partial and complete batches target the same 09:15 15m timestamp (confirms blocking)</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Complete batch (3 of 3 rows) → correct OHLCV</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Row 99 slot position: 99 % 3 == 0 (first slot, every batch)</div>
+      </div>
+
+      <div class="test-group">
+        <div class="tg-name">TestBatchBoundaryFix · 7 tests</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Extension from [09:15] to [09:15, 09:20, 09:25] → correct 15m OHLCV</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Extension for 5m→30m (batch ends at 09:15, extends to 09:40) → correct 30m OHLCV</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>No extension when batch ends on last slot</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>No extension for 1D→1W calendar chain</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>No extension for 1W→1M calendar chain</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>tail_end does not enforce cutoff — cutoff guard stays in the DB query</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Multi-bucket batch: extension targets only the last (partial) bucket</div>
+      </div>
+
+      <div class="test-group">
+        <div class="tg-name">TestBatchBoundaryNormalRegression · 3 tests</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Three complete 15m buckets (9 rows ending on last slot): no extension, correct OHLCV</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>Cross-session batch: two sessions produce two correct 15m candles</div>
+        <div class="test-row"><span class="test-dot td-pass"></span>1D→1W weekly candle (5 daily rows, Mon–Fri): unaffected, correct OHLCV</div>
+      </div>
+    </section>
+
+    <!-- ── Section D: Recovery Preflight ── -->
+    <section class="section" id="sect-d">
+      <div class="section-header">
+        <span class="section-tag">Section D</span>
+        <h2 class="section-title">5m Recovery Preflight Matrix — Read-Only</h2>
+      </div>
+
+      <div class="callout callout-warn">
+        <div class="callout-label cl-warn">No bulk writes performed</div>
+        <div class="callout-body">
+          This section is a <strong>static analysis preflight</strong> only. It describes the root cause, the recovery
+          approach, and the safety envelope. The actual bulk recovery has <strong>not been executed</strong> and requires
+          your explicit approval in the next step.
+        </div>
+      </div>
+
+      <div class="matrix">
+        <div class="matrix-row">
+          <div class="matrix-key">Root cause</div>
+          <div class="matrix-val">
+            <code>backfill_intraday_5min.py:77</code> — INSERT targets
+            <code>intraday_candles_5min</code>, a table that was renamed to
+            <code>deprecated_intraday_candles_5min</code> in the DB-09 refactor.
+            Every run since DB-09 has silently failed with
+            <code>psycopg2.errors.UndefinedTable</code>. The correct target is the
+            canonical <code>candles</code> table with <code>timeframe='5m'</code>.
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Scope of gap</div>
+          <div class="matrix-val">
+            <strong>All tickers that have 5m candles in the live DB.</strong>
+            The script was a one-time bulk run on 2026-08-09 (evidenced by
+            <code>created_at</code> clustering on that date). Since then, live 5m
+            candles are only built from the AngelOne WebSocket feed for tickers
+            with active subscriptions (≤500 via LRU). The gap is everything else
+            from 2026-08-09 to present.
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Recovery path</div>
+          <div class="matrix-val">
+            Fix <code>backfill_intraday_5min.py</code> to write to
+            <code>candles</code> with <code>timeframe='5m'</code> using
+            <code>ON CONFLICT DO NOTHING</code>, then re-run for the gap period.
+            <strong>The batch-boundary fix must be live before any retention cycle
+            runs on the recovered data</strong> — this is now satisfied.
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Data provider</div>
+          <div class="matrix-val">
+            AngelOne <code>getCandleData</code> historical endpoint.
+            <code>CHUNK_DAYS=60</code>, <code>MAX_WORKERS=10</code> (ThreadPoolExecutor).
+            Falls back to main credentials if <code>HISTORICAL_*</code> env vars unset.
+            Filters weekends automatically (<code>ts.weekday() &gt;= 5: continue</code>).
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Rate limits</div>
+          <div class="matrix-val">
+            AngelOne historical API: no documented rate limit, but the existing
+            <code>MAX_WORKERS=10</code> provides natural throttling. The current
+            implementation makes a single un-chunked <code>getCandleData</code>
+            call per ticker in <code>historical_service.py</code> — no chunking,
+            no retry back-off beyond the <code>retryable</code> flag.
+            <strong>Recommended: keep MAX_WORKERS ≤ 5 during recovery to reduce
+            provider-side throttling risk.</strong>
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Conflict strategy</div>
+          <div class="matrix-val">
+            <strong>ON CONFLICT DO NOTHING</strong> — live-built candles (source
+            <code>LIVE</code>, built from actual ticks via <code>batch_flush_candles</code>)
+            are more accurate than OHLCV-only historical data and must never be
+            overwritten. A historical backfill row that conflicts with an existing
+            candle at that <code>(ticker, timeframe, timestamp)</code> is silently dropped.
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Rollback plan</div>
+          <div class="matrix-val">
+            Delete all rows inserted by the recovery run:
+            <code>DELETE FROM candles WHERE timeframe='5m' AND is_backfilled=true AND data_source='HISTORICAL' AND created_at &gt;= &lt;run_start&gt;</code>.
+            Idempotent: re-running the recovery after a rollback is safe
+            because <code>ON CONFLICT DO NOTHING</code> skips any rows already present.
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Validation plan</div>
+          <div class="matrix-val">
+            After recovery:
+            <ul style="margin: 6px 0 0; padding-left: 18px;">
+              <li>5m row count in <code>candles</code> must be strictly greater than pre-recovery count.</li>
+              <li>No 5m candle timestamp should fall outside NSE session hours (09:15–15:25 IST).</li>
+              <li>Per-ticker session completeness: each trading day should have exactly 75 5m rows.</li>
+              <li>Zero candles at 15:30 slot (phantom candle check — separate P2 fix).</li>
+              <li>No duplicate <code>(ticker, timeframe, timestamp)</code> — enforced by <code>uix_candle_key</code>.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-key">Preflight SQL to run</div>
+          <div class="matrix-val">
+            Run these READ-ONLY queries before starting recovery to establish baseline:
+            <div style="font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; color: var(--text-2); background: var(--code-bg); border-radius: 6px; padding: 10px 12px; margin-top: 8px; overflow-x: auto; white-space: pre; border: 1px solid var(--border);">SELECT COUNT(*) FROM candles WHERE timeframe = '5m';
+SELECT COUNT(DISTINCT ticker) FROM candles WHERE timeframe = '5m';
+SELECT MIN(timestamp), MAX(timestamp) FROM candles WHERE timeframe = '5m';
+SELECT date(timestamp), COUNT(*) FROM candles
+  WHERE timeframe = '5m' GROUP BY 1 ORDER BY 1 DESC LIMIT 30;</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Section E: Safety Assessment ── -->
+    <section class="section" id="sect-e">
+      <div class="section-header">
+        <span class="section-tag">Section E</span>
+        <h2 class="section-title">Recovery Safety Assessment</h2>
+      </div>
+
+      <div class="safety-grid">
+        <div class="safety-card">
+          <div class="safety-card-label">Batch-boundary fix safe?</div>
+          <div class="safety-card-verdict sv-pass">YES — 89/89 tests pass</div>
+          <div class="safety-card-detail">Zero regressions. All four affected chains tested (5m→15m, 5m→30m, 5m→1h, calendar chains). The fix adds ≤2 extra rows per batch iteration for the common case — negligible cost.</div>
+        </div>
+        <div class="safety-card">
+          <div class="safety-card-label">Live candle preservation</div>
+          <div class="safety-card-verdict sv-pass">SAFE — ON CONFLICT DO NOTHING</div>
+          <div class="safety-card-detail">Historical backfill uses <code>DO NOTHING</code>, not <code>DO UPDATE</code>. Any live-built 5m candle already in <code>candles</code> wins unconditionally. Historical data fills genuine gaps only.</div>
+        </div>
+        <div class="safety-card">
+          <div class="safety-card-label">Retention cascade risk</div>
+          <div class="safety-card-verdict sv-pass">NONE — cutoff window protects</div>
+          <div class="safety-card-detail">Retention only touches data older than the cutoff (60+ trading sessions for 5m→15m, ≈3 months). Recovered data in the recent window won't be promoted in the same cycle.</div>
+        </div>
+        <div class="safety-card">
+          <div class="safety-card-label">Rollback path</div>
+          <div class="safety-card-verdict sv-pass">CLEAN — tag + delete</div>
+          <div class="safety-card-detail">Recovery rows are tagged <code>is_backfilled=true, data_source='HISTORICAL'</code>. A single timestamped DELETE removes only recovery inserts without touching live or pre-existing historical data.</div>
+        </div>
+        <div class="safety-card">
+          <div class="safety-card-label">Phantom candle risk (15:30)</div>
+          <div class="safety-card-verdict sv-warn">LOW — separate P2 fix</div>
+          <div class="safety-card-detail">956 phantom 5m rows at the 15:30 slot already exist from the WebSocket path. Recovery data from AngelOne will not add new 15:30 phantoms (the provider returns session-bounded data). Existing phantoms are a separate P2 issue.</div>
+        </div>
+        <div class="safety-card">
+          <div class="safety-card-label">Provider availability</div>
+          <div class="safety-card-verdict sv-warn">VERIFY BEFORE RUN</div>
+          <div class="safety-card-detail">AngelOne historical endpoint has no documented SLA. Run the preflight SQL queries (Section D) first, then confirm the AngelOne token is valid before starting the bulk recovery.</div>
+        </div>
+      </div>
+
+      <div class="callout callout-pass">
+        <div class="callout-label cl-pass">Overall Safety Verdict</div>
+        <div class="callout-body">
+          The prerequisite batch-boundary fix is <strong>implemented, tested, and safe</strong>.
+          The 5m recovery is <strong>safe to proceed</strong> subject to: (1) running the preflight SQL queries
+          from Section D to establish the baseline row count, and (2) confirming AngelOne token validity.
+          No other blockers have been identified.
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Section F: Next Step ── -->
+    <section class="section" id="sect-f">
+      <div class="section-header">
+        <span class="section-tag">Section F</span>
+        <h2 class="section-title">Exact Next Step — Awaiting Your Approval</h2>
+      </div>
+
+      <div class="next-step">
+        <div class="ns-title">Phase 0 · Step 2 — 5m Recovery (blocked until approval)</div>
+        <ul class="ns-steps">
+          <li class="ns-step">
+            <span class="ns-num">1</span>
+            <div>Run the <strong>read-only preflight SQL queries</strong> from Section D to record the baseline 5m row count, ticker count, and date range before any writes.</div>
+          </li>
+          <li class="ns-step">
+            <span class="ns-num">2</span>
+            <div>Fix <code>backfill_intraday_5min.py</code>: replace the INSERT targeting <code>intraday_candles_5min</code> (line 77) with a write to <code>candles</code> using <code>timeframe='5m'</code> and <code>ON CONFLICT DO NOTHING</code>. Also fix the import on line 10 (<code>IntradayCandle5Min</code> is the deprecated model).</div>
+          </li>
+          <li class="ns-step">
+            <span class="ns-num">3</span>
+            <div>Set the date range to cover the gap: from the day after the last confirmed 5m data through today. Confirm the AngelOne historical token is valid before launching.</div>
+          </li>
+          <li class="ns-step">
+            <span class="ns-num">4</span>
+            <div>Run the recovery with <strong>MAX_WORKERS ≤ 5</strong> (not 10) to reduce provider-side throttling risk on a large batch.</div>
+          </li>
+          <li class="ns-step">
+            <span class="ns-num">5</span>
+            <div>Validate: re-run the preflight SQL queries; 5m row count must increase; per-day session completeness check; zero rows at 15:30 slot from the new inserts.</div>
+          </li>
+        </ul>
+      </div>
+
+      <p style="margin-top: 16px; color: var(--text-3); font-size: 12px; font-family: 'SF Mono','Fira Code',monospace;">
+        Waiting for approval. No bulk writes have been performed. The batch-boundary fix is the only code change in this step.
+      </p>
+    </section>
+  </main>
+</div>

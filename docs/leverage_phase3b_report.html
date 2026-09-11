@@ -1,0 +1,208 @@
+<title>LEVERAGE — Phase 3 Update: Final Retention Windows</title>
+<style>
+:root{
+  --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7;
+  --mono: ui-monospace,"Cascadia Code","SFMono-Regular",Consolas,monospace;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+    --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+    --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+    --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+}
+:root[data-theme="dark"]{ --bg:#12100c; --surface:#1a1712; --surface-2:#211e17; --border:#3a352b;
+  --text:#ece7db; --text-dim:#a49b87; --accent:#e0b158; --accent-soft:#3a2f18;
+  --crit:#ff8079; --crit-soft:#3a1a17; --high:#ffab6b; --high-soft:#3a2410;
+  --med:#e8cd6b; --med-soft:#3a3312; --low:#7fd4ac; --low-soft:#123023; }
+:root[data-theme="light"]{ --bg:#f6f5f1; --surface:#ffffff; --surface-2:#efece4; --border:#e0dccf;
+  --text:#211f1a; --text-dim:#6e6659; --accent:#a8792f; --accent-soft:#f1e4c9;
+  --crit:#b3261e; --crit-soft:#fbe4e2; --high:#b5560f; --high-soft:#fbe8d8;
+  --med:#8a7412; --med-soft:#f6efd0; --low:#3d7a5e; --low-soft:#e1f0e7; }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;margin:0}
+.wrap{display:flex;max-width:1360px;margin:0 auto;align-items:flex-start}
+nav.toc{position:sticky;top:0;align-self:flex-start;width:250px;flex:0 0 250px;padding:2.5rem 1.2rem 2.5rem 1.6rem;max-height:100vh;overflow-y:auto}
+nav.toc .eyebrow{font-family:var(--mono);font-size:.64rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem;display:block}
+nav.toc a{display:block;color:var(--text-dim);text-decoration:none;font-size:.78rem;padding:.2rem 0;border-left:2px solid transparent;padding-left:.7rem;margin-left:-.7rem}
+nav.toc a:hover{color:var(--text);border-left-color:var(--border)}
+main{flex:1 1 auto;min-width:0;padding:3rem 3rem 6rem;max-width:980px}
+header.hero{margin-bottom:2.2rem;padding-bottom:1.8rem;border-bottom:1px solid var(--border)}
+header.hero .eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+header.hero h1{font-family:var(--serif);font-size:2rem;margin:.5rem 0 .3rem;text-wrap:balance;font-weight:600}
+header.hero p.dek{color:var(--text-dim);font-size:.98rem;max-width:68ch}
+.statusbar{display:flex;gap:.5rem;margin-top:1.2rem;flex-wrap:wrap;font-family:var(--mono);font-size:.68rem}
+.statusbar span{padding:.28rem .6rem;border-radius:99px;border:1px solid var(--border);color:var(--text-dim)}
+.statusbar span.go{border-color:var(--low);color:var(--low);font-weight:600}
+.statusbar span.stop{border-color:var(--crit);color:var(--crit);font-weight:600}
+section{margin:2.5rem 0}
+section > h2{font-family:var(--serif);font-size:1.28rem;font-weight:600;margin:0 0 .3rem;display:flex;align-items:baseline;gap:.6rem}
+section > h2 .num{font-family:var(--mono);color:var(--accent);font-size:.95rem}
+section > .lede{color:var(--text-dim);margin-bottom:1rem;font-size:.9rem;max-width:72ch}
+h3{font-family:var(--serif);font-size:1.02rem;margin:1.1rem 0 .4rem;font-weight:600}
+h4{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-dim);margin:1rem 0 .35rem;font-weight:600}
+p{margin:.55rem 0}
+code{font-family:var(--mono);font-size:.82em;background:var(--surface-2);padding:.1em .35em;border-radius:3px}
+.tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:.58rem;letter-spacing:.05em;padding:.13em .46em;border-radius:4px;font-weight:600;text-transform:uppercase}
+.tag.V{border:1px solid var(--low);color:var(--low)}
+.tag.RD{border:1px dotted var(--crit);color:var(--crit)}
+table{width:100%;border-collapse:collapse;font-size:.81rem}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin:.9rem 0}
+th{text-align:left;background:var(--surface-2);text-transform:uppercase;letter-spacing:.04em;font-size:.62rem;color:var(--text-dim);padding:.46rem .62rem;border-bottom:1px solid var(--border)}
+td{padding:.46rem .62rem;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td code{font-family:var(--mono);font-size:.8em}
+.num-cell{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.diagram{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1.1rem;margin:.9rem 0;overflow-x:auto}
+.diagram .cap{font-size:.76rem;color:var(--text-dim);margin-top:.6rem;padding-top:.6rem;border-top:1px dashed var(--border)}
+.querybox{font-family:var(--mono);font-size:.76rem;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:.85rem 1rem;margin:.7rem 0;white-space:pre-wrap;overflow-x:auto}
+.callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.88rem}
+.callout b{color:var(--accent)}
+.warncall{background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.88rem}
+.warncall b{color:var(--crit)}
+.okcall{background:var(--low-soft);border:1px solid var(--low);border-radius:8px;padding:1rem 1.2rem;margin:1.1rem 0;font-size:.88rem}
+.okcall b{color:var(--low)}
+.approve{display:flex;gap:1rem;align-items:flex-start;margin:.9rem 0;padding:1rem;background:var(--crit-soft);border:1px solid var(--crit);border-radius:8px}
+.approve .an{font-family:var(--serif);font-size:1.3rem;color:var(--crit);flex:0 0 1.8rem}
+ul,ol{padding-left:1.2rem} li{margin:.3rem 0}
+footer{color:var(--text-dim);font-size:.74rem;font-family:var(--mono);border-top:1px solid var(--border);padding-top:1.3rem;margin-top:2.6rem}
+</style>
+
+<div class="wrap">
+<nav class="toc">
+  <span class="eyebrow">Graph Engineering — Phase 3 Update</span>
+  <a href="#verify">Pre-change verification (steps 1-7)</a>
+  <a href="#unit">The unit-conversion decision</a>
+  <a href="#files">Files changed</a>
+  <a href="#policy">Active policy after modification</a>
+  <a href="#tests">Tests added/updated + results</a>
+  <a href="#storage">Estimated storage impact</a>
+  <a href="#approve">Requires your approval</a>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Leverage · Core Platform · Graph Engineering — Phase 3 Update</span>
+  <h1>Final retention windows applied to the active policy</h1>
+  <p class="dek">Config and test changes only — same scope discipline as the last report. No production candle data was migrated, deleted, or touched; no Angel One call was made; <code>stock_data</code> is untouched.</p>
+  <div class="statusbar">
+    <span class="go">249/249 backend tests passing</span>
+    <span>3 files modified (policy .py, .yaml, tests)</span>
+    <span>0 data rows written</span>
+    <span class="stop">STOP before any production migration</span>
+  </div>
+</header>
+
+<section id="verify">
+<h2><span class="num">§1</span> Pre-change verification (the 7 checks requested)</h2>
+<div class="tbl-wrap"><table>
+<tr><th>#</th><th>Check</th><th>Result</th></tr>
+<tr><td>1</td><td>Inspect the current active retention policy</td><td><span class="tag V">V</span> Read <code>config/retention_policy.py</code> in full — version 4, 5 rules (the 1D→1W addition from the prior report), no 4h→1D.</td></tr>
+<tr><td>2</td><td>Verify which file is actually loaded</td><td><span class="tag V">V</span> Re-confirmed: <code>config/__init__.py</code>'s <code>load_retention_policy()</code> imports <code>RETENTION_POLICY</code> from <code>config/retention_policy.py</code> only. The <code>.yaml</code> file is still not read by any code path — kept in sync manually as a documentation artifact, as it was last time.</td></tr>
+<tr><td>3</td><td>Verify how the engine interprets <code>after_trading_sessions</code></td><td><span class="tag V">V</span> <code>RetentionService._compute_cutoff()</code>: if <code>after_trading_sessions</code> is set, calls <code>_session_cutoff(n, now)</code>, which walks backward day-by-day from "yesterday," incrementing a counter only on real trading days (per <code>nse_calendar.is_trading_day()</code>) until it has counted <code>n</code> sessions, then returns midnight of that date. This is a genuine trading-session count, not a calendar-day approximation — confirmed by reading the loop, not assumed.</td></tr>
+<tr><td>4</td><td>Verify 1D→1W and 1W→1M resampling produces correct OHLCV</td><td><span class="tag V">V</span> 1D→1W was already verified in the prior report. 1W→1M verified this pass with a live interpreter check before writing any test: <code>resample_5m_to(weekly_candles, "1M")</code> on 4 weekly candles in January + 1 in February correctly produced two monthly candles with open=first week's open, high=max, low=min, close=last week's close, volume=sum. No code change was needed — <code>resampler.py</code>'s <code>_resample_to_1m</code> already handled it.</td></tr>
+<tr><td>5</td><td>Verify no 4h→1D rule exists</td><td><span class="tag V">V</span> Re-confirmed absent from the active policy, and now also structurally guaranteed by <code>test_daily_chain_is_independent_of_intraday_chain</code>, which checks every rule, not just the specific 4h/1D pair.</td></tr>
+<tr><td>6</td><td>Calculate resulting storage behavior for a representative ticker</td><td>Done — see §Storage impact.</td></tr>
+<tr><td>7</td><td>Check whether "trading sessions" is the right unit for 1D/1W/1M, and report the decision before implementing</td><td>Done — see §The unit-conversion decision. This is the one item that needed a real decision, not just verification.</td></tr>
+</table></div>
+</section>
+
+<section id="unit">
+<h2><span class="num">§2</span> The unit-conversion decision — reported before implementing, as instructed</h2>
+<div class="warncall">
+<b>The engine has exactly two cutoff units: trading sessions, or calendar days. There is no native "weeks" or "months" unit.</b>
+<p><code>RetentionRule</code> has <code>after_days</code> and <code>after_trading_sessions</code> — nothing else. "2 years," "5 years," and "10 years" are calendar-time concepts that don't map onto either field without a conversion. I did not invent a new engine concept to avoid this — I used the existing <code>after_trading_sessions</code> field (matching your explicit preference for trading-session logic over naive calendar-day math, and matching the convention every other rule in this file already uses) and converted years → sessions using an explicit, documented constant: <b><code>NSE_SESSIONS_PER_YEAR = 250</code></b>, defined once in <code>config/retention_policy.py</code> and referenced by both the 1D and 1W rules.</p>
+<p>250 is the commonly-cited approximate NSE trading-session count per calendar year — actual years vary roughly 245–252 depending on that year's holiday count. This is a real approximation, not a measured value, and it's the one part of this change that is a judgment call rather than a direct translation of your instructions. <b>2 years → 500 sessions, 5 years → 1250 sessions.</b> If you'd rather anchor these to literal calendar days instead (<code>after_days=730</code> / <code>1825</code>, which the engine already supports equally well via the same <code>_compute_cutoff()</code> fallback branch), that's a one-line change per rule — flagged in §Requires your approval rather than decided unilaterally.</p>
+</div>
+<p>1M's "keep 10 years, do not compress further" needed no unit decision at all — since nothing compresses <i>from</i> 1M, there is no rule to write. This is expressed as the simple absence of a 1M-sourced entry in the policy list, which is now a directly-tested invariant (<code>test_1m_has_no_further_compression_rule</code>), not an assumption.</p>
+</section>
+
+<section id="files">
+<h2><span class="num">§3</span> Files changed</h2>
+<div class="tbl-wrap"><table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>config/retention_policy.py</code></td><td>Version 4→5. Added <code>NSE_SESSIONS_PER_YEAR = 250</code> constant with the reasoning documented inline. Changed <code>1h→4h</code> from 240→365 sessions (per your updated windows). Changed <code>1D→1W</code> from 180→500 sessions (2 years). Added <code>1W→1M</code> at 1250 sessions (5 years). Expanded the module comment to describe both final chains precisely.</td></tr>
+<tr><td><code>config/retention_policy.yaml</code></td><td>Kept in sync with the active <code>.py</code> policy (still not loaded by the app — same "not loaded" header as before, updated numbers).</td></tr>
+<tr><td><code>tests/test_retention_service.py</code></td><td>Updated policy-count assertions (5→6 rules) and the reverse-order cycle test. Added explicit per-boundary tests for all 6 transitions (5m→15m, 15m→30m, 30m→1h, 1h→4h, 1D→1W, 1W→1M), a 1M-has-no-further-rule test, and 3 rolling-boundary scenario tests (1D, 1W, and 5m, each proving the configured recent window is preserved exactly and only older data is marked eligible for compression).</td></tr>
+<tr><td><code>tests/test_resampler.py</code></td><td>Added a 1W→1M OHLCV-correctness test (open/high/low/close/volume checked individually, plus a month-boundary split check), matching the existing 1D→1W test's rigor.</td></tr>
+</table></div>
+</section>
+
+<section id="policy">
+<h2><span class="num">§4</span> Exact active policy after modification</h2>
+<div class="querybox">{
+  "version": 5,
+  "retention_policy": [
+    {"source_tf": "5m",  "target_tf": "15m", "after_trading_sessions": 60,   "batch_size": 100},
+    {"source_tf": "15m", "target_tf": "30m", "after_trading_sessions": 120,  "batch_size": 100},
+    {"source_tf": "30m", "target_tf": "1h",  "after_trading_sessions": 180,  "batch_size": 100},
+    {"source_tf": "1h",  "target_tf": "4h",  "after_trading_sessions": 365,  "batch_size": 100},
+    {"source_tf": "1D",  "target_tf": "1W",  "after_trading_sessions": 500,  "batch_size": 100},
+    {"source_tf": "1W",  "target_tf": "1M",  "after_trading_sessions": 1250, "batch_size": 100}
+  ]
+}</div>
+<div class="diagram">
+<pre class="mermaid">
+graph LR
+  subgraph ChainA["Chain A — Intraday (never reaches 1D)"]
+    A5m["5m<br/>keep 60 sessions"] -->|older| A15m["15m<br/>keep 60-120"]
+    A15m -->|older| A30m["30m<br/>keep 120-180"]
+    A30m -->|older| A1h["1h<br/>keep 180-365"]
+    A1h -->|older| A4h["4h<br/>365+, FINAL — no further rule"]
+  end
+  subgraph ChainB["Chain B — Daily+ (independent, never sourced from 4h)"]
+    B1D["1D<br/>keep 500 sessions (2yr)"] -->|older| B1W["1W<br/>keep 500-1250 (to 5yr)"]
+    B1W -->|older| B1M["1M<br/>1250+, FINAL — no further rule"]
+  end
+</pre>
+<div class="cap">No edge connects the two subgraphs — verified structurally by <code>test_daily_chain_is_independent_of_intraday_chain</code>, not just by the current rule list happening not to cross.</div>
+</div>
+</section>
+
+<section id="tests">
+<h2><span class="num">§5</span> Tests added/updated and results</h2>
+<div class="querybox">$ python -m py_compile config/retention_policy.py retention_service.py resampler.py main.py \
+    tests/test_retention_service.py tests/test_resampler.py
+OK
+
+$ python -m pytest tests/test_retention_service.py tests/test_resampler.py -q
+..................................................
+50 passed, 1 warning in 1.49s
+
+$ python -m pytest tests/ -q
+249 passed, 15 warnings in 8.98s</div>
+<p>249 = 239 after the prior report + 11 new − 1 removed (<code>test_no_1w_to_1m_rule_yet</code>, which asserted the absence of a rule that now correctly exists — removed rather than left contradicting reality) + 1 renamed-in-place. Every new test passed on first run; nothing was loosened to make a test pass.</p>
+</section>
+
+<section id="storage">
+<h2><span class="num">§6</span> Estimated storage impact — representative ticker + full universe</h2>
+<p class="lede">Using candles-per-session estimates (5m≈75, 15m≈25, 30m≈12.5, 1h≈6.25, 4h≈1.56, based on the 6h15m NSE session) and the current 2,643-ticker universe tracked in <code>candles</code>, at steady state (i.e. once a ticker has enough history to fill every tier — the 10-year horizon used for the two unbounded tiers below).</p>
+<div class="tbl-wrap"><table>
+<tr><th>Tier</th><th>Window</th><th>Rows / ticker</th><th>Rows, full universe (2,643 tickers)</th></tr>
+<tr><td>5m</td><td>60 sessions</td><td class="num-cell">4,500</td><td class="num-cell">11,893,500</td></tr>
+<tr><td>15m</td><td>60–120 sessions</td><td class="num-cell">1,500</td><td class="num-cell">3,964,500</td></tr>
+<tr><td>30m</td><td>120–180 sessions</td><td class="num-cell">750</td><td class="num-cell">1,982,250</td></tr>
+<tr><td>1h</td><td>180–365 sessions</td><td class="num-cell">1,156</td><td class="num-cell">3,055,969</td></tr>
+<tr><td>4h</td><td>365+ sessions, <b>unbounded</b></td><td class="num-cell">3,331 <i>(at 10yr)</i></td><td class="num-cell">8,802,776 <i>(at 10yr)</i>, growing ~1.03M/yr thereafter</td></tr>
+<tr><td>1D</td><td>500 sessions (2yr)</td><td class="num-cell">500</td><td class="num-cell">1,321,500</td></tr>
+<tr><td>1W</td><td>500–1250 sessions</td><td class="num-cell">150</td><td class="num-cell">396,450</td></tr>
+<tr><td>1M</td><td>1250+ sessions, <b>unbounded</b></td><td class="num-cell">60 <i>(at 10yr)</i></td><td class="num-cell">158,580 <i>(at 10yr)</i>, growing ~31.7K/yr thereafter</td></tr>
+<tr><td colspan="3"><b>Total at 10-year maturity</b></td><td class="num-cell"><b>~31.6M rows</b></td></tr>
+</table></div>
+<div class="okcall"><b>The important shape, not just the total:</b> six of the eight tiers are hard-bounded rolling windows that stop growing once a ticker's history exceeds their retention window — they do not grow forever. Only <b>4h</b> and <b>1M</b> are genuinely unbounded (by design — they're each chain's terminal tier), and both grow slowly (≈1.03M and ≈32K rows/year respectively, across the entire tracked universe). ~31.6M total rows is a small dataset for Postgres; the open question worth tracking over time is the two unbounded tiers' multi-year growth, not the bounded ones.</div>
+</section>
+
+<section id="approve">
+<h2><span class="num">§7</span> Still requires your approval</h2>
+<div class="approve"><div class="an">1</div><div><b>Confirm the 250-sessions/year conversion</b> (or specify calendar days instead) for the 1D/1W multi-year windows — this is the one implementation judgment call in this change, flagged rather than silently decided.</div></div>
+<div class="approve"><div class="an">2</div><div><b>Everything from the prior report remains open</b>: executing the scoped migration (stock_data → candles for the 180-day-era window, now superseded by this update's 2-year window — the migration plan would need re-scoping to the new 500-session target before execution), the Angel One gap-fill call, classifying the 15 unmapped tickers, and confirming the timestamp-convention recommendation (keep 1D/1W/1M date-keyed at midnight).</div></div>
+<p>No production data was migrated, deleted, or fetched in this update. <code>stock_data</code> remains untouched.</p>
+</section>
+
+<footer>LEVERAGE — Phase 3 Update · Graph Engineering Mode · 249/249 tests passing · policy + tests only · awaiting approval before any production data step</footer>
+</main>
+</div>
