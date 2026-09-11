@@ -1,0 +1,124 @@
+name: Backend CI
+
+# Pre-AWS hardening phase (BATCH 2): minimal production-grade CI for the
+# LEVERAGE backend. Deliberately does NOT add Redis, Kubernetes, multiple
+# Gunicorn workers, or any other new infrastructure -- just dependency
+# install, an isolated/disposable PostgreSQL service, the full backend test
+# suite (which also exercises the Alembic baseline migration against that
+# same disposable database), and a Docker build check. No step in this
+# workflow ever touches real AngelOne/SMTP credentials or production
+# PostgreSQL -- see the "test" job's `env:` block for the full, deliberately
+# fake credential set used only for this ephemeral run.
+
+"on":
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+# Only the CI-run's own checkout/read access is needed.
+permissions:
+  contents: read
+
+# Canonical backend lives at this path due to the repo's nested folder
+# history (see backend/alembic/README and prior session notes) -- every
+# step below runs with this as its working directory.
+env:
+  BACKEND_DIR: StockMarket/StockMarket/backend
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  test:
+    name: Backend test suite (PostgreSQL + Alembic)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        # Throwaway credentials for THIS job's disposable, network-isolated
+        # container only -- it never contains real data and is destroyed
+        # when the job ends. Not a secret; deliberately plain in this file.
+        env:
+          POSTGRES_USER: ci_test_user
+          POSTGRES_PASSWORD: ci_test_password_not_real
+          POSTGRES_DB: stock_data_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_test_user"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # ── Database: points at the disposable service container above,
+      # NEVER a real host. test_alembic_migrations.py additionally creates
+      # its OWN scratch database (stock_data_alembic_test) inside this same
+      # throwaway server -- it never touches POSTGRES_DB directly either. ──
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: ci_test_user
+      DB_PASSWORD: ci_test_password_not_real
+      DB_NAME: stock_data_ci
+      # ── Auth: auth.py hard-fails at import time if this is unset (by
+      # design -- see auth.py's BUG-11 comment). No real secret exists in
+      # CI, so a clearly-fake value is set directly here. ──
+      JWT_SECRET_KEY: ci-only-fake-jwt-secret-never-used-for-anything-real
+      # ── Deliberately LEFT UNSET: every ANGELONE_*/HISTORICAL_*/SMTP_* var.
+      # angelone_service.py reads them via os.getenv(...) with no hard-fail
+      # (confirmed during the Batch-2 audit), and auth.py's send_email()
+      # explicitly falls back to a mock/print path when SMTP_USERNAME or
+      # SMTP_PASSWORD is empty -- no test in this suite calls .login() or
+      # sends a real email, so no AngelOne/SMTP credential is needed here,
+      # real or fake. ──
+      ENVIRONMENT: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "${{ env.PYTHON_VERSION }}"
+          cache: "pip"
+          cache-dependency-path: |
+            ${{ env.BACKEND_DIR }}/requirements.txt
+            ${{ env.BACKEND_DIR }}/requirements-dev.txt
+
+      - name: Install pinned backend dependencies
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          until pg_isready -h localhost -p 5432 -U ci_test_user; do
+            echo "waiting for postgres..."
+            sleep 1
+          done
+
+      - name: Run backend test suite
+        working-directory: ${{ env.BACKEND_DIR }}
+        run: python -m pytest tests/ -v
+
+  docker-build:
+    name: Docker build validation (no run, no push, no deploy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image (BuildKit, matches Dockerfile's cache mount)
+        env:
+          DOCKER_BUILDKIT: "1"
+        # Context is the parent of backend/ (StockMarket/StockMarket), not
+        # backend/ itself -- required because the Dockerfile's own COPY
+        # instructions expect frontend/ as a build-context sibling of
+        # backend/ (see the Dockerfile's own comment on this). Only builds
+        # the image; nothing is run, pushed, or deployed.
+        run: |
+          docker build \
+            -f StockMarket/StockMarket/backend/Dockerfile \
+            -t leverage-backend-ci-build:${{ github.sha }} \
+            StockMarket/StockMarket

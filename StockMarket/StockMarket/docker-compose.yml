@@ -1,0 +1,71 @@
+# LEVERAGE production-shaped deployment: Nginx -> app (Gunicorn -w 1 ->
+# UvicornWorker -> FastAPI). Deliberately does NOT include a postgres
+# service -- PostgreSQL stays external (the existing local install for dev,
+# managed RDS for the actual AWS target) per the explicit instruction not
+# to put PostgreSQL inside the LEVERAGE container/compose stack. No redis,
+# no celery, no second app instance -- workers=1 is enforced in
+# backend/gunicorn.conf.py, not overridable from here.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: leverage-app
+    # Real secrets come from backend/.env (gitignored, never baked into the
+    # image -- see backend/Dockerfile and .dockerignore). This file loads
+    # them into the container's environment at run time only.
+    env_file:
+      - backend/.env
+    environment:
+      # `environment:` entries apply AFTER `env_file:` above, so this
+      # overrides whatever DB_HOST is set to in backend/.env: "localhost"
+      # inside a container means the container itself, not the Docker host
+      # running PostgreSQL. host.docker.internal is Docker Desktop's
+      # (Windows/Mac) resolvable name for the host machine -- the
+      # extra_hosts entry below makes it resolve on native Linux Docker
+      # too (Docker Desktop provides it out of the box; Linux needs the
+      # explicit host-gateway mapping).
+      #
+      # Hardcoded rather than a ${DB_HOST:-...} substitution: for
+      # PRODUCTION, pointing this at a real managed RDS endpoint instead of
+      # local dev Postgres means editing this line directly (or replacing
+      # it with your own DB_HOST env-var wiring) -- do that deliberately
+      # per-environment rather than relying on shell-variable precedence.
+      DB_HOST: host.docker.internal
+      # Phase 15A: disables /docs, /redoc, /openapi.json in this
+      # production-shaped path. backend/.env's own ENVIRONMENT (if set)
+      # would otherwise apply here too, same env_file/environment
+      # precedence as DB_HOST above.
+      ENVIRONMENT: production
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"   # internal only -- not published to the host; Nginx is the public entry point
+    # 1 GB matches the project's actual target VPS sizing -- the earlier
+    # RAM investigation phases (P0 through Phase 14) measured 354 MB
+    # steady-state / 678 MB peak-during-prefill on the dev machine with no
+    # ceiling; this makes that headroom a real, enforced constraint rather
+    # than an assumption, and is exactly the scenario this deployment
+    # sprint's resource-limit test is meant to validate. If the app ever
+    # gets OOM-killed under real traffic, that's the signal to size up
+    # (2 GB) rather than raise this silently.
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: leverage-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    restart: unless-stopped

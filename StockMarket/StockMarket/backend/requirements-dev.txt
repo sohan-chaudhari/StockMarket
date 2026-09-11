@@ -1,0 +1,16 @@
+# Test/development-only dependencies -- never installed in the production
+# Docker image (backend/Dockerfile only ever runs `pip install -r
+# requirements.txt`, never this file). Install on top of requirements.txt:
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# CI DEPENDENCY DECLARATION fix (dependency/CVE audit remediation phase):
+# pytest and pytest-asyncio were previously used by the entire tests/ suite
+# and by backend-ci.yml's own "Run backend test suite" step without being
+# declared in ANY tracked manifest -- they only ever worked because this
+# host's global/dev Python already had them installed from some earlier,
+# undocumented `pip install`. A genuinely fresh runner (a new CI machine, a
+# clean venv) would fail at `python -m pytest tests/ -v` with "No module
+# named pytest". Versions pinned to exactly what this repo's test suite has
+# actually been run against throughout this entire hardening engagement.
+pytest==9.1.1
+pytest-asyncio==1.4.0

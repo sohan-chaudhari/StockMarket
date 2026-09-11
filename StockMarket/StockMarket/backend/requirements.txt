@@ -1,6 +1,23 @@
-fastapi==0.115.12
+fastapi==0.133.0
+# Pinned explicitly (not left to fastapi's own unpinned `starlette>=0.40.0`
+# range) so the exact, security-audited version is reproducible across
+# installs. 1.3.1 is the minimum version that clears every Starlette CVE
+# found in the DEPENDENCY / CVE + SUPPLY-CHAIN SECURITY AUDIT phase
+# (server-exposed: every FastAPI request goes through Starlette, unlike
+# nltk/aiohttp/ecdsa, whose vulnerable paths were proven unreachable).
+# fastapi==0.133.0 is the minimum FastAPI bump that lifts its own
+# `starlette<1.0.0` ceiling (FastAPI 0.133.0 release notes: "Add support
+# for Starlette 1.0.0+") -- earlier FastAPI versions cannot install a
+# patched Starlette at all. pydantic==2.10.6 below still satisfies
+# fastapi==0.133.0's own `pydantic>=2.7.0` requirement, so no pydantic bump
+# was needed. Verified: clean install in an isolated venv, `pip check`
+# clean, real `main.py` imports cleanly, full backend suite passes with
+# zero regressions (see tests/test_dependency_pins.py).
+starlette==1.3.1
 uvicorn[standard]==0.34.0
+sentry-sdk==2.63.0
 sqlalchemy==2.0.45
+alembic==1.18.4
 psycopg2-binary==2.9.11
 pydantic==2.10.6
 python-dotenv==1.2.1
@@ -10,7 +27,14 @@ beautifulsoup4==4.12.3
 websockets==12.0
 smartapi-python==1.3.5
 pyotp==2.9.0
-httpx>=0.27.0
-playwright
-feedparser
+httpx==0.28.1
+feedparser==6.0.12
 pyyaml==6.0.3
+gunicorn==26.2.0
+nltk==3.9.4
+slowapi==0.1.9
+aiohttp==3.13.2
+bcrypt==5.0.0
+python-jose==3.5.0
+websocket-client==1.9.0
+email-validator==2.3.0

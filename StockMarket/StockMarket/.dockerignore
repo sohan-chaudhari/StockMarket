@@ -1,0 +1,61 @@
+# Build context root is this project directory, which has years of one-off
+# debug/backfill/test scripts, logs, and dumps sitting directly at this
+# level alongside the real backend/ and frontend/ directories. The
+# Dockerfile only ever does `COPY backend/...` and `COPY frontend/...` --
+# never `COPY . .` -- so none of this root-level clutter reaches the image
+# regardless of what's listed below. These entries exist to (a) keep
+# `docker build`'s context-upload step fast by not hashing gigabytes of
+# unrelated files, and (b) for the backend//frontend/-scoped entries,
+# actually prevent sensitive or dev-only files from landing in the image.
+
+# Root-level clutter (build-speed only -- never copied either way)
+venv/
+.venv/
+.git/
+historical_data/
+logs/
+*.db
+*.sqlite3
+*.log
+node_modules/
+
+# Python bytecode/caches, anywhere
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# backend/ exclusions -- these DO matter, backend/ is copied wholesale.
+# backend/.env is the critical one: never let real credentials into the
+# image. backend/.env.example is fine and stays (it's a safe template).
+backend/.env
+backend/.env.*
+!backend/.env.example
+backend/venv/
+backend/.venv/
+backend/tests/
+backend/*.log
+backend/*.db
+backend/*.sqlite3
+# backend/logs/ holds months of accumulated auth.log rotation files plus
+# assorted dated subdirectories from a separate logger -- excluded so a
+# fresh image doesn't ship stale historical log data. The Dockerfile
+# creates an empty logs/ directory explicitly so auth.py's
+# RotatingFileHandler("logs/auth.log", ...) still has somewhere to write.
+backend/logs/
+
+# frontend/ exclusions
+frontend/.phase3-backup/
+frontend/tests/
+frontend/node_modules/
+frontend/*.patch
+frontend/*.bak-phase3
+
+# Editor/OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
