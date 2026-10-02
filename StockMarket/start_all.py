@@ -102,9 +102,13 @@ def free_port(port, timeout=20):
 
 
 def port_is_serving(port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        return s.connect_ex(("127.0.0.1", port)) == 0
+    import urllib.request
+    try:
+        url = f"http://127.0.0.1:{port}/api/time" if port == 8000 else f"http://127.0.0.1:{port}/docs"
+        with urllib.request.urlopen(url, timeout=1.0) as resp:
+            return resp.status in (200, 404)
+    except Exception:
+        return False
 
 
 def wait_until_serving(proc, port, name, timeout=900):

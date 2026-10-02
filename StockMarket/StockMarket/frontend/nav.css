@@ -33,7 +33,7 @@ body {
 .header-container {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 0.75rem 2rem;
+  padding: 0.75rem 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -55,6 +55,72 @@ body {
   padding-top: 0.75rem;
 }
 
+/* ===================== SUBNAV BAR (BELOW HEADER) ===================== */
+.page-subnav-bar {
+  background: #0A0A0B;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  width: 100%;
+}
+
+.page-subnav-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 8px 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+/* ===================== BACK BUTTON ===================== */
+.back-btn,
+.nav-back-btn {
+  color: #a1a1aa;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  flex-shrink: 0;
+  user-select: none;
+  line-height: 1;
+}
+
+.back-btn:hover,
+.nav-back-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.back-btn:active,
+.nav-back-btn:active {
+  transform: translateY(0);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.back-btn svg,
+.nav-back-btn svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  stroke-width: 2;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.back-btn:hover svg,
+.nav-back-btn:hover svg {
+  transform: translateX(-2px);
+}
+
 /* ===================== LOGO ===================== */
 .logo-container {
   display: flex;
@@ -64,17 +130,39 @@ body {
   flex-shrink: 0;
 }
 
+.brand-logo-full {
+  height: 40px;
+  width: auto;
+  max-width: 260px;
+  display: block;
+  object-fit: contain;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.brand-logo-icon-only {
+  display: none;
+  height: 38px;
+  width: 38px;
+  object-fit: contain;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+.logo-container:hover .brand-logo-full,
+.logo-container:hover .brand-logo-icon-only {
+  transform: scale(1.03);
+  opacity: 0.95;
+}
+
 .logo-icon {
-  height: 72px;
+  height: 48px;
   width: auto;
   display: block;
-  border-radius: 12px;
-  mix-blend-mode: lighten;
+  border-radius: 8px;
 }
 
 .brand-image-wrapper {
-  height: 72px;
-  width: 240px;
+  height: 48px;
+  width: auto;
   overflow: hidden;
   margin-left: 0px;
   display: flex;
@@ -92,10 +180,8 @@ body {
 .brand-image {
   height: 100%;
   width: 100%;
-  object-fit: cover;
-  object-position: 20% center;
+  object-fit: contain;
   display: block;
-  mix-blend-mode: lighten;
   transition: transform 0.3s ease;
 }
 
@@ -621,16 +707,16 @@ body {
   .mobile-market-status-slot {
     display: flex;
     justify-content: flex-end;
-    padding: 0 4px;
-    /* Sits between the header and the index strip inside .dashboard-main's flex gap (24px on
-       both sides by default) — too much air around a small pill. Pull it in on both sides. */
-    margin: -12px 0;
+    padding: 0 2px;
+    margin: 0;
   }
-  .brand-image-wrapper {
-    display: none;
+  .brand-logo-full {
+    display: none !important;
   }
-  .logo-icon {
+  .brand-logo-icon-only {
+    display: block !important;
     height: 36px;
+    width: 36px;
   }
   .page-content {
     padding: 1rem;

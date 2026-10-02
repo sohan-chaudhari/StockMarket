@@ -9,8 +9,8 @@
 
     <!-- Stylesheets -->
     <link rel="stylesheet" href="tokens.css?v=2">
-    <link rel="stylesheet" href="index.css?v=82">
-    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="index.css?v=84">
+    <link rel="stylesheet" href="nav.css?v=14">
     <link rel="stylesheet" href="loader.css?v=4">
 
     <!-- Preload fonts -->
@@ -25,27 +25,47 @@
     <script>
     (function() {
         try {
-            var cachedRaw = localStorage.getItem('llp');
-            var cachedTs = localStorage.getItem('llp_ts');
-            if (cachedRaw && cachedTs) {
-                var ts = parseInt(cachedTs, 10);
-                if (Date.now() - ts < 600000) { // 10 min TTL
-                    var prices = JSON.parse(cachedRaw);
-                    document.addEventListener("DOMContentLoaded", function() {
-                        for (var t in prices) {
-                            var pEl = document.getElementById("strip-price-" + t);
-                            var cEl = document.getElementById("strip-change-" + t);
-                            if (pEl && cEl) {
-                                var data = prices[t];
-                                var chg = parseFloat(data.change);
-                                pEl.textContent = parseFloat(data.current_price).toFixed(2);
-                                cEl.textContent = (chg >= 0 ? "+" : "") + chg.toFixed(2) + " (" + parseFloat(data.change_pct).toFixed(2) + "%)";
-                                cEl.className = "change " + (chg >= 0 ? "text-green" : "text-red");
-                            }
+            var raw = localStorage.getItem('llp');
+            var ts  = parseInt(localStorage.getItem('llp_ts') || '0', 10);
+            if (!raw || (Date.now() - ts > 600000)) return; // 10 min TTL
+            var prices = JSON.parse(raw);
+            document.addEventListener("DOMContentLoaded", function() {
+                ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCAP', 'SMALLCAP'].forEach(function (t) {
+                    var d = prices[t] || (t === 'NIFTY' ? prices['NIFTY50'] : null);
+                    if (!d) return;
+                    var cur = d.current || d.current_price;
+                    if (!cur) return;
+                    var pEl = document.getElementById('strip-price-' + t);
+                    var cEl = document.getElementById('strip-change-' + t);
+                    if (pEl) pEl.textContent = '₹' + Number(cur).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    if (cEl) {
+                        var prev = d.prev_close || d.open || cur;
+                        var diff = (d.change != null && !isNaN(d.change)) ? Number(d.change) : (cur - prev);
+                        var pct  = (d.change_pct != null && !isNaN(d.change_pct)) ? Number(d.change_pct) : ((prev > 0) ? (diff / prev) * 100 : 0);
+                        var sign = diff >= 0 ? '▲ +' : '▼ ';
+                        cEl.textContent = sign + diff.toFixed(2) + ' (' + pct.toFixed(2) + '%)';
+                        cEl.className = 'change ' + (diff >= 0 ? 'text-green' : 'text-red');
+                    }
+                });
+                // Seed NIFTY chart header price
+                var n = prices['NIFTY'] || prices['NIFTY50'];
+                if (n) {
+                    var nCur = n.current || n.current_price;
+                    if (nCur) {
+                        var npEl = document.getElementById('niftyPrice');
+                        if (npEl) npEl.textContent = Number(nCur).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                        var prev2 = n.prev_close || n.open || nCur;
+                        var diff2 = (n.change != null && !isNaN(n.change)) ? Number(n.change) : (nCur - prev2);
+                        var pct2  = (n.change_pct != null && !isNaN(n.change_pct)) ? Number(n.change_pct) : ((prev2 > 0) ? (diff2 / prev2) * 100 : 0);
+                        var s2    = diff2 >= 0 ? '+' : '';
+                        var ncEl  = document.getElementById('niftyChange');
+                        if (ncEl) {
+                            ncEl.textContent = s2 + diff2.toFixed(2) + ' (' + s2 + pct2.toFixed(2) + '%)';
+                            ncEl.className = 'price-change ' + (diff2 >= 0 ? 'text-green' : 'text-red');
                         }
-                    });
+                    }
                 }
-            }
+            });
         } catch(e) {}
     })();
     </script>
@@ -71,21 +91,37 @@
                     <h4>NIFTY 50</h4>
                     <div class="price" id="strip-price-NIFTY" data-sid="sp-NIFTY">--</div>
                     <div class="change text-green" id="strip-change-NIFTY" data-sid="sc-NIFTY">--</div>
+                    <div id="strip-expiry-NIFTY"></div>
                 </div>
                 <div class="ticker-card" onclick="window.location.href='overview.html?ticker=SENSEX'">
                     <h4>SENSEX</h4>
                     <div class="price" id="strip-price-SENSEX" data-sid="sp-SENSEX">--</div>
                     <div class="change text-green" id="strip-change-SENSEX" data-sid="sc-SENSEX">--</div>
+                    <div id="strip-expiry-SENSEX"></div>
                 </div>
                 <div class="ticker-card" onclick="window.location.href='overview.html?ticker=BANKNIFTY'">
                     <h4>BANK NIFTY</h4>
                     <div class="price" id="strip-price-BANKNIFTY" data-sid="sp-BANKNIFTY">--</div>
                     <div class="change text-green" id="strip-change-BANKNIFTY" data-sid="sc-BANKNIFTY">--</div>
+                    <div id="strip-expiry-BANKNIFTY"></div>
                 </div>
                 <div class="ticker-card" onclick="window.location.href='overview.html?ticker=FINNIFTY'">
                     <h4>NIFTY FIN</h4>
                     <div class="price" id="strip-price-FINNIFTY" data-sid="sp-FINNIFTY">--</div>
                     <div class="change text-green" id="strip-change-FINNIFTY" data-sid="sc-FINNIFTY">--</div>
+                    <div id="strip-expiry-FINNIFTY"></div>
+                </div>
+                <div class="ticker-card" onclick="window.location.href='overview.html?ticker=MIDCAP'">
+                    <h4>MIDCAP</h4>
+                    <div class="price" id="strip-price-MIDCAP" data-sid="sp-MIDCAP">--</div>
+                    <div class="change text-green" id="strip-change-MIDCAP" data-sid="sc-MIDCAP">--</div>
+                    <div id="strip-expiry-MIDCAP"></div>
+                </div>
+                <div class="ticker-card" onclick="window.location.href='overview.html?ticker=SMALLCAP'">
+                    <h4>SMALLCAP</h4>
+                    <div class="price" id="strip-price-SMALLCAP" data-sid="sp-SMALLCAP">--</div>
+                    <div class="change text-green" id="strip-change-SMALLCAP" data-sid="sc-SMALLCAP">--</div>
+                    <div id="strip-expiry-SMALLCAP"></div>
                 </div>
             </div>
             <button class="strip-btn right" id="stripRightBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
@@ -96,14 +132,28 @@
             <div class="main-chart-container">
                 <div class="chart-header">
                     <div class="chart-title-block">
-                        <select id="chartTickerSelect" style="background:#1a1a1a;color:#fff;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:4px 8px;font-size:1rem;font-weight:600;font-family:'Inter',sans-serif;cursor:pointer;outline:none;margin-bottom:4px;">
-                            <option value="NIFTY">NIFTY 50</option>
-                            <option value="SENSEX">SENSEX</option>
-                            <option value="BANKNIFTY">BANK NIFTY</option>
-                            <option value="FINNIFTY">NIFTY FIN</option>
-                            <option value="MIDCAP">MIDCAP</option>
-                            <option value="SMALLCAP">SMALLCAP</option>
-                        </select>
+                        <div class="custom-dropdown" id="chartTickerDropdown">
+                            <button type="button" class="custom-dropdown-btn" id="chartTickerBtn" aria-haspopup="listbox" aria-expanded="false">
+                                <span id="chartTickerLabel">NIFTY 50</span>
+                                <svg class="dropdown-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </button>
+                            <div class="custom-dropdown-menu" id="chartTickerMenu" role="listbox">
+                                <div class="custom-dropdown-item active" data-value="NIFTY">NIFTY 50</div>
+                                <div class="custom-dropdown-item" data-value="SENSEX">SENSEX</div>
+                                <div class="custom-dropdown-item" data-value="BANKNIFTY">BANK NIFTY</div>
+                                <div class="custom-dropdown-item" data-value="FINNIFTY">NIFTY FIN</div>
+                                <div class="custom-dropdown-item" data-value="MIDCAP">MIDCAP</div>
+                                <div class="custom-dropdown-item" data-value="SMALLCAP">SMALLCAP</div>
+                            </div>
+                            <select id="chartTickerSelect" style="display:none;" aria-hidden="true">
+                                <option value="NIFTY" selected>NIFTY 50</option>
+                                <option value="SENSEX">SENSEX</option>
+                                <option value="BANKNIFTY">BANK NIFTY</option>
+                                <option value="FINNIFTY">NIFTY FIN</option>
+                                <option value="MIDCAP">MIDCAP</option>
+                                <option value="SMALLCAP">SMALLCAP</option>
+                            </select>
+                        </div>
                         <div class="chart-price-block">
                             <span id="niftyPrice" class="large-price">--</span>
                             <span id="niftyChange" class="price-change">--</span>
@@ -144,41 +194,55 @@
         </div>
 
         <!-- Section 4: Market Movers -->
-        <div class="market-movers-section">
-            <!-- Gainers -->
-            <div class="movers-column">
-                <div class="column-header">
-                    <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#089981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span> Top Gainers</h3>
-                    <a href="stocks.html" class="view-all-link">View All &rarr;</a>
+        <div class="movers-container">
+            <div class="movers-header-bar">
+                <div class="movers-section-title-wrap">
+                    <div class="pill-indicator"></div>
+                    <h2 class="section-title" style="margin-bottom:0;">Market Movers</h2>
                 </div>
-                <div class="movers-list" id="gainersList">
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:60%"></div><div class="skeleton skeleton-line" style="width:40%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-line" style="width:35%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:65%"></div><div class="skeleton skeleton-line" style="width:30%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                </div>
-            </div>
-            <!-- Losers -->
-            <div class="movers-column">
-                <div class="column-header">
-                    <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f23645" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></span> Top Losers</h3>
-                    <a href="stocks.html" class="view-all-link">View All &rarr;</a>
-                </div>
-                <div class="movers-list" id="losersList">
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-line" style="width:35%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:60%"></div><div class="skeleton skeleton-line" style="width:40%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:50%"></div><div class="skeleton skeleton-line" style="width:30%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                <div class="movers-filter-tabs" id="moverCapTabs">
+                    <button class="mover-tab active" data-cap="all" onclick="setMoverCap('all')">All</button>
+                    <button class="mover-tab" data-cap="large" onclick="setMoverCap('large')">Large Cap</button>
+                    <button class="mover-tab" data-cap="mid" onclick="setMoverCap('mid')">Mid Cap</button>
+                    <button class="mover-tab" data-cap="small" onclick="setMoverCap('small')">Small Cap</button>
                 </div>
             </div>
-            <!-- Active -->
-            <div class="movers-column">
-                <div class="column-header">
-                    <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Most Active</h3>
-                    <a href="stocks.html" class="view-all-link">View All &rarr;</a>
+            <div class="market-movers-section">
+                <!-- Gainers -->
+                <div class="movers-column">
+                    <div class="column-header">
+                        <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#089981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></span> Top Gainers</h3>
+                        <a href="stocks.html" class="view-all-link">View All &rarr;</a>
+                    </div>
+                    <div class="movers-list" id="gainersList">
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:60%"></div><div class="skeleton skeleton-line" style="width:40%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-line" style="width:35%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:65%"></div><div class="skeleton skeleton-line" style="width:30%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                    </div>
                 </div>
-                <div class="movers-list" id="activeList">
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:65%"></div><div class="skeleton skeleton-line" style="width:45%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:60%"></div><div class="skeleton skeleton-line" style="width:35%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
-                    <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-line" style="width:30%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                <!-- Losers -->
+                <div class="movers-column">
+                    <div class="column-header">
+                        <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f23645" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></span> Top Losers</h3>
+                        <a href="stocks.html" class="view-all-link">View All &rarr;</a>
+                    </div>
+                    <div class="movers-list" id="losersList">
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-line" style="width:35%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:60%"></div><div class="skeleton skeleton-line" style="width:40%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:50%"></div><div class="skeleton skeleton-line" style="width:30%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                    </div>
+                </div>
+                <!-- Active -->
+                <div class="movers-column">
+                    <div class="column-header">
+                        <h3><span class="icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff9800" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display:inline;vertical-align:middle;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> Most Active</h3>
+                        <a href="stocks.html" class="view-all-link">View All &rarr;</a>
+                    </div>
+                    <div class="movers-list" id="activeList">
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:65%"></div><div class="skeleton skeleton-line" style="width:45%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:60%"></div><div class="skeleton skeleton-line" style="width:35%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                        <div class="skeleton-mover-row"><span class="skeleton skeleton-avatar"></span><div style="flex:1"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-line" style="width:30%"></div></div><div><div class="skeleton skeleton-price"></div></div></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -235,14 +299,14 @@
     
 
     <!-- JavaScript -->
-    <script defer src="nav.js?v=8"></script>
+    <script defer src="nav.js?v=9"></script>
     <script async src="stocks.js?v=26"></script>
     <script src="loader.js?v=2"></script>
     <script src="news.js?v=6"></script>
     <script src="ws.js"></script>
-    <script src="index.js?v=46"></script>
+    <script src="index.js?v=47"></script>
     <script src="cache.js?v=2"></script>
-    <script src="dashboard.js?v=1043"></script>
+    <script src="dashboard.js?v=1051"></script>
     <script>
         // --- AUTH CHECK ---
         (function checkAuth() {

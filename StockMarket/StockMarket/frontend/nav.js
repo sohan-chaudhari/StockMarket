@@ -52,9 +52,14 @@
     return map[path] || 'home';
   }
 
-  function formatPrice(p) {
-    if (p >= 10000) return p.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return p.toFixed(2);
+  function isDashboardPage() {
+    var path = (window.location.pathname.split('/').pop() || 'home.html').toLowerCase();
+    return path === '' || path === 'home.html' || path === 'index.html' || path === '/' || path === 'index';
+  }
+
+  function isChartPage() {
+    var path = (window.location.pathname.split('/').pop() || '').toLowerCase();
+    return path === 'stock.html' || path === 'chart.html' || path === 'index_chart.html' || path === 'stock_rebuilt.html' || path === 'stock_restructured.html' || path === 'tv-chart.html' || path === 'market.html';
   }
 
   /* ===================== BUILD HEADER HTML ===================== */
@@ -75,15 +80,33 @@
       return '<a href="' + item.href + '" class="nav-link ' + (currentPage === item.id ? 'active' : '') + '">' + item.label + '</a>';
     }).join('');
 
+    var marketStatusHTML = isDashboardPage()
+      ? '      <div class="market-status-indicator" id="marketStatusIndicator">' +
+        '        <span class="pulse-dot"></span>' +
+        '        <span class="status-text" id="marketStatusText">Loading...</span>' +
+        '      </div>'
+      : '';
+
+    var subnavHTML = (!isDashboardPage() && !isChartPage())
+      ? '<div class="page-subnav-bar">' +
+        '  <div class="page-subnav-container">' +
+        '    <a href="javascript:void(0)" onclick="if(window.history.length>1){window.history.back();}else{window.location.href=\'home.html\';}" class="back-btn" title="Go back" aria-label="Go back">' +
+        '      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '        <path d="M19 12H5M12 19l-7-7 7-7"/>' +
+        '      </svg>' +
+        '      <span>Back</span>' +
+        '    </a>' +
+        '  </div>' +
+        '</div>'
+      : '';
+
     return '' +
       '<header class="header">' +
       '  <div class="header-container">' +
       '    <div class="header-top-row">' +
-      '      <a href="home.html" class="logo-container">' +
-      '        <img src="logo.jpeg" alt="Logo" class="logo-icon">' +
-      '        <div class="brand-image-wrapper">' +
-      '          <img src="leverage_logo.jpg" alt="LEVERAGE" class="brand-image">' +
-      '        </div>' +
+      '      <a href="home.html" class="logo-container" aria-label="LEVERAGE Home">' +
+      '        <img src="Leverage_Horizontal_White.svg" alt="LEVERAGE" class="brand-logo-full">' +
+      '        <img src="Leverage_Icon_White.svg" alt="LEVERAGE" class="brand-logo-icon-only">' +
       '      </a>' +
       '      <div class="search-panel">' +
       '        <div class="search-container">' +
@@ -131,23 +154,48 @@
       '    </div>' +
       '    <div class="header-bottom-row">' +
       '      <nav class="nav-links">' + navHTML + '</nav>' +
-      '      <div class="market-status-indicator" id="marketStatusIndicator">' +
-      '        <span class="pulse-dot"></span>' +
-      '        <span class="status-text" id="marketStatusText">Loading...</span>' +
-      '      </div>' +
+      marketStatusHTML +
       '    </div>' +
       '  </div>' +
-      '</header>';
+      '</header>' +
+      subnavHTML;
   }
 
   /* ===================== SEARCH ===================== */
+  var _navFetchingStocks = false;
   function initSearch() {
     var input = document.getElementById('stockSearch');
     var results = document.getElementById('searchResults');
     if (!input || !results) return;
 
     function sourceList() {
-      return (typeof ALL_STOCKS !== 'undefined' && ALL_STOCKS.length > 0) ? ALL_STOCKS : SEARCH_FALLBACK;
+      if (typeof window !== 'undefined' && Array.isArray(window.ALL_STOCKS) && window.ALL_STOCKS.length > 0) {
+        return window.ALL_STOCKS;
+      }
+      try {
+        var stored = localStorage.getItem('leverage_stocks');
+        if (stored) {
+          var parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            window.ALL_STOCKS = parsed;
+            return parsed;
+          }
+        }
+      } catch (e) {}
+
+      // If cache miss, fetch fresh stocks from API asynchronously
+      if (!_navFetchingStocks) {
+        _navFetchingStocks = true;
+        fetch('/api/all-stocks').then(function(r) { return r.json(); }).then(function(stocks) {
+          if (Array.isArray(stocks) && stocks.length > 0) {
+            window.ALL_STOCKS = stocks;
+            try { localStorage.setItem('leverage_stocks', JSON.stringify(stocks)); } catch(e){}
+            window.dispatchEvent(new Event('stocksLoaded'));
+          }
+        }).catch(function(){}).finally(function(){ _navFetchingStocks = false; });
+      }
+
+      return (typeof SEARCH_FALLBACK !== 'undefined') ? SEARCH_FALLBACK : [];
     }
 
     function _levenshtein(a, b) {
@@ -171,9 +219,14 @@
     function getScore(stock, query) {
       var cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!cleanQuery) return 0;
+
+      // Support stripping .NS or .BO if added by user
+      if (cleanQuery.endsWith('ns')) cleanQuery = cleanQuery.slice(0, -2);
+      else if (cleanQuery.endsWith('bo')) cleanQuery = cleanQuery.slice(0, -2);
+
       var ticker = (stock.ticker || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      var name = (stock.name || '').toLowerCase();
-      var cleanName = name.replace(/[^a-z0-9]/g, '');
+      var rawName = (stock.name || '').toLowerCase();
+      var cleanName = rawName.replace(/[^a-z0-9]/g, '');
 
       // 1. Exact Ticker Match
       if (ticker === cleanQuery) return 1000;
@@ -183,7 +236,7 @@
       if (cleanName.startsWith(cleanQuery)) return 700;
 
       // 4. Any Word in Name StartsWith
-      var words = name.split(/[\s\-_\.,]+/);
+      var words = rawName.split(/[\s\-_\.,]+/);
       for (var i = 0; i < words.length; i++) {
         var w = words[i].replace(/[^a-z0-9]/g, '');
         if (w && w.startsWith(cleanQuery)) return 600;
@@ -193,7 +246,16 @@
       if (ticker.indexOf(cleanQuery) !== -1) return 500;
       if (cleanName.indexOf(cleanQuery) !== -1) return 400;
 
-      // 6. Typo / Phonetic tolerance (Levenshtein distance <= 1 for >= 3 chars, <= 2 for >= 6 chars)
+      // 6. Handle "NSE "/"BSE " prefix for indices (e.g. "NSE SENSEX" -> "SENSEX")
+      var isIndex = ['NIFTY', 'BANKNIFTY', 'SENSEX'].indexOf(stock.ticker) !== -1;
+      if (isIndex && (query.toLowerCase().startsWith('nse ') || query.toLowerCase().startsWith('bse '))) {
+        var subQuery = query.toLowerCase().split(' ').slice(1).join(' ').replace(/[^a-z0-9]/g, '');
+        if (subQuery && (ticker.startsWith(subQuery) || cleanName.startsWith(subQuery))) {
+          return 550;
+        }
+      }
+
+      // 7. Typo / Phonetic tolerance (Levenshtein distance <= 1 for >= 3 chars, <= 2 for >= 6 chars)
       if (cleanQuery.length >= 3) {
         var maxDist = cleanQuery.length >= 6 ? 2 : 1;
         var tDistPref = _levenshtein(ticker.slice(0, cleanQuery.length), cleanQuery);
@@ -201,11 +263,11 @@
         var tDist = Math.min(tDistPref, tDistFull);
         if (tDist <= maxDist) return 300 - tDist * 50;
 
-        for (var i = 0; i < words.length; i++) {
-          var w = words[i].replace(/[^a-z0-9]/g, '');
-          if (w.length >= 3) {
-            var wDistPref = _levenshtein(w.slice(0, cleanQuery.length), cleanQuery);
-            var wDistFull = _levenshtein(w, cleanQuery);
+        for (var j = 0; j < words.length; j++) {
+          var word = words[j].replace(/[^a-z0-9]/g, '');
+          if (word.length >= 3) {
+            var wDistPref = _levenshtein(word.slice(0, cleanQuery.length), cleanQuery);
+            var wDistFull = _levenshtein(word, cleanQuery);
             var wDist = Math.min(wDistPref, wDistFull);
             if (wDist <= maxDist) return 250 - wDist * 50;
           }
@@ -213,6 +275,48 @@
       }
 
       return 0;
+    }
+
+    window._searchPriceCache = window._searchPriceCache || {};
+    var _navSearchFetchTimer = null;
+
+    function _fetchNavSearchLivePrices(stocks) {
+      if (!stocks || stocks.length === 0) return;
+      var tickers = stocks.map(function(s) { return s.ticker; });
+      clearTimeout(_navSearchFetchTimer);
+      _navSearchFetchTimer = setTimeout(function() {
+        fetch('/api/live-prices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tickers: tickers })
+        }).then(function(r) { return r.json(); }).then(function(data) {
+          if (!data || typeof data !== 'object') return;
+          Object.keys(data).forEach(function(tkr) {
+            var item = data[tkr];
+            if (!item || item.current == null) return;
+            var cp = Number(item.current);
+            var chg = item.change != null ? Number(item.change) : (cp - Number(item.prev_close || cp));
+            var pct = item.change_pct != null ? Number(item.change_pct) : (item.prev_close && item.prev_close > 0 ? ((cp - Number(item.prev_close)) / Number(item.prev_close)) * 100 : 0);
+
+            var plain = tkr.replace(/\.(NS|BO)$/i, '');
+            var cacheVal = { current: cp, change: chg, percent: pct };
+            window._searchPriceCache[tkr] = cacheVal;
+            window._searchPriceCache[plain] = cacheVal;
+
+            var cleanTkr = plain.replace(/[^a-zA-Z0-9]/g, '');
+            var priceEl = document.getElementById('nav-search-price-' + cleanTkr);
+            var changeEl = document.getElementById('nav-search-change-' + cleanTkr);
+            if (priceEl && changeEl) {
+              priceEl.textContent = '₹' + cp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              var isPos = pct >= 0;
+              var sign = isPos ? '+' : '';
+              var arrow = isPos ? '▲' : '▼';
+              changeEl.textContent = arrow + ' ' + sign + Math.abs(pct).toFixed(2) + '%';
+              changeEl.style.color = isPos ? '#00C853' : '#FF5252';
+            }
+          });
+        }).catch(function() {});
+      }, 30);
     }
 
     input.addEventListener('input', function (e) {
@@ -223,35 +327,52 @@
         return;
       }
 
-      var scored = sourceList().map(function (s) { return { stock: s, score: getScore(s, query) }; })
-        .filter(function (item) { return item.score > 0; })
-        .sort(function (a, b) { return b.score - a.score; })
-        .slice(0, 5)
-        .map(function (item) { return item.stock; });
+      var list = sourceList();
+      var scored = list.map(function (s) { return { stock: s, score: getScore(s, query) }; })
+        .filter(function (item) { return item.score > 0; });
 
-      if (scored.length > 0) {
-        results.innerHTML = scored.map(function (stock) {
+      scored.sort(function (a, b) {
+        var diff = b.score - a.score;
+        if (diff !== 0) return diff;
+        if (a.stock.exchange === 'NSE') return -1;
+        if (b.stock.exchange === 'NSE') return 1;
+        return 0;
+      });
+
+      var matches = scored.slice(0, 5).map(function (item) { return item.stock; });
+
+      if (matches.length > 0) {
+        results.innerHTML = matches.map(function (stock) {
           var type = stock.exchange || 'NSE';
           var displayTicker = stock.ticker;
           if (type === 'BSE' && displayTicker.indexOf('.BO') === -1) displayTicker += '.BO';
           else if (type === 'NSE' && displayTicker.indexOf('.NS') === -1 && type !== 'INDEX') displayTicker += '.NS';
 
           var logoHtml = '';
-          if (stock.logo && (stock.logo.startsWith('http') || stock.logo.startsWith('/'))) {
+          if (stock.logo && (stock.logo.startsWith('http') || stock.logo.startsWith('/')) && !stock.logo.includes('gstatic.com') && !stock.logo.includes('faviconV2')) {
             logoHtml = '<div class="result-logo" style="margin-right:12px;display:flex;align-items:center;">' +
               '<img src="' + escapeHTML(stock.logo) + '" class="search-logo-img" alt="' + escapeHTML(stock.ticker) + '" onerror="this.style.display=\'none\'">' +
               '</div>';
           }
 
-          var price = (typeof currentPrices !== 'undefined' && currentPrices[stock.ticker]) || stock.basePrice || 0;
+          var liveObj = (window._searchPriceCache && (window._searchPriceCache[stock.ticker] || window._searchPriceCache[stock.ticker.replace(/\.(NS|BO)$/i, '')])) ||
+                        (typeof currentPrices !== 'undefined' && (currentPrices[stock.ticker] || currentPrices[stock.ticker.replace(/\.(NS|BO)$/i, '')]) ? {
+                          current: currentPrices[stock.ticker] || currentPrices[stock.ticker.replace(/\.(NS|BO)$/i, '')],
+                          percent: (typeof currentChanges !== 'undefined' && (currentChanges[stock.ticker] || currentChanges[stock.ticker.replace(/\.(NS|BO)$/i, '')])) ? (currentChanges[stock.ticker] || currentChanges[stock.ticker.replace(/\.(NS|BO)$/i, '')]).percent : 0,
+                          change: (typeof currentChanges !== 'undefined' && (currentChanges[stock.ticker] || currentChanges[stock.ticker.replace(/\.(NS|BO)$/i, '')])) ? (currentChanges[stock.ticker] || currentChanges[stock.ticker.replace(/\.(NS|BO)$/i, '')]).value : 0
+                        } : null);
+
+          var price = (liveObj && liveObj.current != null) ? liveObj.current : (stock.basePrice || 0);
           var priceStr = Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          var changeData = (typeof currentChanges !== 'undefined' && currentChanges[stock.ticker]) || { value: 0, percent: 0 };
-          var isPositive = changeData.value >= 0;
+          
+          var chgPct = (liveObj && liveObj.percent != null) ? liveObj.percent : (stock.changePercent != null ? stock.changePercent : (stock.change_pct != null ? stock.change_pct : 0));
+          var isPositive = chgPct >= 0;
           var color = isPositive ? '#00C853' : '#FF5252';
           var sign = isPositive ? '+' : '';
           var arrow = isPositive ? '▲' : '▼';
+          var cleanTkr = stock.ticker.replace(/[^a-zA-Z0-9]/g, '');
 
-          return '<div class="result-item" onclick="launchStockChart(\'' + escapeHTML(stock.ticker) + '\', \'' + escapeHTML(type) + '\')">' +
+          return '<div class="result-item" onclick="openStockOverview(\'' + escapeHTML(stock.ticker) + '\')">' +
             logoHtml +
             '<div class="result-info">' +
               '<div class="result-name">' + escapeHTML(stock.name) + '</div>' +
@@ -262,9 +383,9 @@
             '</div>' +
             '<div class="result-meta" style="display: flex; align-items: center; margin-left: auto;">' +
               '<div class="result-price" style="text-align: right; margin-right: 12px;">' +
-                '<div style="color: white; font-weight: 600;">₹' + priceStr + '</div>' +
-                '<div style="font-size: 0.75rem; color: ' + color + '; margin-top: 2px; font-weight: 500;">' +
-                  arrow + ' ' + sign + Math.abs(changeData.percent).toFixed(2) + '%' +
+                '<div id="nav-search-price-' + cleanTkr + '" style="color: white; font-weight: 600;">₹' + priceStr + '</div>' +
+                '<div id="nav-search-change-' + cleanTkr + '" style="font-size: 0.75rem; color: ' + color + '; margin-top: 2px; font-weight: 500;">' +
+                  arrow + ' ' + sign + Math.abs(chgPct).toFixed(2) + '%' +
                 '</div>' +
               '</div>' +
               '<button class="search-launch-btn" onclick="event.stopPropagation(); launchStockChart(\'' + escapeHTML(stock.ticker) + '\', \'' + escapeHTML(type) + '\')">Launch Chart</button>' +
@@ -272,11 +393,19 @@
           '</div>';
         }).join('');
         results.classList.add('visible');
+
+        // Immediately fetch live price & change for displayed search matches
+        _fetchNavSearchLivePrices(matches);
       } else {
         results.innerHTML = '<div style="padding:1rem;text-align:center;color:var(--text-muted)">No stocks found</div>';
         results.classList.add('visible');
       }
     });
+
+    window.openStockOverview = function (ticker) {
+      var cleanTicker = (ticker || '').replace(/\.(NS|BO)$/i, '');
+      window.location.href = 'overview.html?ticker=' + encodeURIComponent(cleanTicker);
+    };
 
     window.launchStockChart = function (ticker, exchange) {
       var cleanTicker = (ticker || '').replace(/\.(NS|BO)$/i, '');
@@ -295,11 +424,17 @@
     });
   }
 
+  function _fmtNavPrice(n) {
+    var val = parseFloat(n);
+    if (isNaN(val)) return '0.00';
+    return val.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   /* ===================== AUTH ===================== */
   function initAuth() {
     var token, userStr;
-    try { token = sessionStorage.getItem('token'); } catch(e) {}
-    try { userStr = sessionStorage.getItem('user'); } catch(e) {}
+    try { token = sessionStorage.getItem('token') || localStorage.getItem('token'); } catch(e) {}
+    try { userStr = sessionStorage.getItem('user') || localStorage.getItem('user'); } catch(e) {}
     var authButtons = document.getElementById('authButtons');
     var userInfo = document.getElementById('userInfo');
 
@@ -312,7 +447,7 @@
           userInfo.style.display = 'flex';
           var balEl = document.getElementById('userBalance');
           var nameEl = document.getElementById('userName');
-          if (balEl) balEl.textContent = '\u20B9' + formatPrice(user.virtual_balance || 0);
+          if (balEl) balEl.textContent = '\u20B9' + _fmtNavPrice(user.virtual_balance || 0);
           if (nameEl) nameEl.textContent = user.full_name || (user.email ? user.email.split('@')[0] : 'User');
         }
       } catch (e) {
@@ -333,15 +468,29 @@
   // crowd the header — and move it back into the header on desktop. Relocates the one real
   // element rather than duplicating it, so there's still only a single #marketStatusIndicator.
   function initMobileMarketStatusSlot() {
+    if (!isDashboardPage()) return;
     var indicator = document.getElementById('marketStatusIndicator');
     var slot = document.getElementById('marketStatusSlot');
     var headerRow = document.querySelector('.header-bottom-row');
-    if (!indicator || !slot || !headerRow) return;
+    var headerContainer = document.querySelector('.header-container');
+    if (!indicator) return;
+
+    if (!slot && headerContainer) {
+      slot = document.createElement('div');
+      slot.className = 'mobile-market-status-slot';
+      slot.id = 'marketStatusSlot';
+      headerContainer.appendChild(slot);
+    }
+    if (!slot) return;
+
+    var isPermanent = slot.getAttribute('data-permanent') === 'true' || slot.classList.contains('permanent-slot');
 
     function place() {
-      if (window.innerWidth <= 768) {
+      if (isPermanent || window.innerWidth <= 768) {
+        slot.style.display = 'flex';
         if (indicator.parentNode !== slot) slot.appendChild(indicator);
-      } else if (indicator.parentNode !== headerRow) {
+      } else if (headerRow && indicator.parentNode !== headerRow) {
+        slot.style.display = 'none';
         headerRow.appendChild(indicator);
       }
     }
@@ -351,6 +500,7 @@
 
   /* ===================== MARKET STATUS ===================== */
   function initMarketStatus() {
+    if (!isDashboardPage()) return;
     var textEl = document.getElementById('marketStatusText');
     var dotEl = document.querySelector('.pulse-dot');
     if (!textEl || !dotEl) return;
@@ -398,7 +548,7 @@
   };
 
   window.handleLogout = function () {
-    var token = sessionStorage.getItem('token');
+    var token = sessionStorage.getItem('token') || localStorage.getItem('token');
     if (token) {
       fetch('/api/auth/logout', {
         method: 'POST',
@@ -407,6 +557,10 @@
     }
     sessionStorage.removeItem('token');
     sessionStorage.removeItem('user');
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    } catch(e) {}
     window.location.href = 'home.html';
   };
 

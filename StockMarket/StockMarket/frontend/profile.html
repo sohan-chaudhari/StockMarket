@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -7,8 +7,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Profile - LEVERAGE</title>
     <link rel="stylesheet" href="tokens.css?v=2">
-    <link rel="stylesheet" href="index.css?v=82">
-    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="index.css?v=84">
+    <link rel="stylesheet" href="nav.css?v=14">
     <link rel="stylesheet" href="loader.css?v=4">
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&display=swap"
@@ -395,6 +395,110 @@
             margin-bottom: 16px;
             font-size: 15px;
         }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            body {
+                padding-top: 75px;
+            }
+            .container {
+                padding: 0 12px;
+            }
+            .back-nav {
+                margin-bottom: 16px;
+            }
+            .dashboard-layout {
+                display: flex;
+                flex-direction: column;
+                gap: 16px;
+                min-height: auto;
+                margin-bottom: 30px;
+            }
+            .dashboard-sidebar {
+                display: flex;
+                flex-direction: row;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                padding: 8px;
+                gap: 6px;
+                border-radius: 12px;
+                scrollbar-width: none;
+            }
+            .dashboard-sidebar::-webkit-scrollbar {
+                display: none;
+            }
+            .sidebar-item {
+                padding: 10px 14px;
+                white-space: nowrap;
+                flex-shrink: 0;
+                font-size: 13px;
+                border-radius: 8px;
+            }
+            .sidebar-item::before {
+                left: 0;
+                right: 0;
+                top: auto;
+                bottom: 0;
+                width: 100%;
+                height: 3px;
+                border-radius: 4px 4px 0 0;
+                transform: scaleX(0);
+            }
+            .sidebar-item.active::before {
+                transform: scaleX(1);
+            }
+            .sidebar-item.danger {
+                margin-top: 0;
+                margin-left: auto;
+            }
+            .dashboard-content {
+                padding: 20px 16px;
+                border-radius: 14px;
+            }
+            .section-title {
+                font-size: 22px;
+                margin-bottom: 20px;
+            }
+            .profile-header {
+                flex-direction: column;
+                text-align: center;
+                gap: 14px;
+                align-items: center;
+                margin-bottom: 24px;
+                padding-bottom: 20px;
+            }
+            .avatar-circle {
+                width: 75px;
+                height: 75px;
+                font-size: 26px;
+            }
+            .profile-title {
+                font-size: 20px;
+            }
+            .info-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .info-item {
+                padding: 16px;
+            }
+            .settings-card {
+                margin-bottom: 20px;
+            }
+            .settings-row {
+                padding: 16px;
+            }
+            .danger-zone {
+                flex-direction: column;
+                align-items: stretch;
+                text-align: center;
+                gap: 14px;
+                padding: 16px;
+            }
+            .danger-zone button {
+                width: 100%;
+            }
+        }
     </style>
     <script src="page-cache.js"></script>
     <script src="ws.js"></script>
@@ -454,14 +558,6 @@
     </div>
 
     <div class="container">
-        <!-- Back Button Area -->
-        <div class="back-nav">
-            <a href="home.html" class="back-btn">
-                <svg viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                Back to Dashboard
-            </a>
-        </div>
-
         <main class="dashboard-layout">
             <!-- Sidebar Navigation -->
             <div class="dashboard-sidebar">
@@ -585,14 +681,14 @@
         </main>
     </div>
 
-    <script src="nav.js?v=8"></script>
+    <script src="nav.js?v=9"></script>
     <script src="stocks.js?v=25"></script>
     <script src="index.js?v=45"></script>
     <script>
         // --- AUTH CHECK ---
         (function checkAuth() {
-            const token = sessionStorage.getItem('token');
-            const userStr = sessionStorage.getItem('user');
+            const token = sessionStorage.getItem('token') || localStorage.getItem('token');
+            const userStr = sessionStorage.getItem('user') || localStorage.getItem('user');
             if (!token || !userStr) {
                 window.location.href = 'login.html';
                 return;
@@ -616,8 +712,8 @@
 
                 const userBalance = document.getElementById('userBalance');
                 const userName = document.getElementById('userName');
-                if (userBalance) userBalance.textContent = '&#8377;' + (user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                if (userName) userName.textContent = fullName || user.email.split('@')[0];
+                if (userBalance) userBalance.textContent = '₹' + (user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                if (userName) userName.textContent = fullName || (user.email ? user.email.split('@')[0] : 'User');
 
             } catch (e) {
                 console.error("Error loading user data", e);
@@ -657,6 +753,10 @@
             setTimeout(() => {
                 sessionStorage.removeItem('token');
                 sessionStorage.removeItem('user');
+                try {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                } catch(e) {}
                 window.location.href = 'index.html';
             }, 1500);
         }
@@ -688,7 +788,7 @@
         async function handleDeleteAccount() {
             const btn = document.getElementById('deleteConfirmBtn');
             const message = document.getElementById('deleteMessage');
-            const token = sessionStorage.getItem('token');
+            const token = sessionStorage.getItem('token') || localStorage.getItem('token');
 
             if (!token) return;
 
@@ -709,6 +809,10 @@
                     message.innerHTML = '<span style="color: #00C853">Account deleted successfully. Redirecting...</span>';
                     sessionStorage.removeItem('token');
                     sessionStorage.removeItem('user');
+                    try {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                    } catch(e) {}
                     setTimeout(() => {
                         window.location.href = 'index.html';
                     }, 1500);

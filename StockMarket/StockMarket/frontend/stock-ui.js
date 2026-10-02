@@ -111,14 +111,39 @@
     // Delegate to those authoritative implementations so the card UI is always identical.
 
     // Missing UI Dropdown Handlers
-    window.toggleRangeMenu = function toggleRangeMenu() {
+    window.toggleRangeMenu = function toggleRangeMenu(e) {
+      if (e && e.stopPropagation) e.stopPropagation();
       const menu = document.getElementById('rangeMenu');
-      if (menu) menu.classList.toggle('visible');
-    }
+      const btn = document.querySelector('.range-dropdown');
+      if (!menu) return;
+      const isVisible = (menu.style.display === 'block' || menu.classList.contains('visible'));
+      
+      // Close indicator menu if open
+      const indMenu = document.getElementById('indicatorMenu');
+      if (indMenu) indMenu.style.display = 'none';
+
+      if (isVisible) {
+        menu.classList.remove('visible');
+        menu.style.display = 'none';
+      } else {
+        if (btn) {
+          const rect = btn.getBoundingClientRect();
+          menu.style.position = 'fixed';
+          menu.style.top = (rect.bottom + 4) + 'px';
+          menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 140)) + 'px';
+          menu.style.zIndex = '99999';
+        }
+        menu.classList.add('visible');
+        menu.style.display = 'block';
+      }
+    };
 
     window.selectRange = function selectRange(range) {
       const menu = document.getElementById('rangeMenu');
-      if (menu) menu.classList.remove('visible');
+      if (menu) {
+        menu.classList.remove('visible');
+        menu.style.display = 'none';
+      }
       var crt = document.getElementById('currentRangeText'); if (crt) crt.innerText = range;
       document.querySelectorAll('.range-item').forEach(el => {
         el.classList.remove('active');
@@ -130,26 +155,54 @@
         history.replaceState(null, '', url);
       } catch(e) {}
       if (window.loadData) window.loadData(range);
-    }
+    };
 
-    window.toggleIndicatorMenu = function toggleIndicatorMenu() {
+    window.toggleIndicatorMenu = function toggleIndicatorMenu(e) {
+      if (e && e.stopPropagation) e.stopPropagation();
       const menu = document.getElementById('indicatorMenu');
-      if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    }
+      const btn = document.querySelector('.indicator-dropdown');
+      if (!menu) return;
+      const isVisible = (menu.style.display === 'block' || menu.style.display === 'flex' || menu.classList.contains('visible'));
+      
+      // Close range menu if open
+      const rangeMenu = document.getElementById('rangeMenu');
+      if (rangeMenu) {
+        rangeMenu.classList.remove('visible');
+        rangeMenu.style.display = 'none';
+      }
 
-    function toggleIndicator(ind, event) {
-      event.stopPropagation();
+      if (isVisible) {
+        menu.style.display = 'none';
+        menu.classList.remove('visible');
+      } else {
+        if (btn) {
+          const rect = btn.getBoundingClientRect();
+          menu.style.position = 'fixed';
+          menu.style.top = (rect.bottom + 4) + 'px';
+          menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 240)) + 'px';
+          menu.style.zIndex = '99999';
+        }
+        menu.style.display = 'block';
+        menu.classList.add('visible');
+      }
+    };
+
+    window.toggleIndicator = function toggleIndicator(ind, event) {
+      if (event && event.stopPropagation) event.stopPropagation();
+      if (window.IndicatorEngine && typeof window.IndicatorEngine.legacyToggle === 'function') {
+        window.IndicatorEngine.legacyToggle(ind, event);
+        return;
+      }
       const check = document.getElementById('check_' + ind);
       if (check) {
         const isActive = check.style.opacity === '1';
         check.style.opacity = isActive ? '0' : '1';
       }
-    }
+    };
 
-    // Mobile-only "more" menu: consolidates Trade/Positions/News/Indicators into one button
-    // so the chart header only shows 2 controls (range + this) on a narrow screen.
+    // Mobile-only "more" menu
     function toggleMobileMoreMenu(event) {
-      event.stopPropagation();
+      if (event && event.stopPropagation) event.stopPropagation();
       const menu = document.getElementById('mobileMoreMenu');
       if (menu) menu.classList.toggle('visible');
     }
@@ -161,16 +214,42 @@
 
     // Click outside to close dropdowns
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('.range-dropdown')) {
+      if (!e.target.closest('.range-dropdown') && !e.target.closest('#rangeMenu')) {
         const rangeMenu = document.getElementById('rangeMenu');
-        if (rangeMenu) rangeMenu.classList.remove('visible');
+        if (rangeMenu) {
+          rangeMenu.classList.remove('visible');
+          rangeMenu.style.display = 'none';
+        }
       }
-      if (!e.target.closest('.indicator-dropdown')) {
+      if (!e.target.closest('.indicator-dropdown') && !e.target.closest('#indicatorMenu')) {
         const indMenu = document.getElementById('indicatorMenu');
-        if (indMenu) indMenu.style.display = 'none';
+        if (indMenu) {
+          indMenu.style.display = 'none';
+          indMenu.classList.remove('visible');
+        }
       }
-      if (!e.target.closest('.mobile-more-dropdown')) {
+      if (!e.target.closest('.mobile-more-dropdown') && !e.target.closest('#mobileMoreMenu')) {
         const moreMenu = document.getElementById('mobileMoreMenu');
         if (moreMenu) moreMenu.classList.remove('visible');
       }
     });
+
+    // Close open menus when scrolling header horizontally on mobile
+    window.addEventListener('DOMContentLoaded', () => {
+      const scrollParents = document.querySelectorAll('.header-controls, .sticky-header-container');
+      scrollParents.forEach(el => {
+        el.addEventListener('scroll', () => {
+          const rm = document.getElementById('rangeMenu');
+          if (rm && (rm.style.display === 'block' || rm.classList.contains('visible'))) {
+            rm.style.display = 'none';
+            rm.classList.remove('visible');
+          }
+          const im = document.getElementById('indicatorMenu');
+          if (im && (im.style.display === 'block' || im.classList.contains('visible'))) {
+            im.style.display = 'none';
+            im.classList.remove('visible');
+          }
+        }, { passive: true });
+      });
+    });
+

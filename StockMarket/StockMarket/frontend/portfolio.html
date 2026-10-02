@@ -12,8 +12,8 @@
         rel="stylesheet">
     <!-- Use existing styles -->
     <link rel="stylesheet" href="tokens.css?v=2">
-    <link rel="stylesheet" href="index.css?v=82">
-    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="index.css?v=84">
+    <link rel="stylesheet" href="nav.css?v=14">
     <link rel="stylesheet" href="loader.css?v=4">
     <!-- PDF Generation Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -167,27 +167,35 @@
         }
 
         .edit-btn {
-            background: rgba(255, 255, 255, 0.05);
-            color: #888;
+            background: rgba(255, 255, 255, 0.04);
+            color: #a1a1aa;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
         }
 
         .edit-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
+            background: rgba(41, 98, 255, 0.15);
+            color: #58a6ff;
+            border-color: rgba(41, 98, 255, 0.4);
+            transform: translateY(-1px);
         }
 
         .close-btn {
-            background: #ef5350;
-            color: #fff;
+            background: rgba(242, 54, 69, 0.16);
+            color: #ff6b7a;
+            border: 1px solid rgba(242, 54, 69, 0.35);
             width: auto !important;
             padding: 0 12px;
-            font-weight: 700;
+            font-weight: 600;
             font-size: 12px;
+            border-radius: 6px;
         }
 
         .close-btn:hover {
-            background: #d32f2f;
-            transform: scale(1.05);
+            background: rgba(242, 54, 69, 0.28);
+            color: #ffffff;
+            border-color: rgba(242, 54, 69, 0.6);
+            transform: translateY(-1px);
         }
 
         /* Utility */
@@ -196,7 +204,7 @@
         }
 
         .danger {
-            color: #ef5350;
+            color: #ff6b7a;
         }
 
         .mono {
@@ -234,7 +242,7 @@
             -moz-appearance: textfield;
         }
 
-        /* Open/Closed Positions and Transactions tables all render into this one container &ndash;
+        /* Open/Closed Positions and Transactions tables all render into this one container –
            wrap it in horizontal scroll so wide tables don't blow out the page on narrow screens. */
         #tabContent { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .portfolio-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px; }
@@ -247,13 +255,36 @@
         .sector-row .sbar { flex: 1; height: 8px; background: #1a1a2e; border-radius: 4px; overflow: hidden; }
         .sector-row .sbar .fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
         .sector-row .spct { font-size: 13px; font-family: 'Roboto Mono', monospace; font-weight: 600; min-width: 50px; text-align: right; }
-        .daily-return { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 13px; font-weight: 700; font-family: 'Roboto Mono', monospace; }
+        .daily-return { display: inline-block; padding: 4px 12px; border-radius: 6px; font-size: 13px; font-weight: 600; font-family: 'Roboto Mono', monospace; }
+        
         @media (max-width: 768px) {
-            .portfolio-charts { grid-template-columns: 1fr; }
-            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+            .main-scroll { padding: 14px 10px !important; }
+            h1 { font-size: 1.35rem !important; margin: 0 0 14px 0 !important; }
+            .portfolio-charts { grid-template-columns: 1fr !important; gap: 12px !important; margin-bottom: 16px !important; }
+            .chart-card { padding: 14px 12px !important; border-radius: 8px !important; }
+            .chart-card h3 { font-size: 13px !important; margin-bottom: 10px !important; }
+            .summary-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; margin-bottom: 14px !important; }
+            .card { padding: 10px 12px !important; border-radius: 8px !important; gap: 4px !important; }
+            .card-label { font-size: 11px !important; }
+            .card-value { font-size: 1.25rem !important; font-weight: 700 !important; }
+            .tabs { gap: 6px !important; margin-bottom: 12px !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; padding-bottom: 2px !important; }
+            .tab-btn { padding: 6px 12px !important; font-size: 12px !important; border-radius: 6px !important; white-space: nowrap !important; }
+            table th { padding: 8px 10px !important; font-size: 11px !important; white-space: nowrap !important; }
+            table td { padding: 10px 10px !important; font-size: 12px !important; white-space: nowrap !important; }
+            .stock-logo { width: 20px !important; height: 20px !important; margin-right: 6px !important; }
+            .action-btn { height: 28px !important; width: 28px !important; font-size: 12px !important; }
+            .close-btn { height: 28px !important; padding: 0 10px !important; font-size: 11px !important; }
+            .modal-content { padding: 20px 16px !important; width: 92% !important; max-width: 360px !important; }
         }
         @media (max-width: 480px) {
-            .summary-grid { grid-template-columns: 1fr; }
+            .main-scroll { padding: 10px 8px !important; }
+            .summary-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 6px !important; margin-bottom: 12px !important; }
+            .card { padding: 8px 10px !important; border-radius: 6px !important; gap: 2px !important; }
+            .card-label { font-size: 10.5px !important; }
+            .card-value { font-size: 1.15rem !important; }
+            .tab-btn { padding: 5px 10px !important; font-size: 11.5px !important; }
+            table th { padding: 7px 8px !important; font-size: 10.5px !important; }
+            table td { padding: 8px 8px !important; font-size: 11.5px !important; }
         }
 
         /* GPAY-style Success Animation */
@@ -498,10 +529,10 @@
                 </div>
             </div>
 
-            <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;padding:1rem;background:var(--card-bg);border:1px solid var(--border-color);border-radius:6px;">
-                <span style="color:var(--text-secondary);font-size:13px;">Today's Return</span>
-                <span class="daily-return" id="dailyReturn" style="background:rgba(8, 153, 129,0.1);color:#089981;">+&#8377;0.00 (+0.00%)</span>
-                <span style="color:var(--text-secondary);font-size:13px;margin-left:auto;">as of <span id="dailyReturnTime">--</span></span>
+            <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:1.25rem;padding:0.75rem 1rem;background:var(--card-bg);border:1px solid var(--border-color);border-radius:8px;flex-wrap:wrap;">
+                <span style="color:var(--text-secondary);font-size:12.5px;font-weight:500;">Today's Return</span>
+                <span class="daily-return" id="dailyReturn" style="background:rgba(38, 166, 154, 0.12);border:1px solid rgba(38, 166, 154, 0.28);color:#26a69a;font-size:12px;padding:3px 10px;">+₹0.00 (+0.00%)</span>
+                <span style="color:var(--text-secondary);font-size:12px;margin-left:auto;">as of <span id="dailyReturnTime">--</span></span>
             </div>
 
             <!-- Portfolio Charts -->
@@ -539,9 +570,10 @@
 
     <script src="lightweight-charts.js"></script>
     <script src="stocks.js?v=25"></script>
-    <script src="nav.js?v=8"></script>
+    <script src="nav.js?v=9"></script>
     <script>
         const API_BASE = '';
+        function escapeHTML(str) { var div = document.createElement('div'); div.appendChild(document.createTextNode(str || '')); return div.innerHTML; }
 
         function handleLogout() {
             document.getElementById('logoutModal').classList.add('visible');
@@ -606,7 +638,7 @@
                 });
 
                 if (response.ok) {
-                    message.innerHTML = '<span style="color: #00C853">Account deleted successfully. Redirecting...</span>';
+                    message.innerHTML = '<span style="color: #26a69a">Account deleted successfully. Redirecting...</span>';
                     sessionStorage.removeItem('token');
                     sessionStorage.removeItem('user');
                     setTimeout(() => {
@@ -691,7 +723,7 @@
                     // cells[4] = current price, cells[5] = P&L
                     cells[4].textContent = '\u20B9' + currentPrice.toFixed(2);
                     cells[5].textContent = (pnl >= 0 ? '+' : '') + '\u20B9' + Math.abs(pnl).toFixed(2);
-                    cells[5].style.color = pnl >= 0 ? '#00C853' : '#FF5252';
+                    cells[5].style.color = pnl >= 0 ? '#26a69a' : '#ff6b7a';
                 });
             } catch(e) { /* silent */ }
         }
@@ -763,21 +795,21 @@
                     const winRate = (data.win_rate != null ? data.win_rate : 0);
 
                     const elTotalBalance = document.getElementById('totalBalance');
-                    if (elTotalBalance) elTotalBalance.textContent = `&#8377;${balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                    if (elTotalBalance) elTotalBalance.textContent = `₹${balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 
                     const elInvested = document.getElementById('investedAmount');
-                    if (elInvested) elInvested.textContent = `&#8377;${invested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                    if (elInvested) elInvested.textContent = `₹${invested.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 
                     // Sync Header Balance
                     var ubEl = document.getElementById('userBalance');
-                    if (ubEl) ubEl.textContent = `&#8377;${balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                    if (ubEl) ubEl.textContent = `₹${balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
                     const user = JSON.parse(sessionStorage.getItem('user') || '{}');
                     user.virtual_balance = balance;
                     sessionStorage.setItem('user', JSON.stringify(user));
 
                     const pnlEl = document.getElementById('realizedPnl');
                     if (pnlEl) {
-                        pnlEl.textContent = `${realizedPnl >= 0 ? '+' : ''}&#8377;${realizedPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                        pnlEl.textContent = `${realizedPnl >= 0 ? '+₹' : '-₹'}${Math.abs(realizedPnl).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
                         pnlEl.className = `card-value ${realizedPnl >= 0 ? 'success' : 'danger'}`;
                     }
 
@@ -789,9 +821,10 @@
                     if (dailyEl) {
                         var dailyPnl = data.daily_pnl != null ? data.daily_pnl : 0;
                         var dailyPct = data.daily_pnl_pct || ((balance > 0 ? (dailyPnl / balance) * 100 : 0));
-                        dailyEl.textContent = `${dailyPnl >= 0 ? '+' : ''}&#8377;${Math.abs(dailyPnl).toLocaleString('en-IN',{maximumFractionDigits:0})} (${dailyPct >= 0 ? '+' : ''}${dailyPct.toFixed(2)}%)`;
-                        dailyEl.style.color = dailyPnl >= 0 ? '#00E853' : '#FF5252';
-                        dailyEl.style.background = dailyPnl >= 0 ? 'rgba(8, 153, 129,0.1)' : 'rgba(255,82,82,0.1)';
+                        dailyEl.textContent = `${dailyPnl >= 0 ? '+₹' : '-₹'}${Math.abs(dailyPnl).toLocaleString('en-IN',{maximumFractionDigits:0})} (${dailyPct >= 0 ? '+' : ''}${dailyPct.toFixed(2)}%)`;
+                        dailyEl.style.color = dailyPnl >= 0 ? '#26a69a' : '#ff6b7a';
+                        dailyEl.style.background = dailyPnl >= 0 ? 'rgba(38, 166, 154, 0.12)' : 'rgba(242, 54, 69, 0.12)';
+                        dailyEl.style.border = dailyPnl >= 0 ? '1px solid rgba(38, 166, 154, 0.28)' : '1px solid rgba(242, 54, 69, 0.28)';
                     }
                     const elTime = document.getElementById('dailyReturnTime');
                     if (elTime) elTime.textContent = new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
@@ -861,20 +894,20 @@
 
                     return `<tr class="clickable-row" data-pos-id="${pos.id}" onclick="launchChart('${pos.ticker}', 'NSE')">
                         <td class="ticker-cell">
-                            ${pos.ticker && pos.ticker.trim() && pos.ticker.trim() !== '--' ? '<img src="logos/' + pos.ticker.trim().split('.')[0] + '.svg" class="stock-logo" onerror="this.style.display=\'none\'">' : ''}
+                            ${pos.ticker && pos.ticker.trim() && pos.ticker.trim() !== '--' ? '<img src="/logos/' + pos.ticker.trim().split('.')[0] + '.svg" class="stock-logo" onerror="this.style.display=\'none\'">' : ''}
                             ${pos.ticker || '--'}
                         </td>
                         <td><span class="badge" style="color: #fff; background: rgba(255,255,255,0.1);">${pos.position_type}</span></td>
                         <td class="mono">${pos.quantity}</td>
-                        <td class="mono">&#8377;${pos.entry_price.toFixed(2)}</td>
-                        <td class="mono">&#8377;${currentPrice.toFixed(2)}</td>
-                        <td class="${pnlClass} mono">${pnl >= 0 ? '+' : ''}&#8377;${Math.abs(pnl).toFixed(2)}</td>
+                        <td class="mono">₹${pos.entry_price.toFixed(2)}</td>
+                        <td class="mono">₹${currentPrice.toFixed(2)}</td>
+                        <td class="${pnlClass} mono">${pnl >= 0 ? '+₹' : '-₹'}${Math.abs(pnl).toFixed(2)}</td>
                         <td style="white-space: nowrap;">
                             ${(!pos.take_profit && !pos.stop_loss) ?
                             `<span style="color: #666; font-weight: 700;">-/-</span>` :
-                            `<span style="font-size:12px; color:#00C853; font-weight:700;">TP: &#8377;${pos.take_profit ? pos.take_profit.toFixed(2) : '-'}</span>
+                            `<span style="font-size:11.5px; color:#26a69a; font-weight:600;">TP: ₹${pos.take_profit ? pos.take_profit.toFixed(2) : '-'}</span>
                                <span style="margin: 0 4px; color: #444;">|</span>
-                               <span style="font-size:12px; color:#FF5252; font-weight:700;">SL: &#8377;${pos.stop_loss ? pos.stop_loss.toFixed(2) : '-'}</span>`
+                               <span style="font-size:11.5px; color:#ff6b7a; font-weight:600;">SL: ₹${pos.stop_loss ? pos.stop_loss.toFixed(2) : '-'}</span>`
                         }
                         </td>
                         <td onclick="event.stopPropagation()">
@@ -936,24 +969,24 @@
 
                     let reasonBadge = '';
                     if (pos.exit_reason === 'TP_HIT') {
-                        reasonBadge = `<span style="background:rgba(8, 153, 129,0.15); border:1px solid rgba(8, 153, 129,0.35); color:#089981; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">&#127919; TP Hit</span>`;
+                        reasonBadge = `<span style="background:rgba(38, 166, 154, 0.14); border:1px solid rgba(38, 166, 154, 0.32); color:#26a69a; font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;">&#127919; TP Hit</span>`;
                     } else if (pos.exit_reason === 'SL_HIT') {
-                        reasonBadge = `<span style="background:rgba(255,82,82,0.15); border:1px solid rgba(255,82,82,0.35); color:#FF5252; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">&#128721; SL Hit</span>`;
+                        reasonBadge = `<span style="background:rgba(242, 54, 69, 0.14); border:1px solid rgba(242, 54, 69, 0.32); color:#ff6b7a; font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;">&#128721; SL Hit</span>`;
                     } else {
-                        reasonBadge = `<span style="background:rgba(74,144,226,0.15); border:1px solid rgba(74,144,226,0.35); color:#4A90E2; font-size:11px; font-weight:700; padding:3px 8px; border-radius:6px;">&#9995; Manual Close</span>`;
+                        reasonBadge = `<span style="background:rgba(41, 98, 255, 0.12); border:1px solid rgba(41, 98, 255, 0.28); color:#58a6ff; font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;">&#9995; Manual Close</span>`;
                     }
 
                     return `<tr class="closed-row" onclick='downloadTradeReceipt(${JSON.stringify(pos)})' title="Click to download trade receipt">
                         <td class="ticker-cell">
-                            ${pos.ticker && pos.ticker.trim() && pos.ticker.trim() !== '--' ? '<img src="logos/' + pos.ticker.trim().split('.')[0] + '.svg" class="stock-logo" onerror="this.style.display=\'none\'">' : ''}
+                            ${pos.ticker && pos.ticker.trim() && pos.ticker.trim() !== '--' ? '<img src="/logos/' + pos.ticker.trim().split('.')[0] + '.svg" class="stock-logo" onerror="this.style.display=\'none\'">' : ''}
                             ${pos.ticker || '--'}
                         </td>
                         <td><span class="badge" style="color: #fff; background: rgba(255,255,255,0.1);">${pos.position_type}</span></td>
                         <td class="mono" style="color: #fff;">${pos.quantity}</td>
-                        <td class="mono">&#8377;${pos.entry_price.toFixed(2)}</td>
-                        <td class="mono">${pos.closing_price != null ? '&#8377;' + pos.closing_price.toFixed(2) : '&ndash;'}</td>
+                        <td class="mono">₹${pos.entry_price.toFixed(2)}</td>
+                        <td class="mono">${pos.closing_price != null ? '₹' + pos.closing_price.toFixed(2) : '&ndash;'}</td>
                         <td>${reasonBadge}</td>
-                        <td class="${pnlClass} mono">${(pos.realized_pnl || 0) >= 0 ? '+' : ''}&#8377;${Math.abs(pos.realized_pnl || 0).toFixed(2)}</td>
+                        <td class="${pnlClass} mono">${(pos.realized_pnl || 0) >= 0 ? '+₹' : '-₹'}${Math.abs(pos.realized_pnl || 0).toFixed(2)}</td>
                         <td class="muted">${date} <span style="font-size: 10px; opacity: 0.5; margin-left: 5px;">&#128293;</span></td>
                     </tr>`;
                 }).join('');
@@ -1015,12 +1048,12 @@
                         <td><span class="badge ${statusBadge}">${statusName}</span></td>
                         <td>${txn.position_type ? `<span class="badge" style="color: #fff; background: rgba(255,255,255,0.1);">${txn.position_type}</span>` : '-'}</td>
                         <td class="ticker-cell">
-                            ${txn.ticker && txn.ticker.trim() && txn.ticker.trim() !== '--' ? `<img src="logos/${txn.ticker.trim().split('.')[0]}.svg" class="stock-logo" onerror="this.style.display='none'">${txn.ticker}` : '-'}
+                            ${txn.ticker && txn.ticker.trim() && txn.ticker.trim() !== '--' ? `<img src="/logos/${txn.ticker.trim().split('.')[0]}.svg" class="stock-logo" onerror="this.style.display='none'">${txn.ticker}` : '-'}
                         </td>
                         <td class="mono" style="color: #fff;">${txn.quantity || '-'}</td>
-                        <td class="${amountClass} mono">${txn.amount >= 0 ? '+' : ''}&#8377;${Math.abs(txn.amount).toFixed(2)}</td>
-                        <td class="${pnlClass} mono">${txn.pnl ? (txn.pnl >= 0 ? '+' : '') + '&#8377;' + Math.abs(txn.pnl).toFixed(2) : '-'}</td>
-                        <td style="color:#fff;" class="mono">&#8377;${txn.balance_after.toFixed(2)}</td>
+                        <td class="${amountClass} mono">${txn.amount >= 0 ? '+₹' : '-₹'}${Math.abs(txn.amount).toFixed(2)}</td>
+                        <td class="${pnlClass} mono">${txn.pnl ? ((txn.pnl >= 0 ? '+₹' : '-₹') + Math.abs(txn.pnl).toFixed(2)) : '-'}</td>
+                        <td style="color:#fff;" class="mono">₹${txn.balance_after.toFixed(2)}</td>
                     </tr>`;
                 }).join('');
                 html += `</tbody></table>`;
@@ -1058,9 +1091,21 @@
                 var series = chart.addAreaSeries({
                     lineColor: '#4A90E2', topColor: 'rgba(74,144,226,0.3)', bottomColor: 'rgba(74,144,226,0.02)', lineWidth: 2
                 });
-                series.setData(data.filter(function(d){ return d.balance > 0; }).map(function(d){
-                    return { time: d.timestamp, value: d.balance };
-                }));
+                var validPts = (data || []).filter(function(d){
+                    return d && d.timestamp != null && !isNaN(d.timestamp) && d.balance != null && !isNaN(d.balance) && d.balance > 0;
+                }).map(function(d){
+                    return { time: d.timestamp, value: Number(d.balance) };
+                });
+                validPts.sort(function(a, b){ return a.time - b.time; });
+                var uniquePts = [];
+                var seenT = {};
+                for (var pi = 0; pi < validPts.length; pi++) {
+                    if (!seenT[validPts[pi].time]) {
+                        seenT[validPts[pi].time] = true;
+                        uniquePts.push(validPts[pi]);
+                    }
+                }
+                series.setData(uniquePts);
                 chart.timeScale().fitContent();
 
                 var ro = new ResizeObserver(function(){
@@ -1142,12 +1187,12 @@
             const msg = document.getElementById('editLimitsMessage');
 
             if (tp === null && sl === null) {
-                msg.innerHTML = '<span style="color: #ef5350">Enter a value</span>';
+                msg.innerHTML = '<span style="color: #ff6b7a">Enter a value</span>';
                 return;
             }
 
             if (tp === window.originalTP && sl === window.originalSL) {
-                msg.innerHTML = '<span style="color: #ef5350">This TP and SL are already there</span>';
+                msg.innerHTML = '<span style="color: #ff6b7a">This TP and SL are already there</span>';
                 return;
             }
 
@@ -1171,11 +1216,11 @@
                     showOrderSuccessModal('Update', `TP: ${tp || '-'} | SL: ${sl || '-'}`, 'Order Updated Successfully!');
                     loadOpenPositions();
                 } else {
-                    msg.innerHTML = `<span style="color: #ef5350">${data.detail}</span>`;
+                    msg.innerHTML = `<span style="color: #ff6b7a">${data.detail}</span>`;
                 }
                 if (btn) btn.disabled = false;
             } catch (e) {
-                msg.innerHTML = '<span style="color: #ef5350">Connection error</span>';
+                msg.innerHTML = '<span style="color: #ff6b7a">Connection error</span>';
                 if (btn) btn.disabled = false;
             }
         }
@@ -1204,17 +1249,17 @@
                     closingPrice = pos.current_price || pos.entry_price;
                     document.getElementById('closeDetailTicker').textContent = pos.ticker;
                     document.getElementById('closeDetailQty').textContent = pos.quantity;
-                    document.getElementById('closeDetailEntry').textContent = `&#8377;${pos.entry_price.toFixed(2)}`;
-                    document.getElementById('closeDetailExit').textContent = `&#8377;${closingPrice.toFixed(2)}`;
+                    document.getElementById('closeDetailEntry').textContent = `₹${pos.entry_price.toFixed(2)}`;
+                    document.getElementById('closeDetailExit').textContent = `₹${closingPrice.toFixed(2)}`;
 
                     const pnl = pos.unrealized_pnl || 0;
                     const pnlEl = document.getElementById('closeDetailPnL');
-                    pnlEl.textContent = `${pnl >= 0 ? '+' : ''}&#8377;${pnl.toFixed(2)}`;
-                    pnlEl.style.color = pnl >= 0 ? '#26a69a' : '#ef5350';
+                    pnlEl.textContent = `${pnl >= 0 ? '+₹' : '-₹'}${Math.abs(pnl).toFixed(2)}`;
+                    pnlEl.style.color = pnl >= 0 ? '#26a69a' : '#ff6b7a';
                     msgEl.innerHTML = '';
                 }
             } catch (e) {
-                msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">Error fetching position details</div>';
+                msgEl.innerHTML = '<div style="color: #ff6b7a; font-size: 13px;">Error fetching position details</div>';
             }
         }
 
@@ -1223,16 +1268,31 @@
         }
 
         async function confirmClosePosition() {
+            if (window._isClosingPosition) return;
+
             const token = sessionStorage.getItem('token');
             const positionId = parseInt(document.getElementById('closePositionId').value, 10);
             const msgEl = document.getElementById('closePositionMessage');
-            const exitPriceTxt = document.getElementById('closeDetailExit').textContent.replace('&#8377;', '');
+            const btn = document.getElementById('portfolioBtnConfirmClose');
+            const exitPriceTxt = document.getElementById('closeDetailExit').textContent.replace('₹', '').replace('&#8377;', '').trim();
             const closingPrice = parseFloat(exitPriceTxt);
 
             if (!closingPrice) {
-                msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">Missing closing price.</div>';
+                if (msgEl) msgEl.innerHTML = '<div style="color: #ff6b7a; font-size: 13px;">Missing closing price.</div>';
                 return;
             }
+
+            window._isClosingPosition = true;
+            if (btn) {
+                btn.disabled = true;
+                btn.style.opacity = '0.7';
+                btn.style.cursor = 'not-allowed';
+                btn.innerHTML = '<span style="display:inline-flex;align-items:center;justify-content:center;gap:8px;">'
+                    + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" style="animation:spin 0.8s linear infinite;">'
+                    + '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>'
+                    + '</svg>Closing...</span>';
+            }
+            if (msgEl) msgEl.innerHTML = '';
 
             try {
                 const csrfRes = await fetch(`${API_BASE}/api/csrf-token`);
@@ -1251,30 +1311,46 @@
                 const data = await res.json();
                 if (res.ok) {
                     // Update balance in header & session
-                    const user = JSON.parse(sessionStorage.getItem('user') || '{}');
-                    user.virtual_balance = data.balance;
-                    sessionStorage.setItem('user', JSON.stringify(user));
+                    if (data && data.balance != null) {
+                        const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+                        user.virtual_balance = data.balance;
+                        sessionStorage.setItem('user', JSON.stringify(user));
 
-                    const headerBalance = document.getElementById('userBalance');
-                    if (headerBalance) headerBalance.textContent = `&#8377;${data.balance.toLocaleString('en-IN')}`;
+                        const headerBalance = document.getElementById('userBalance');
+                        if (headerBalance) headerBalance.textContent = `₹${Number(data.balance).toLocaleString('en-IN')}`;
 
-                    // Specific for portfolio page summary card
-                    const summaryBalance = document.getElementById('totalBalance');
-                    if (summaryBalance) summaryBalance.textContent = `&#8377;${data.balance.toLocaleString('en-IN')}`;
+                        // Specific for portfolio page summary card
+                        const summaryBalance = document.getElementById('totalBalance');
+                        if (summaryBalance) summaryBalance.textContent = `₹${Number(data.balance).toLocaleString('en-IN')}`;
+                    }
 
                     hideClosePositionModal();
 
-                    const pnl = data.realized_pnl || 0;
-                    document.getElementById('closedPnlAmount').textContent = `${pnl >= 0 ? '+' : ''}&#8377;${pnl.toFixed(2)}`;
-                    document.getElementById('closedPnlAmount').style.color = pnl >= 0 ? '#26a69a' : '#ef5350';
-                    document.getElementById('positionClosedSuccessModal').classList.add('visible');
+                    const pnl = (data && data.realized_pnl != null) ? data.realized_pnl : 0;
+                    const pnlEl = document.getElementById('closedPnlAmount');
+                    if (pnlEl) {
+                        pnlEl.textContent = `${pnl >= 0 ? '+₹' : '-₹'}${Math.abs(pnl).toFixed(2)}`;
+                        pnlEl.style.color = pnl >= 0 ? '#26a69a' : '#ff6b7a';
+                    }
+                    const succModal = document.getElementById('positionClosedSuccessModal');
+                    if (succModal) succModal.classList.add('visible');
 
                     loadOpenPositions();
                     loadSummary();
                 } else {
-                    msgEl.innerHTML = `<div style="color: #ef5350; font-size: 13px;">${data.detail || 'Failed to close'}</div>`;
+                    if (msgEl) msgEl.innerHTML = `<div style="color: #ff6b7a; font-size: 13px;">${escapeHTML(data.detail || 'Failed to close')}</div>`;
                 }
-            } catch (e) { msgEl.innerHTML = '<div style="color: #ef5350; font-size: 13px;">Network error</div>'; }
+            } catch (e) {
+                if (msgEl) msgEl.innerHTML = '<div style="color: #ff6b7a; font-size: 13px;">Network error</div>';
+            } finally {
+                window._isClosingPosition = false;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    btn.style.cursor = 'pointer';
+                    btn.innerHTML = 'Yes, Close';
+                }
+            }
         }
 
         function hidePositionClosedSuccessModal() {
@@ -1472,10 +1548,10 @@
             </div>
 
             <div style="margin-bottom: 20px;">
-                <label style="color: #ef5350; font-size: 13px; display: block; margin-bottom: 6px;">Stop Loss</label>
+                <label style="color: #ff6b7a; font-size: 13px; display: block; margin-bottom: 6px;">Stop Loss</label>
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <input type="number" id="editStopLoss" step="0.01"
-                        style="flex: 1; padding: 12px; background: #1a1a2e; border: 1px solid #ef535050; border-radius: 8px; color: #ef5350; font-size: 14px;">
+                        style="flex: 1; padding: 12px; background: #1a1a2e; border: 1px solid rgba(242, 54, 69, 0.35); border-radius: 8px; color: #ff6b7a; font-size: 14px;">
                     <span id="editSLCount" style="color: #666; font-size: 12px;">0/3</span>
                 </div>
             </div>
@@ -1531,11 +1607,11 @@
 
             <div style="display: flex; gap: 10px;">
                 <button onclick="hideClosePositionModal()"
-                    style="flex: 1; padding: 12px; background: #333; border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer;">
+                    style="flex: 1; padding: 12px; background: #2A2B36; border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer;">
                     Cancel
                 </button>
-                <button onclick="confirmClosePosition()"
-                    style="flex: 1; padding: 12px; background: #ef5350; border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer;">
+                <button id="portfolioBtnConfirmClose" onclick="confirmClosePosition()"
+                    style="flex: 1; padding: 12px; background: #e53935; border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer;">
                     Yes, Close
                 </button>
             </div>
@@ -1557,7 +1633,7 @@
             <div style="background: #1a1a2e; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
                 <div style="text-align: center;">
                     <div style="color: #888; font-size: 13px; margin-bottom: 8px;">Realized P&L</div>
-                    <div id="closedPnlAmount" style="font-size: 32px; font-weight: 700; color: #26a69a;">+&#8377;0.00</div>
+                    <div id="closedPnlAmount" style="font-size: 32px; font-weight: 700; color: #26a69a;">+₹0.00</div>
                 </div>
             </div>
 

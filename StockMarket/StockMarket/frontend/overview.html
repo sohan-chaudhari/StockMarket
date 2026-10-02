@@ -10,9 +10,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="tokens.css?v=2">
-  <link rel="stylesheet" href="index.css?v=82">
-  <link rel="stylesheet" href="nav.css?v=12">
-  <link rel="stylesheet" href="responsive.css?v=4">
+  <link rel="stylesheet" href="index.css?v=84">
+  <link rel="stylesheet" href="nav.css?v=14">
+  <link rel="stylesheet" href="responsive.css?v=6">
   <style>
       .overview-container {
           max-width: 1200px;
@@ -316,10 +316,151 @@
           .overview-grid { grid-template-columns: 1fr; }
           .stats-grid-inner { grid-template-columns: repeat(2, 1fr); }
       }
-      @media (max-width: 600px) {
-          .overview-header { flex-direction: column; align-items: flex-start; gap: 1rem; }
-          .overview-actions { width: 100%; justify-content: flex-start; }
-          .stats-grid-inner { grid-template-columns: 1fr; }
+      @media (max-width: 768px) {
+          .overview-container {
+              padding: 0.75rem 1rem !important;
+          }
+          .overview-header {
+              flex-direction: column !important;
+              align-items: flex-start !important;
+              gap: 0.75rem !important;
+              margin-bottom: 1.25rem !important;
+              padding-bottom: 1rem !important;
+          }
+          .overview-symbol {
+              font-size: 1.5rem !important;
+          }
+          .overview-name {
+              font-size: 0.85rem !important;
+          }
+          .overview-price-block {
+              gap: 2px !important;
+              width: 100% !important;
+          }
+          .overview-price-row {
+              justify-content: flex-start !important;
+              gap: 8px !important;
+          }
+          .overview-price {
+              font-size: 1.45rem !important;
+          }
+          .overview-change {
+              font-size: 0.88rem !important;
+          }
+          .overview-actions {
+              width: 100% !important;
+              justify-content: flex-start !important;
+              gap: 8px !important;
+              margin-bottom: 1.25rem !important;
+          }
+          .btn-primary, .btn-outline, .btn-buy, .btn-sell {
+              padding: 6px 12px !important;
+              font-size: 0.78rem !important;
+              height: 32px !important;
+              border-radius: 6px !important;
+              gap: 6px !important;
+          }
+          .btn-primary svg, .btn-outline svg {
+              width: 14px !important;
+              height: 14px !important;
+          }
+          .btn-primary {
+              background: #1e40af !important;
+              border: 1px solid rgba(59, 130, 246, 0.4) !important;
+              color: #ffffff !important;
+          }
+          .btn-outline {
+              background: rgba(255, 255, 255, 0.04) !important;
+              border: 1px solid rgba(255, 255, 255, 0.15) !important;
+              color: #d1d4dc !important;
+          }
+          .btn-buy {
+              background: rgba(8, 153, 129, 0.16) !important;
+              color: #26a69a !important;
+              border: 1px solid rgba(8, 153, 129, 0.45) !important;
+              font-weight: 600 !important;
+          }
+          .btn-sell {
+              background: rgba(242, 54, 69, 0.16) !important;
+              color: #ff6b7a !important;
+              border: 1px solid rgba(242, 54, 69, 0.45) !important;
+              font-weight: 600 !important;
+          }
+          .overview-grid {
+              gap: 12px !important;
+              margin-bottom: 1.25rem !important;
+          }
+          .overview-card {
+              padding: 12px 14px !important;
+              border-radius: 10px !important;
+          }
+          .overview-card h3 {
+              font-size: 0.95rem !important;
+              margin-bottom: 10px !important;
+          }
+          .overview-card h3 svg {
+              width: 16px !important;
+              height: 16px !important;
+          }
+          .stats-grid-inner {
+              grid-template-columns: repeat(2, 1fr) !important;
+              gap: 8px !important;
+              margin-bottom: 12px !important;
+          }
+          .stat-item-inner {
+              padding: 6px 10px !important;
+              border-radius: 6px !important;
+          }
+          .stat-item-inner .lbl {
+              font-size: 0.68rem !important;
+              margin-bottom: 2px !important;
+          }
+          .stat-item-inner .val {
+              font-size: 0.92rem !important;
+          }
+          .stat-range-container {
+              padding-top: 8px !important;
+          }
+          .stat-range-label {
+              font-size: 0.72rem !important;
+              margin-bottom: 4px !important;
+          }
+          .stat-range-bar span {
+              font-size: 0.75rem !important;
+          }
+          .news-item {
+              padding: 8px 10px !important;
+              border-radius: 6px !important;
+          }
+          .news-item-title {
+              font-size: 0.8rem !important;
+              margin-bottom: 3px !important;
+          }
+          .news-item-meta {
+              font-size: 0.68rem !important;
+          }
+          .sentiment-badge {
+              font-size: 0.6rem !important;
+              padding: 1px 5px !important;
+          }
+          #downloadPdfBtn {
+              font-size: 11px !important;
+              padding: 3px 8px !important;
+              height: 24px !important;
+          }
+      }
+      @media (max-width: 480px) {
+          .overview-actions {
+              display: grid !important;
+              grid-template-columns: 1fr 1fr !important;
+              gap: 6px !important;
+          }
+          .btn-primary, .btn-outline, .btn-buy, .btn-sell {
+              justify-content: center !important;
+              width: 100% !important;
+              padding: 6px 8px !important;
+              font-size: 0.75rem !important;
+          }
       }
   </style>
 </head>
@@ -330,6 +471,7 @@
     <div class="overview-header">
       <div class="overview-branding">
         <div class="overview-title-row">
+          <div id="overviewTickerLogo" style="display:inline-flex;align-items:center;"></div>
           <h1 class="overview-symbol" id="tickerSymbol">--</h1>
           <span class="stock-badge" id="tickerBadge">NSE</span>
           <span class="sector-tag" id="sectorTag" style="font-size:12px;padding:4px 10px;border-radius:12px;background:rgba(255,255,255,0.08);color:#b2b5be;border:1px solid rgba(255,255,255,0.1);">Loading...</span>
@@ -359,8 +501,8 @@
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
         Add to Watchlist
       </button>
-      <button class="btn-buy" onclick="window.location.href='portfolio.html'">Buy</button>
-      <button class="btn-sell" onclick="window.location.href='portfolio.html'">Sell</button>
+      <button class="btn-buy" id="btnBuyAction">Buy</button>
+      <button class="btn-sell" id="btnSellAction">Sell</button>
     </div>
     
     <div class="overview-grid">
@@ -442,9 +584,33 @@
       ticker = ticker.trim().toUpperCase().replace('.NS', '').replace('.BO', '');
       
       document.getElementById('tickerSymbol').textContent = ticker;
+      var logoSlot = document.getElementById('overviewTickerLogo');
+      if (logoSlot) {
+          var clean = ticker.toUpperCase();
+          var initials = clean.slice(0, 2);
+          var colors = ['#1e88e5','#43a047','#e53935','#8e24aa','#fb8c00','#00acc1','#3949ab','#d81b60','#00897b','#5e35b1'];
+          var hash = 0;
+          for (var i = 0; i < clean.length; i++) hash = (hash * 31 + clean.charCodeAt(i)) & 0xffffffff;
+          var bg = colors[Math.abs(hash) % colors.length];
+          logoSlot.innerHTML = '<div style="width:38px;height:38px;border-radius:50%;background:#ffffff;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,0.12);padding:2px;box-sizing:border-box;margin-right:6px;">' +
+              '<img src="logos/' + encodeURIComponent(clean) + '.svg" alt="' + clean + '" style="width:100%;height:100%;object-fit:contain;border-radius:50%;display:block;" onerror="this.onerror=null;this.parentElement.style.background=\'' + bg + '\';this.parentElement.style.color=\'#ffffff\';this.parentElement.innerHTML=\'<span style=\\\'font-size:14px;font-weight:700;\\\'>' + initials + '</span>\';">' +
+              '</div>';
+      }
       document.getElementById('btnChartLink').onclick = function() {
-          window.location.href = 'stock.html?ticker=' + ticker;
+          window.location.href = 'stock.html?ticker=' + encodeURIComponent(ticker);
       };
+      var btnBuy = document.getElementById('btnBuyAction');
+      if (btnBuy) {
+          btnBuy.onclick = function() {
+              window.location.href = 'stock.html?ticker=' + encodeURIComponent(ticker) + '&action=buy';
+          };
+      }
+      var btnSell = document.getElementById('btnSellAction');
+      if (btnSell) {
+          btnSell.onclick = function() {
+              window.location.href = 'stock.html?ticker=' + encodeURIComponent(ticker) + '&action=sell';
+          };
+      }
       
       var knownSectors = {
           'RELIANCE': 'Energy', 'TCS': 'IT', 'HDFCBANK': 'Banking', 'INFY': 'IT', 'ICICIBANK': 'Banking',
@@ -473,6 +639,38 @@
       
       var companyName = companyNames[ticker] || ticker;
       document.getElementById('tickerCompanyName').textContent = companyName;
+
+      // ---- Exchange badge + sector + company name — enriched from ALL_STOCKS ---
+      var INDICES = ['NIFTY','BANKNIFTY','SENSEX','FINNIFTY'];
+      function _applyExchangeBadge() {
+          var badge = document.getElementById('tickerBadge');
+          var sectorEl = document.getElementById('sectorTag');
+          if (INDICES.indexOf(ticker) !== -1) {
+              if (badge) badge.textContent = 'INDEX';
+              return;
+          }
+          var src = Array.isArray(window.ALL_STOCKS) ? window.ALL_STOCKS : [];
+          for (var i = 0; i < src.length; i++) {
+              var s = src[i];
+              var clean = (s.ticker || '').replace(/\.(NS|BO)$/i, '');
+              if (clean === ticker || s.ticker === ticker) {
+                  // Exchange badge
+                  if (badge) badge.textContent = s.exchange || 'NSE';
+                  // Company name (if still showing ticker fallback)
+                  var nameEl = document.getElementById('tickerCompanyName');
+                  if (s.name && nameEl && nameEl.textContent === ticker) {
+                      nameEl.textContent = s.name;
+                  }
+                  // Sector tag — prefer ALL_STOCKS sector over hardcoded map
+                  if (sectorEl && s.sector) {
+                      sectorEl.textContent = s.sector;
+                  }
+                  return;
+              }
+          }
+      }
+      _applyExchangeBadge(); // run immediately (stocks may already be loaded)
+      window.addEventListener('stocksLoaded', _applyExchangeBadge); // re-run once stocks.js finishes
 
       // ---- Watchlist State Management ----
       function _token() { return sessionStorage.getItem('token'); }
@@ -714,12 +912,47 @@
           return score < 0 ? 'negative' : 'positive';
       }
 
+      function _cleanOverviewNewsTitle(t, excerpt, tk) {
+          var raw = (t || '').trim();
+          var clean = raw.replace(/\s*[-–|]\s*scanx\.trade\s*$/i, '').trim();
+          if (clean.indexOf(' - ') !== -1 || clean.indexOf(' | ') !== -1 || clean.indexOf(' – ') !== -1) {
+              var cand = clean.replace(/\s*[-–|]\s*[^–\-|]+$/, '').trim();
+              var candWords = cand.split(/\s+/).filter(Boolean);
+              if (cand && candWords.length >= 3 && cand.length >= 15) {
+                  clean = cand;
+              }
+          }
+          var words = clean.split(/\s+/).filter(Boolean);
+          if (words.length <= 1 || clean.length < 10) {
+              if (excerpt) {
+                  var cleanEx = excerpt.replace(/<[^>]*>/g, '').replace(/&[a-z0-9#]+;/gi, ' ').trim();
+                  var exWords = cleanEx.split(/\s+/).filter(Boolean);
+                  if (exWords.length >= 4) {
+                      var firstSent = cleanEx.split(/[.!?]/)[0].trim();
+                      if (firstSent.length >= 15) {
+                          return firstSent.length > 95 ? firstSent.slice(0, 95) + '...' : firstSent;
+                      }
+                      return exWords.slice(0, 12).join(' ') + '...';
+                  }
+              }
+              if (tk && words.length === 1) {
+                  return tk + ': Latest Market News & Updates';
+              }
+          }
+          return clean || raw || 'Market News & Updates';
+      }
+
       var showingAllNews = false;
       function renderNews(articles) {
           var container = document.getElementById('newsListContainer');
           if (!container) return;
           
-          if (!articles || articles.length === 0) {
+          var validArticles = (articles || []).filter(function(a) {
+              var t = _cleanOverviewNewsTitle(a.title, a.excerpt || a.summary, ticker);
+              return t && t.split(/\s+/).filter(Boolean).length >= 2;
+          });
+          
+          if (!validArticles || validArticles.length === 0) {
               container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;font-size:0.85rem;">No recent news articles found for this ticker</div>';
               updateSentimentUI(50, 0);
               return;
@@ -729,7 +962,7 @@
           var negativeCount = 0;
           var neutralCount = 0;
           
-          var itemsToShow = showingAllNews ? articles : articles.slice(0, 3);
+          var itemsToShow = showingAllNews ? validArticles : validArticles.slice(0, 3);
           
           var html = itemsToShow.map(function(a) {
               var sent = getSentimentLabel(a);
@@ -753,9 +986,10 @@
               }
               var src = a.source || 'LEVERAGE AI';
               var link = a.url && a.url !== '#' ? a.url : '#';
+              var displayTitle = _cleanOverviewNewsTitle(a.title, a.excerpt || a.summary, ticker);
 
               return '<a href="' + link + '" target="_blank" class="news-item">' +
-                  '<div class="news-item-title">' + a.title + '</div>' +
+                  '<div class="news-item-title">' + displayTitle + '</div>' +
                   '<div class="news-item-meta">' +
                   '<span>' + src + ' &bull; ' + dateStr + '</span>' +
                   '<span class="sentiment-badge ' + badgeClass + '" style="letter-spacing:0.01em;">' + badgeContent + '</span>' +
@@ -822,18 +1056,40 @@
           }
       }
 
+      function _parseOverviewDate(dateStr) {
+          if (!dateStr) return 0;
+          var t = Date.parse(dateStr);
+          if (!isNaN(t)) return t;
+          try {
+              var d = new Date(dateStr);
+              return isNaN(d.getTime()) ? 0 : d.getTime();
+          } catch(e) { return 0; }
+      }
+
       async function fetchTickerNews() {
           // Fetch from live news search (uses scanx.trade + google news rss with sentiments)
           PageCache.fetch('/api/news/search/' + encodeURIComponent(ticker), null, 600000, function(data) {
               if (Array.isArray(data) && data.length > 0) {
-                  window.allFetchedArticles = data;
-                  renderNews(data);
+                  var arts = data.slice();
+                  arts.sort(function(a, b) {
+                      var da = _parseOverviewDate(a.published_date || a.published_at || a.date);
+                      var db = _parseOverviewDate(b.published_date || b.published_at || b.date);
+                      return db - da;
+                  });
+                  window.allFetchedArticles = arts;
+                  renderNews(arts);
               } else {
                   // Fallback to proxy
                   PageCache.fetch('/api/news/ticker/' + ticker, null, 600000, function(d2) {
                       if (d2 && d2.articles) {
-                          window.allFetchedArticles = d2.articles;
-                          renderNews(d2.articles);
+                          var arts2 = (d2.articles || []).slice();
+                          arts2.sort(function(a, b) {
+                              var da = _parseOverviewDate(a.published_date || a.published_at || a.date);
+                              var db = _parseOverviewDate(b.published_date || b.published_at || b.date);
+                              return db - da;
+                          });
+                          window.allFetchedArticles = arts2;
+                          renderNews(arts2);
                       } else {
                           window.allFetchedArticles = [];
                           renderNews([]);
@@ -1016,6 +1272,7 @@
       
     })();
   </script>
-  <script src="nav.js?v=8"></script>
+  <script src="stocks.js"></script>
+  <script src="nav.js?v=9"></script>
 </body>
 </html>

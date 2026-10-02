@@ -1,0 +1,21 @@
+{
+  "phase": "done",
+  "mode": "execute",
+  "started_at": "2026-08-18T18:26:51.059396+05:30",
+  "as_of": "2026-08-18T18:45:59.129387+05:30",
+  "elapsed_sec": 1148.1,
+  "tickers_total": 2115,
+  "tickers_done": 2115,
+  "tickers_remaining": 0,
+  "pct_complete": 100.0,
+  "tickers_per_sec": 1.84,
+  "eta": "00:00:00",
+  "with_data": 1994,
+  "no_data": 88,
+  "perm_errors": 9,
+  "retry_errors": 24,
+  "candles_from_provider": 86801,
+  "already_in_db": 76907,
+  "to_insert": 9894,
+  "inserted": 9894
+}

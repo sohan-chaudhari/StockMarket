@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -9,14 +9,25 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="tokens.css?v=2">
-    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="nav.css?v=14">
     <style>
         body{background-color:#0A0A0B;color:#ffffff;font-family:'Inter',sans-serif;}
-        .stocks-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:2rem;}
-        .stocks-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:1.5rem;}
-        .stocks-card.full{grid-column:1/-1;}
+        .page-content{padding:1.25rem 2rem;max-width:1400px;margin:0 auto;box-sizing:border-box;}
+        .stocks-header-row{display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:1rem;}
+        .section-title{font-size:1.75rem;font-weight:700;margin:0;line-height:1.2;}
+        
+        .filters-bar{display:flex;gap:0.85rem;align-items:flex-end;margin-bottom:1.5rem;padding:0.85rem 1.25rem;background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;flex-wrap:wrap;width:100%;box-sizing:border-box;}
+        .filter-group{display:flex;flex-direction:column;gap:5px;min-width:130px;flex:1;}
+        .filter-group label{font-size:0.7rem;color:var(--text-secondary);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;}
+        .view-toggle{display:flex;gap:4px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.06);border-radius:8px;padding:3px;margin-left:auto;align-self:flex-end;}
+        .view-btn{padding:6px 14px;border:none;background:none;color:var(--text-secondary);cursor:pointer;border-radius:6px;font-size:0.8rem;font-family:var(--font-ui);font-weight:500;transition:all 0.15s;}
+        .view-btn.active{background:#2a2a2a;color:#fff;font-weight:600;}
+
+        /* Desktop: exactly 2 cards per row */
+        .stocks-grid{display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:1.5rem;margin-bottom:2rem;width:100%;}
+        .stocks-card{background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:1.5rem;box-sizing:border-box;}
         .card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;}
-        .card-header h3{font-size:1.1rem;font-weight:600;color:#fff;}
+        .card-header h3{font-size:1.1rem;font-weight:600;color:#fff;margin:0;}
         .stock-row{display:flex;align-items:center;justify-content:space-between;padding:0.65rem 0;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;transition:background 0.15s;}
         .stock-row:hover{background:rgba(255,255,255,0.03);margin:0 -0.5rem;padding:0.65rem 0.5rem;border-radius:6px;}
         .stock-row:last-child{border-bottom:none;}
@@ -28,16 +39,6 @@
         .stock-price{font-family:'Roboto Mono',monospace;font-size:0.9rem;font-weight:600;}
         .stock-change{font-family:'Roboto Mono',monospace;font-size:0.8rem;font-weight:500;}
         .text-green{color:#089981;}.text-red{color:#f23645;}
-        .filters-bar{display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:1.5rem;padding:1rem;background:#111;border:1px solid rgba(255,255,255,0.08);border-radius:10px;align-items:flex-end;}
-        .filter-group{display:flex;flex-direction:column;gap:4px;}
-        .filter-group label{font-size:0.7rem;color:var(--text-secondary);font-weight:500;text-transform:uppercase;letter-spacing:0.5px;}
-        .filter-select{background:#1a1a1a;border:1px solid #333;color:#fff;padding:6px 12px;border-radius:6px;font-size:0.8rem;font-family:var(--font-ui);outline:none;cursor:pointer;}
-        .filter-select:focus{border-color:var(--accent-blue);}
-        .view-toggle{display:flex;gap:4px;background:#1a1a1a;border-radius:6px;padding:2px;margin-left:auto;}
-        .view-btn{padding:4px 10px;border:none;background:none;color:var(--text-secondary);cursor:pointer;border-radius:4px;font-size:0.8rem;font-family:var(--font-ui);}
-        .view-btn.active{background:#333;color:#fff;}
-        .section-title{font-size:1.5rem;font-weight:700;margin-bottom:0.25rem;}
-        .section-subtitle{color:var(--text-secondary);font-size:0.9rem;margin-bottom:1.5rem;}
         .badge{font-size:0.7rem;padding:3px 10px;border-radius:20px;font-weight:600;}
         .badge-blue{background:rgba(74,144,226,0.15);color:#4A90E2;}
         .badge-green{background:rgba(8, 153, 129,0.15);color:#089981;}
@@ -53,7 +54,94 @@
         .stock-card .meta{font-size:0.7rem;color:var(--text-secondary);margin-bottom:0.75rem;}
         .stock-card .big-price{font-size:1.4rem;font-weight:700;font-family:'Roboto Mono',monospace;}
         .stock-card .chg{font-size:0.85rem;font-weight:600;font-family:'Roboto Mono',monospace;margin-top:4px;}
-        @media(max-width:768px){.stocks-grid{grid-template-columns:1fr;}}
+
+        /* Custom dropdown */
+        .cdd-wrap{position:relative;width:100%;}
+        .cdd-btn{
+            display:flex;align-items:center;justify-content:space-between;
+            background:#1a1a1a;border:1px solid #333;color:#fff;
+            padding:7px 12px;border-radius:8px;font-size:0.82rem;
+            font-family:var(--font-ui);cursor:pointer;user-select:none;
+            width:100%;box-sizing:border-box;transition:border-color 0.15s;
+        }
+        .cdd-btn:hover{border-color:#555;}
+        .cdd-btn.open{border-color:var(--accent-blue);}
+        .cdd-arrow{font-size:0.6rem;color:var(--text-secondary);margin-left:6px;flex-shrink:0;transition:transform 0.2s;}
+        .cdd-btn.open .cdd-arrow{transform:rotate(180deg);}
+        .cdd-list{
+            position:absolute;top:calc(100% + 4px);left:0;
+            min-width:100%;background:#1a1a1a;border:1px solid #333;
+            border-radius:8px;z-index:500;overflow:hidden;
+            box-shadow:0 8px 24px rgba(0,0,0,0.6);display:none;
+        }
+        .cdd-list.open{display:block;}
+        .cdd-item{
+            padding:8px 12px;cursor:pointer;font-size:0.82rem;
+            color:#fff;white-space:nowrap;transition:background 0.1s;
+        }
+        .cdd-item:hover{background:rgba(74,144,226,0.15);}
+        .cdd-item.selected{color:var(--accent-blue);font-weight:600;}
+
+        /* ===== MOBILE STYLES (max-width: 768px): 1 card at a time per row ===== */
+        @media(max-width:768px){
+            .page-content{padding:0.75rem 1rem;}
+            .stocks-header-row{margin-bottom:0.75rem;}
+            .section-title{font-size:1.35rem;}
+
+            .filters-bar{
+                display:grid;
+                grid-template-columns:repeat(2, 1fr);
+                gap:0.65rem;
+                padding:0.85rem;
+                margin-bottom:1rem;
+                background:#111;
+                border:1px solid rgba(255,255,255,0.08);
+                border-radius:10px;
+            }
+            .filter-group{
+                width:100%;
+                min-width:0;
+            }
+            .filter-group label{font-size:0.65rem;}
+            .cdd-btn{
+                padding:6px 8px;
+                font-size:0.78rem;
+            }
+            .view-toggle{
+                grid-column:1 / -1;
+                margin-left:0;
+                width:100%;
+                display:flex;
+                justify-content:center;
+                margin-top:0.25rem;
+            }
+            .view-btn{
+                flex:1;
+                text-align:center;
+                padding:6px 0;
+            }
+
+            /* Single card per row on mobile */
+            .stocks-grid{
+                grid-template-columns:1fr;
+                gap:1rem;
+                margin-bottom:1.5rem;
+            }
+            .stocks-card{padding:1rem;border-radius:10px;}
+
+            .stock-row{padding:0.55rem 0;}
+            .stock-info h4{font-size:0.8rem;}
+            .stock-info p{font-size:0.7rem;}
+            .stock-price{font-size:0.82rem;}
+            .stock-change{font-size:0.75rem;}
+            .stock-logo-mini{width:28px;height:28px;font-size:0.68rem;}
+
+            .grid-view{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));}
+            .stock-card{padding:0.85rem;}
+            .stock-card h4{font-size:0.85rem;}
+            .stock-card .big-price{font-size:1.1rem;}
+            .stock-card .chg{font-size:0.78rem;}
+        }
     </style>
     <script src="page-cache.js"></script>
     <script src="ws.js"></script>
@@ -61,13 +149,31 @@
 <body>
     <div id="nav-root"></div>
     <main class="page-content">
-        <h1 class="section-title">Stocks</h1>
-        <p class="section-subtitle">Discover and screen stocks &ndash; click any to view chart</p>
+        <div class="stocks-header-row">
+            <h1 class="section-title">Stocks</h1>
+            <div id="marketStatusSlot" data-permanent="true" style="display:inline-flex;align-items:center;"></div>
+        </div>
         <div class="filters-bar" id="filtersBar">
-            <div class="filter-group"><label>Sector</label><select class="filter-select" id="filterSector" onchange="applyFilters()"><option value="">All Sectors</option><option>Banking</option><option>IT</option><option>Pharma</option><option>Auto</option><option>FMCG</option><option>Energy</option><option>Metal</option><option>Realty</option></select></div>
-            <div class="filter-group"><label>Market Cap</label><select class="filter-select" id="filterCap" onchange="applyFilters()"><option value="">All</option><option>Large Cap</option><option>Mid Cap</option><option>Small Cap</option></select></div>
-            <div class="filter-group"><label>Price Range</label><select class="filter-select" id="filterPrice" onchange="applyFilters()"><option value="">All</option><option>Under &#8377;50</option><option>&#8377;50 - &#8377;200</option><option>&#8377;200 - &#8377;1000</option><option>Above &#8377;1000</option></select></div>
-            <div class="filter-group"><label>PE Ratio</label><select class="filter-select" id="filterPE" onchange="applyFilters()"><option value="">Any</option><option>Under 15</option><option>15 - 30</option><option>30 - 50</option><option>Above 50</option></select></div>
+            <!-- Sector -->
+            <div class="filter-group">
+                <label>Sector</label>
+                <div class="cdd-wrap"><div class="cdd-btn" id="cddSectorBtn" onclick="cddToggle('cddSector')"><span id="cddSectorLabel">All Sectors</span><span class="cdd-arrow">&#9660;</span></div><div class="cdd-list" id="cddSectorList"><div class="cdd-item selected" data-val="" onclick="cddSelect('cddSector','All Sectors','')">All Sectors</div><div class="cdd-item" data-val="Auto" onclick="cddSelect('cddSector','Auto','Auto')">Auto</div><div class="cdd-item" data-val="Banking" onclick="cddSelect('cddSector','Banking','Banking')">Banking</div><div class="cdd-item" data-val="Consumer Durables" onclick="cddSelect('cddSector','Consumer Durables','Consumer Durables')">Consumer Durables</div><div class="cdd-item" data-val="Energy" onclick="cddSelect('cddSector','Energy','Energy')">Energy</div><div class="cdd-item" data-val="FMCG" onclick="cddSelect('cddSector','FMCG','FMCG')">FMCG</div><div class="cdd-item" data-val="IT" onclick="cddSelect('cddSector','IT','IT')">IT</div><div class="cdd-item" data-val="Industrials" onclick="cddSelect('cddSector','Industrials','Industrials')">Industrials</div><div class="cdd-item" data-val="Media" onclick="cddSelect('cddSector','Media','Media')">Media</div><div class="cdd-item" data-val="Metal" onclick="cddSelect('cddSector','Metal','Metal')">Metal</div><div class="cdd-item" data-val="Pharma" onclick="cddSelect('cddSector','Pharma','Pharma')">Pharma</div><div class="cdd-item" data-val="Realty" onclick="cddSelect('cddSector','Realty','Realty')">Realty</div><div class="cdd-item" data-val="Telecom" onclick="cddSelect('cddSector','Telecom','Telecom')">Telecom</div></div></div>
+            </div>
+            <!-- Market Cap -->
+            <div class="filter-group">
+                <label>Market Cap</label>
+                <div class="cdd-wrap"><div class="cdd-btn" id="cddCapBtn" onclick="cddToggle('cddCap')"><span id="cddCapLabel">All</span><span class="cdd-arrow">&#9660;</span></div><div class="cdd-list" id="cddCapList"><div class="cdd-item selected" data-val="" onclick="cddSelect('cddCap','All','')">All</div><div class="cdd-item" data-val="Large Cap" onclick="cddSelect('cddCap','Large Cap','Large Cap')">Large Cap</div><div class="cdd-item" data-val="Mid Cap" onclick="cddSelect('cddCap','Mid Cap','Mid Cap')">Mid Cap</div><div class="cdd-item" data-val="Small Cap" onclick="cddSelect('cddCap','Small Cap','Small Cap')">Small Cap</div></div></div>
+            </div>
+            <!-- Price Range -->
+            <div class="filter-group">
+                <label>Price Range</label>
+                <div class="cdd-wrap"><div class="cdd-btn" id="cddPriceBtn" onclick="cddToggle('cddPrice')"><span id="cddPriceLabel">All</span><span class="cdd-arrow">&#9660;</span></div><div class="cdd-list" id="cddPriceList"><div class="cdd-item selected" data-val="" onclick="cddSelect('cddPrice','All','')">All</div><div class="cdd-item" data-val="Under 50" onclick="cddSelect('cddPrice','Under &#8377;50','Under 50')">Under &#8377;50</div><div class="cdd-item" data-val="50-200" onclick="cddSelect('cddPrice','&#8377;50&#8211;200','50-200')">&#8377;50 &#8211; &#8377;200</div><div class="cdd-item" data-val="200-1000" onclick="cddSelect('cddPrice','&#8377;200&#8211;1000','200-1000')">&#8377;200 &#8211; &#8377;1000</div><div class="cdd-item" data-val="Above 1000" onclick="cddSelect('cddPrice','Above &#8377;1000','Above 1000')">Above &#8377;1000</div></div></div>
+            </div>
+            <!-- PE Ratio -->
+            <div class="filter-group">
+                <label>PE Ratio</label>
+                <div class="cdd-wrap"><div class="cdd-btn" id="cddPEBtn" onclick="cddToggle('cddPE')"><span id="cddPELabel">Any</span><span class="cdd-arrow">&#9660;</span></div><div class="cdd-list" id="cddPEList"><div class="cdd-item selected" data-val="" onclick="cddSelect('cddPE','Any','')">Any</div><div class="cdd-item" data-val="Under 15" onclick="cddSelect('cddPE','Under 15','Under 15')">Under 15</div><div class="cdd-item" data-val="15-30" onclick="cddSelect('cddPE','15&#8211;30','15-30')">15 &#8211; 30</div><div class="cdd-item" data-val="30-50" onclick="cddSelect('cddPE','30&#8211;50','30-50')">30 &#8211; 50</div><div class="cdd-item" data-val="Above 50" onclick="cddSelect('cddPE','Above 50','Above 50')">Above 50</div></div></div>
+            </div>
             <div class="view-toggle"><button class="view-btn active" onclick="toggleView('list',this)">List</button><button class="view-btn" onclick="toggleView('grid',this)">Grid</button></div>
         </div>
         <div class="stocks-grid">
@@ -103,23 +209,98 @@
                 'BAJFINANCE':  { sector:'Banking',    cap:'Large Cap', pe:38 },
                 'ADANIENT':    { sector:'Energy',     cap:'Large Cap', pe:65 },
                 'TATAMOTORS':  { sector:'Auto',       cap:'Large Cap', pe:8  },
-                'NTPC':        { sector:'Power',      cap:'Large Cap', pe:14 },
-                'ONGC':        { sector:'Oil & Gas',  cap:'Large Cap', pe:7  },
-                'POWERGRID':   { sector:'Power',      cap:'Large Cap', pe:16 },
-                'ULTRACEMCO':  { sector:'Metal',      cap:'Large Cap', pe:42 },
+                'NTPC':        { sector:'Energy',     cap:'Large Cap', pe:14 },
+                'ONGC':        { sector:'Energy',     cap:'Large Cap', pe:7  },
+                'POWERGRID':   { sector:'Energy',     cap:'Large Cap', pe:16 },
+                'BPCL':        { sector:'Energy',     cap:'Large Cap', pe:11 },
+                'IOC':         { sector:'Energy',     cap:'Large Cap', pe:9  },
+                'COALINDIA':   { sector:'Energy',     cap:'Large Cap', pe:8  },
+                'TATAPOWER':   { sector:'Energy',     cap:'Mid Cap',   pe:35 },
+                'ADANIGREEN':  { sector:'Energy',     cap:'Large Cap', pe:120},
+                'ADANIPOWER':  { sector:'Energy',     cap:'Mid Cap',   pe:15 },
+                'ULTRACEMCO':  { sector:'Industrials',cap:'Large Cap', pe:42 },
                 'TATASTEEL':   { sector:'Metal',      cap:'Large Cap', pe:12 },
                 'JSWSTEEL':    { sector:'Metal',      cap:'Large Cap', pe:15 },
+                'HINDALCO':    { sector:'Metal',      cap:'Large Cap', pe:14 },
+                'VEDL':        { sector:'Metal',      cap:'Large Cap', pe:10 },
                 'TECHM':       { sector:'IT',         cap:'Mid Cap',   pe:28 },
+                'HCLTECH':     { sector:'IT',         cap:'Large Cap', pe:26 },
+                'LTIM':        { sector:'IT',         cap:'Large Cap', pe:34 },
                 'HAL':         { sector:'Industrials',cap:'Large Cap', pe:45 },
                 'BEL':         { sector:'Industrials',cap:'Mid Cap',   pe:52 },
-                'ZOMATO':      { sector:'Technology', cap:'Mid Cap',   pe:220 },
+                'ZOMATO':      { sector:'IT',         cap:'Mid Cap',   pe:220 },
+                'DLF':         { sector:'Realty',     cap:'Large Cap', pe:48 },
+                'GODREJPROP':  { sector:'Realty',     cap:'Mid Cap',   pe:55 },
+                'OBEROIRLTY':  { sector:'Realty',     cap:'Mid Cap',   pe:32 },
+                'ZEEL':        { sector:'Media',      cap:'Mid Cap',   pe:25 },
+                'PVRINOX':     { sector:'Media',      cap:'Mid Cap',   pe:35 },
+                'IDEA':        { sector:'Telecom',    cap:'Mid Cap',   pe:0  },
+                'INDUSINDBK':  { sector:'Banking',    cap:'Large Cap', pe:13 },
+                'NESTLEIND':   { sector:'FMCG',       cap:'Large Cap', pe:70 },
+                'BRITANNIA':   { sector:'FMCG',       cap:'Large Cap', pe:55 },
+                'DRREDDY':     { sector:'Pharma',     cap:'Large Cap', pe:20 },
+                'CIPLA':       { sector:'Pharma',     cap:'Large Cap', pe:28 },
             };
 
             var viewMode = 'list'; var allEntries = [];
 
-            function getInitials(t){return t.substring(0,2);}
+            function getTickerColor(ticker) {
+                var colors = ['#4A90E2', '#089981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#10b981', '#6366f1', '#e11d48', '#d97706'];
+                var hash = 0;
+                var str = (ticker || '').toUpperCase();
+                for (var i = 0; i < str.length; i++) {
+                    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                return colors[Math.abs(hash) % colors.length];
+            }
 
-            window.applyFilters = function(){ renderAll(); };
+            function renderTickerLogo(ticker, size) {
+                size = size || 32;
+                var clean = (ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+                var initials = clean.substring(0, 2);
+                var bg = getTickerColor(clean);
+                var logoUrl = 'logos/' + encodeURIComponent(clean) + '.svg';
+                return '<div class="stock-logo-mini" style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,0.08);padding:2px;box-sizing:border-box;flex-shrink:0;">' +
+                    '<img src="' + logoUrl + '" alt="' + clean + '" style="width:100%;height:100%;object-fit:contain;border-radius:50%;display:block;" onerror="this.onerror=null;this.parentElement.style.background=\'' + bg + '\';this.parentElement.style.color=\'#ffffff\';this.parentElement.innerHTML=\'<span style=\\\'font-size:' + Math.round(size*0.38) + 'px;font-weight:700;\\\'>' + initials + '</span>\';">' +
+                    '</div>';
+            }
+
+            // ---- Custom dropdown helpers ---------------------------------------------------
+            var _cddValues = { cddSector:'', cddCap:'', cddPrice:'', cddPE:'' };
+            window.cddToggle = function(id){
+                var list = document.getElementById(id+'List');
+                var btn  = document.getElementById(id+'Btn');
+                var isOpen = list.classList.contains('open');
+                document.querySelectorAll('.cdd-list').forEach(function(l){ l.classList.remove('open'); });
+                document.querySelectorAll('.cdd-btn').forEach(function(b){ b.classList.remove('open'); });
+                if(!isOpen){ list.classList.add('open'); btn.classList.add('open'); }
+            };
+            window.cddSelect = function(id, label, val){
+                document.getElementById(id+'Label').textContent = label;
+                document.querySelectorAll('#'+id+'List .cdd-item').forEach(function(el){
+                    el.classList.toggle('selected', el.dataset.val === val);
+                });
+                document.getElementById(id+'List').classList.remove('open');
+                document.getElementById(id+'Btn').classList.remove('open');
+                _cddValues[id] = val;
+                applyFilters();
+            };
+            document.addEventListener('click', function(e){
+                if(!e.target.closest('.cdd-wrap')){
+                    document.querySelectorAll('.cdd-list').forEach(function(l){ l.classList.remove('open'); });
+                    document.querySelectorAll('.cdd-btn').forEach(function(b){ b.classList.remove('open'); });
+                }
+            });
+
+            window.applyFilters = async function(){
+                var cap = _cddValues['cddCap'] || '';
+                var capParam = 'all';
+                if(cap === 'Large Cap') capParam = 'large';
+                else if(cap === 'Mid Cap') capParam = 'mid';
+                else if(cap === 'Small Cap') capParam = 'small';
+                var sector = _cddValues['cddSector'] || '';
+                await fetchAll(capParam, sector);
+            };
 
             window.toggleView = function(mode,btn){
                 viewMode = mode; document.querySelectorAll('.view-btn').forEach(function(b){b.classList.remove('active');}); btn.classList.add('active');
@@ -127,15 +308,27 @@
                 document.querySelectorAll('.grid-view').forEach(function(el){el.style.display = mode==='grid'?'grid':'none';});
             };
 
-            async function fetchAll(){
+            async function fetchAll(capParam, sectorParam){
                 try {
-                    var res = await fetch('/api/market-movers');
+                    var cap = capParam || 'all';
+                    if (cap === 'all' && document.getElementById('filterCap')) {
+                        var cVal = _cddValues['cddCap'] || '';
+                        if (cVal === 'Large Cap') cap = 'large';
+                        else if (cVal === 'Mid Cap') cap = 'mid';
+                        else if (cVal === 'Small Cap') cap = 'small';
+                    }
+                    var sector = sectorParam !== undefined ? sectorParam : ((_cddValues['cddSector'] || ''));
+                    var url = '/api/market-movers?cap=' + encodeURIComponent(cap);
+                    if (sector) url += '&sector=' + encodeURIComponent(sector);
+
+                    var res = await fetch(url);
                     var marketData = await res.json();
                     var allTickers = [];
                     function addT(t){ if(t && allTickers.indexOf(t)===-1) allTickers.push(t); }
                     (marketData.gainers||[]).forEach(function(s){ addT(s.ticker); });
                     (marketData.losers||[]).forEach(function(s){ addT(s.ticker); });
                     (marketData.most_active||[]).forEach(function(s){ addT(s.ticker); });
+                    (marketData.volume_shockers||[]).forEach(function(s){ addT(s.ticker); });
 
                     var liveData = {};
                     try {
@@ -145,7 +338,7 @@
 
                     allEntries = allTickers.map(function(t){
                         var item = null;
-                        (marketData.gainers||[]).concat(marketData.losers||[]).concat(marketData.most_active||[]).forEach(function(s){ if(s&&s.ticker===t) item=s; });
+                        (marketData.gainers||[]).concat(marketData.losers||[]).concat(marketData.most_active||[]).concat(marketData.volume_shockers||[]).forEach(function(s){ if(s&&s.ticker===t) item=s; });
                         if(!item) return null;
                         var live = liveData[t];
                         var price = (live&&live.current!=null) ? live.current : (item.current_price||0);
@@ -153,8 +346,11 @@
                         var diff = price - prevClose;
                         var pct = prevClose>0 ? (diff/prevClose)*100 : 0;
                         var meta = STOCK_META[t] || {};
+                        var sec = item.sector || meta.sector || '';
+                        var cp = item.cap_display || meta.cap || (item.cap === 'large' ? 'Large Cap' : (item.cap === 'mid' ? 'Mid Cap' : (item.cap === 'small' ? 'Small Cap' : '')));
                         return { ticker:t, price:price, diff:diff, pct:pct, volume:item.volume||0,
-                                 volume_display:item.volume_display||'', sector:meta.sector||'', cap:meta.cap||'', pe:meta.pe||0 };
+                                 volume_display:item.volume_display||'', vol_surge:item.vol_surge||1.0,
+                                 vol_surge_display:item.vol_surge_display||'', sector:sec, cap:cp, pe:meta.pe||0 };
                     }).filter(function(x){return x!==null;});
 
                     renderAll();
@@ -167,27 +363,42 @@
             function renderAll(){
                 var filtered = allEntries.slice();
 
-                var sector = document.getElementById('filterSector').value;
-                if(sector) filtered = filtered.filter(function(e){ return e.sector === sector; });
-                var cap = document.getElementById('filterCap').value;
+                var sector = _cddValues['cddSector'] || '';
+                if(sector) {
+                    var secLow = sector.toLowerCase();
+                    filtered = filtered.filter(function(e){ 
+                        if (!e.sector) return true;
+                        var es = e.sector.toLowerCase();
+                        if (secLow === 'it') return es === 'it' || es.indexOf('technology') !== -1 || es.indexOf('information') !== -1 || es.indexOf('software') !== -1;
+                        if (secLow === 'energy') return es === 'energy' || es.indexOf('oil') !== -1 || es.indexOf('gas') !== -1 || es.indexOf('power') !== -1 || es.indexOf('petroleum') !== -1 || es.indexOf('utilities') !== -1;
+                        if (secLow === 'banking') return es === 'banking' || es.indexOf('bank') !== -1 || es.indexOf('financial') !== -1 || es.indexOf('finance') !== -1 || es.indexOf('nbfc') !== -1;
+                        if (secLow === 'pharma') return es === 'pharma' || es.indexOf('pharmaceutical') !== -1 || es.indexOf('healthcare') !== -1;
+                        if (secLow === 'auto') return es === 'auto' || es.indexOf('motor') !== -1 || es.indexOf('vehicle') !== -1;
+                        if (secLow === 'metal') return es === 'metal' || es.indexOf('steel') !== -1 || es.indexOf('mining') !== -1;
+                        if (secLow === 'realty') return es === 'realty' || es.indexOf('real estate') !== -1 || es.indexOf('properties') !== -1;
+                        return es === secLow || es.indexOf(secLow) !== -1;
+                    });
+                }
+                var cap = _cddValues['cddCap'] || '';
                 if(cap) filtered = filtered.filter(function(e){ return e.cap === cap; });
-                var priceRange = document.getElementById('filterPrice').value;
-                if(priceRange === 'Under &#8377;50')         filtered = filtered.filter(function(e){ return e.price > 0 && e.price < 50; });
-                else if(priceRange === '&#8377;50 - &#8377;200')   filtered = filtered.filter(function(e){ return e.price >= 50 && e.price <= 200; });
-                else if(priceRange === '&#8377;200 - &#8377;1000') filtered = filtered.filter(function(e){ return e.price > 200 && e.price <= 1000; });
-                else if(priceRange === 'Above &#8377;1000')  filtered = filtered.filter(function(e){ return e.price > 1000; });
-                var pe = document.getElementById('filterPE').value;
+                var priceRange = _cddValues['cddPrice'] || '';
+                if(priceRange === 'Under 50')    filtered = filtered.filter(function(e){ return e.price > 0 && e.price < 50; });
+                else if(priceRange === '50-200')  filtered = filtered.filter(function(e){ return e.price >= 50 && e.price <= 200; });
+                else if(priceRange === '200-1000')filtered = filtered.filter(function(e){ return e.price > 200 && e.price <= 1000; });
+                else if(priceRange === 'Above 1000') filtered = filtered.filter(function(e){ return e.price > 1000; });
+                var pe = _cddValues['cddPE'] || '';
                 if(pe === 'Under 15')   filtered = filtered.filter(function(e){ return e.pe > 0 && e.pe < 15; });
-                else if(pe === '15 - 30') filtered = filtered.filter(function(e){ return e.pe >= 15 && e.pe <= 30; });
-                else if(pe === '30 - 50') filtered = filtered.filter(function(e){ return e.pe > 30 && e.pe <= 50; });
+                else if(pe === '15-30') filtered = filtered.filter(function(e){ return e.pe >= 15 && e.pe <= 30; });
+                else if(pe === '30-50') filtered = filtered.filter(function(e){ return e.pe > 30 && e.pe <= 50; });
                 else if(pe === 'Above 50') filtered = filtered.filter(function(e){ return e.pe > 50; });
 
                 var gainers  = filtered.filter(function(e){return e.pct>0;}).sort(function(a,b){return b.pct-a.pct;}).slice(0,7);
                 var losers   = filtered.filter(function(e){return e.pct<0;}).sort(function(a,b){return a.pct-b.pct;}).slice(0,7);
-                var active   = filtered.slice().sort(function(a,b){return b.volume-a.volume;}).slice(0,7);
-                var shockers = filtered.slice().sort(function(a,b){return Math.abs(b.pct)-Math.abs(a.pct);}).slice(0,7);
+                var active   = filtered.slice().sort(function(a,b){return (b.volume||0)-(a.volume||0);}).slice(0,7);
+                var shockerCandidates = filtered.filter(function(e){return (e.vol_surge||0) > 1.2;});
+                var shockers = (shockerCandidates.length >= 3 ? shockerCandidates : filtered).slice().sort(function(a,b){return (b.vol_surge||0)-(a.vol_surge||0);}).slice(0,7);
                 var breakouts= filtered.filter(function(e){return e.pct>0.5;}).sort(function(a,b){return b.pct-a.pct;}).slice(0,7);
-                var trending = filtered.slice().sort(function(a,b){return b.volume-a.volume;}).slice(0,7);
+                var trending = filtered.slice().sort(function(a,b){return (b.volume||0)-(a.volume||0);}).slice(0,7);
 
                 renderBoth('gainers',gainers,'text-green'); renderBoth('losers',losers,'text-red');
                 renderBoth('active',active,'text-green');   renderBoth('shockers',shockers,'badge-blue');
@@ -202,10 +413,17 @@
                 var container = document.getElementById(containerId); if(!container) return;
                 if(!items||!items.length){container.innerHTML='<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">No data</div>';return;}
                 var isActive = containerId.indexOf('active') !== -1;
+                var isShocker = containerId.indexOf('shocker') !== -1;
                 container.innerHTML = items.map(function(item,i){
                     var sign=item.diff>=0?'+':''; var cls=item.diff>=0?'text-green':'text-red';
-                    var extra = isActive ? '<span style="font-size:0.7rem;color:var(--text-secondary);margin-top:2px;">Vol: '+(item.volume_display||'--')+'</span>' : '';
-                    return '<div class="stock-row" onclick="window.location.href=\'overview.html?ticker='+item.ticker+'\'"><div class="stock-left"><span class="stock-rank">'+(i+1)+'</span><div class="stock-logo-mini">'+getInitials(item.ticker)+'</div><div class="stock-info"><h4>'+item.ticker+'</h4><p>NSE</p>'+extra+'</div></div><div class="stock-right"><div class="stock-price">\u20B9'+item.price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div class="stock-change '+cls+'">'+sign+item.diff.toFixed(2)+' ('+sign+item.pct.toFixed(2)+'%)</div></div></div>';
+                    var extra = '';
+                    if (isShocker) {
+                        extra = '<span style="font-size:0.7rem;color:#4A90E2;margin-top:2px;font-weight:600;">Surge: '+(item.vol_surge_display||(item.vol_surge?item.vol_surge+'x':'--'))+' \u00B7 Vol: '+(item.volume_display||'--')+'</span>';
+                    } else if (isActive) {
+                        extra = '<span style="font-size:0.7rem;color:var(--text-secondary);margin-top:2px;">Vol: '+(item.volume_display||'--')+'</span>';
+                    }
+                    var logoHtml = renderTickerLogo(item.ticker, 32);
+                    return '<div class="stock-row" onclick="window.location.href=\'overview.html?ticker='+item.ticker+'\'"><div class="stock-left"><span class="stock-rank">'+(i+1)+'</span>'+logoHtml+'<div class="stock-info"><h4>'+item.ticker+'</h4><p>NSE</p>'+extra+'</div></div><div class="stock-right"><div class="stock-price">\u20B9'+item.price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div class="stock-change '+cls+'">'+sign+item.diff.toFixed(2)+' ('+sign+item.pct.toFixed(2)+'%)</div></div></div>';
                 }).join('');
             }
 
@@ -213,10 +431,17 @@
                 var container = document.getElementById(containerId); if(!container) return;
                 if(!items||!items.length){container.innerHTML='';return;}
                 var isActive = containerId.indexOf('active') !== -1;
+                var isShocker = containerId.indexOf('shocker') !== -1;
                 container.innerHTML = items.map(function(item){
                     var sign=item.diff>=0?'+':''; var cls=item.diff>=0?'text-green':'text-red';
-                    var extra = isActive ? '<div style="font-size:0.7rem;color:var(--text-secondary);margin-top:4px;">Vol: '+(item.volume_display||'--')+'</div>' : '';
-                    return '<div class="stock-card" onclick="window.location.href=\'overview.html?ticker='+item.ticker+'\'"><h4>'+item.ticker+'</h4><div class="meta">NSE</div><div class="big-price" style="color:'+(item.diff>=0?'#089981':'#f23645')+'">\u20B9'+item.price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div class="chg '+cls+'">'+sign+item.diff.toFixed(2)+' ('+sign+item.pct.toFixed(2)+'%)</div>'+extra+'</div>';
+                    var extra = '';
+                    if (isShocker) {
+                        extra = '<div style="font-size:0.7rem;color:#4A90E2;margin-top:4px;font-weight:600;">Surge: '+(item.vol_surge_display||(item.vol_surge?item.vol_surge+'x':'--'))+'</div>';
+                    } else if (isActive) {
+                        extra = '<div style="font-size:0.7rem;color:var(--text-secondary);margin-top:4px;">Vol: '+(item.volume_display||'--')+'</div>';
+                    }
+                    var logoHtml = renderTickerLogo(item.ticker, 32);
+                    return '<div class="stock-card" onclick="window.location.href=\'overview.html?ticker='+item.ticker+'\'"><div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'+logoHtml+'<div><h4 style="margin:0;font-size:0.95rem;">'+item.ticker+'</h4><div class="meta" style="margin:0;">NSE</div></div></div><div class="big-price" style="color:'+(item.diff>=0?'#089981':'#f23645')+'">\u20B9'+item.price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div><div class="chg '+cls+'">'+sign+item.diff.toFixed(2)+' ('+sign+item.pct.toFixed(2)+'%)</div>'+extra+'</div>';
                 }).join('');
             }
 
@@ -229,7 +454,7 @@
         })();
     </script>
     <script src="stocks.js"></script>
-    <script src="nav.js?v=8"></script>
+    <script src="nav.js?v=9"></script>
 </body>
 </html>
 

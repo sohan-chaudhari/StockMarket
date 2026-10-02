@@ -9,100 +9,824 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="tokens.css?v=2">
-    <link rel="stylesheet" href="index.css?v=82">
-    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="index.css?v=84">
+    <link rel="stylesheet" href="nav.css?v=14">
+    <link rel="stylesheet" href="responsive.css?v=12">
     <style>
-        :root { --sidebar-w: 270px; }
-        .screen-layout { display: flex; gap: 1.25rem; align-items: flex-start; }
-        .screen-sidebar { width: var(--sidebar-w); flex-shrink: 0; position: sticky; top: 5rem; max-height: calc(100vh - 6rem); overflow-y: auto; padding-right: 4px; }
+        :root {
+            --sidebar-w: 280px;
+            --pro-green: #26a69a;
+            --pro-green-bg: rgba(38, 166, 154, 0.12);
+            --pro-red: #ff6b7a;
+            --pro-red-bg: rgba(255, 107, 122, 0.12);
+        }
+
+        .screen-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1rem 1.25rem 3rem 1.25rem;
+        }
+
+        .screen-layout {
+            display: flex;
+            gap: 1.5rem;
+            align-items: flex-start;
+        }
+
+        /* Desktop Sidebar */
+        .screen-sidebar {
+            width: var(--sidebar-w);
+            flex-shrink: 0;
+            position: sticky;
+            top: 5rem;
+            max-height: calc(100vh - 6rem);
+            overflow-y: auto;
+            padding-right: 4px;
+        }
         .screen-sidebar::-webkit-scrollbar { width: 4px; }
         .screen-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
-        .screen-main { flex: 1; min-width: 0; }
 
-        /* Presets */
-        .preset-section { margin-bottom: 1.25rem; }
-        .preset-section h3 { font-size: 0.72rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 0.5rem; padding: 0 0.25rem; }
-        .preset-btn { display: flex; align-items: center; gap: 0.5rem; width: 100%; padding: 0.6rem 0.85rem; background: transparent; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; color: #c4c4c8; text-align: left; font-size: 0.83rem; font-weight: 500; cursor: pointer; transition: all 0.15s; margin-bottom: 0.3rem; font-family: 'Inter', sans-serif; }
-        .preset-btn:hover { border-color: rgba(74,144,226,0.25); color: #fff; background: rgba(255,255,255,0.03); }
-        .preset-btn.active { background: rgba(74,144,226,0.1); border-color: rgba(74,144,226,0.4); color: #4A90E2; }
-        .preset-icon { font-size: 0.95rem; flex-shrink: 0; }
-
-        /* Filter card */
-        .filter-card { background: #111; border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 1.1rem; margin-bottom: 0.75rem; }
-        .filter-card-title { font-size: 0.78rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.85rem; }
-        .filter-row { margin-bottom: 0.65rem; }
-        .filter-row label { display: block; font-size: 0.73rem; color: #888; margin-bottom: 4px; font-weight: 500; }
-        .filter-row input, .filter-row select {
-            width: 100%; padding: 0.45rem 0.6rem; background: #1a1a1a; border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 6px; color: #fff; font-size: 0.8rem; font-family: 'Inter', sans-serif;
-            outline: none; box-sizing: border-box; transition: border-color 0.15s;
+        .screen-main {
+            flex: 1;
+            min-width: 0;
         }
-        .filter-row input:focus, .filter-row select:focus { border-color: rgba(74,144,226,0.5); }
-        .filter-row select option { background: #1a1a1a; }
-        .range-row { display: flex; gap: 0.4rem; }
-        .range-row input { width: 50%; }
+
+        /* Presets / Quick Scans */
+        .preset-section {
+            margin-bottom: 1.25rem;
+        }
+        .preset-section h3 {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 0.5rem;
+            padding: 0 0.25rem;
+        }
+        .preset-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.3rem;
+        }
+        .preset-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            padding: 0.55rem 0.85rem;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 8px;
+            color: #c4c4c8;
+            text-align: left;
+            font-size: 0.82rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-family: 'Inter', sans-serif;
+        }
+        .preset-btn:hover {
+            border-color: rgba(74,144,226,0.3);
+            color: #fff;
+            background: rgba(255,255,255,0.04);
+        }
+        .preset-btn.active {
+            background: rgba(74,144,226,0.12);
+            border-color: rgba(74,144,226,0.45);
+            color: #5c9df5;
+            font-weight: 600;
+        }
+        .preset-icon {
+            font-size: 0.95rem;
+            flex-shrink: 0;
+        }
+
+        /* Filter Cards */
+        .filter-card {
+            background: #131316;
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 12px;
+            padding: 1.1rem;
+            margin-bottom: 0.85rem;
+        }
+        .filter-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.85rem;
+        }
+        .filter-card-title {
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .filter-row {
+            margin-bottom: 0.65rem;
+        }
+        .filter-row label {
+            display: block;
+            font-size: 0.72rem;
+            color: #9ca3af;
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+        .filter-row input, .filter-row select {
+            width: 100%;
+            height: 38px;
+            padding: 0.4rem 0.65rem;
+            background: #151519;
+            border: 1px solid rgba(255,255,255,0.09);
+            border-radius: 7px;
+            color: #f4f4f5;
+            font-size: 0.8rem;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            box-sizing: border-box;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .filter-row select {
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%239ca3af%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
+            background-repeat: no-repeat;
+            background-position: right 0.75rem center;
+            background-size: 11px;
+            padding-right: 2rem !important;
+            cursor: pointer;
+        }
+        .filter-row input:focus, .filter-row select:focus {
+            border-color: rgba(74,144,226,0.5);
+            background: #1c1c22;
+        }
+        .range-row {
+            display: flex;
+            gap: 0.4rem;
+        }
+        .range-row input {
+            width: 50%;
+        }
+
+        /* Custom Select Component for Mobile & Desktop */
+        .custom-select-wrapper {
+            position: relative;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .custom-select-trigger {
+            width: 100%;
+            height: 38px;
+            padding: 0 0.75rem;
+            background: #151519;
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 7px;
+            color: #f4f4f5;
+            font-size: 0.8rem;
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            box-sizing: border-box;
+            transition: border-color 0.15s, background 0.15s;
+        }
+        .custom-select-trigger:hover,
+        .custom-select-wrapper.open .custom-select-trigger {
+            border-color: rgba(74, 144, 226, 0.5);
+            background: #1c1c22;
+        }
+        .custom-select-trigger .chevron-icon {
+            width: 12px;
+            height: 12px;
+            stroke: #9ca3af;
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            pointer-events: none;
+        }
+        .custom-select-wrapper.open .custom-select-trigger .chevron-icon {
+            transform: rotate(180deg);
+        }
+        .custom-select-menu {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            width: 100%;
+            max-height: 220px;
+            overflow-y: auto;
+            background: #141418;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+            z-index: 1000;
+            display: none;
+            padding: 4px;
+            box-sizing: border-box;
+        }
+        .custom-select-wrapper.open .custom-select-menu {
+            display: block;
+        }
+        .custom-select-menu::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-select-menu::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+        }
+        .custom-select-item {
+            padding: 7px 10px;
+            font-size: 0.78rem;
+            color: #c4c4c8;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.12s, color 0.12s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .custom-select-item:hover {
+            background: rgba(74, 144, 226, 0.15);
+            color: #fff;
+        }
+        .custom-select-item.active {
+            background: rgba(74, 144, 226, 0.2);
+            color: #5c9df5;
+            font-weight: 600;
+        }
+        .mobile-filters-drawer .custom-select-trigger {
+            height: 35px !important;
+            font-size: 0.78rem !important;
+            background: #18181e !important;
+            border-radius: 6px !important;
+            border: 1px solid rgba(255, 255, 255, 0.09) !important;
+        }
 
         /* Buttons */
-        .btn-apply { width: 100%; padding: 0.6rem; background: var(--accent-blue); border: none; border-radius: 8px; color: #fff; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; font-size: 0.83rem; margin-bottom: 0.4rem; transition: background 0.15s; }
-        .btn-apply:hover { background: #357abd; }
-        .btn-clear { width: 100%; padding: 0.5rem; background: transparent; border: 1px solid rgba(242,54,69,0.3); border-radius: 8px; color: #f23645; font-weight: 600; cursor: pointer; font-family: 'Inter', sans-serif; font-size: 0.78rem; transition: all 0.15s; display: none; }
-        .btn-clear:hover { background: rgba(242,54,69,0.08); border-color: #f23645; }
+        .btn-apply {
+            width: 100%;
+            padding: 0.65rem;
+            background: #2563eb;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.83rem;
+            margin-top: 0.35rem;
+            margin-bottom: 0.4rem;
+            transition: background 0.15s ease;
+        }
+        .btn-apply:hover { background: #1d4ed8; }
+        .btn-clear {
+            width: 100%;
+            padding: 0.5rem;
+            background: transparent;
+            border: 1px solid rgba(255,107,122,0.3);
+            border-radius: 8px;
+            color: var(--pro-red);
+            font-weight: 600;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.78rem;
+            transition: all 0.15s ease;
+            display: none;
+        }
+        .btn-clear:hover {
+            background: var(--pro-red-bg);
+            border-color: var(--pro-red);
+        }
 
         /* Filter chips */
-        .chips-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; min-height: 0; }
-        .chip { display: inline-flex; align-items: center; gap: 0.3rem; padding: 3px 10px 3px 10px; background: rgba(74,144,226,0.1); border: 1px solid rgba(74,144,226,0.3); border-radius: 20px; font-size: 0.72rem; color: #4A90E2; font-weight: 600; }
-        .chip-remove { cursor: pointer; opacity: 0.7; margin-left: 2px; font-size: 0.8rem; line-height: 1; }
-        .chip-remove:hover { opacity: 1; }
+        .chips-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-bottom: 0.85rem;
+            min-height: 0;
+        }
+        .chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 4px 10px;
+            background: rgba(74,144,226,0.1);
+            border: 1px solid rgba(74,144,226,0.28);
+            border-radius: 20px;
+            font-size: 0.72rem;
+            color: #5c9df5;
+            font-weight: 600;
+        }
+        .chip-remove {
+            cursor: pointer;
+            opacity: 0.7;
+            margin-left: 2px;
+            font-size: 0.8rem;
+            line-height: 1;
+        }
+        .chip-remove:hover { opacity: 1; color: #fff; }
 
-        /* Results header */
-        .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem; }
-        .results-header h2 { font-size: 1.1rem; font-weight: 700; }
-        .results-meta { display: flex; align-items: center; gap: 1rem; }
-        .results-count { font-size: 0.82rem; color: var(--text-secondary); }
-        .refresh-btn { background: transparent; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: var(--text-secondary); font-size: 0.75rem; padding: 4px 10px; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; }
-        .refresh-btn:hover { border-color: rgba(74,144,226,0.3); color: #4A90E2; }
+        /* Results Header */
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.85rem;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .results-title-wrap {
+            display: flex;
+            align-items: baseline;
+            gap: 0.65rem;
+        }
+        .results-header h2 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+            margin: 0;
+        }
+        .results-meta {
+            display: flex;
+            align-items: center;
+            gap: 0.85rem;
+        }
+        .results-count {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        .refresh-btn {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            padding: 5px 11px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .refresh-btn:hover {
+            border-color: rgba(74,144,226,0.4);
+            color: #5c9df5;
+            background: rgba(74,144,226,0.05);
+        }
 
-        /* Table */
-        .screen-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
-        .screen-table th { text-align: left; padding: 0.6rem 0.75rem; color: #888; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.07); white-space: nowrap; }
-        .screen-table td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); color: #ddd; white-space: nowrap; }
-        .screen-table tr.data-row { cursor: pointer; transition: background 0.1s; }
-        .screen-table tr.data-row:hover { background: rgba(255,255,255,0.03); }
-        .screen-table tr.data-row:hover td:first-child { color: #4A90E2; }
-        .th-sort { cursor: pointer; user-select: none; transition: color 0.15s; }
+        /* Desktop Table */
+        .table-responsive {
+            background: #111114;
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 10px;
+            overflow-x: auto;
+        }
+        .screen-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.84rem;
+        }
+        .screen-table th {
+            text-align: left;
+            padding: 0.75rem 0.85rem;
+            color: #888;
+            font-size: 0.72rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            background: #141418;
+            white-space: nowrap;
+        }
+        .screen-table td {
+            padding: 0.75rem 0.85rem;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            color: #ddd;
+            white-space: nowrap;
+        }
+        .screen-table tr.data-row {
+            cursor: pointer;
+            transition: background 0.12s ease;
+        }
+        .screen-table tr.data-row:hover {
+            background: rgba(255,255,255,0.035);
+        }
+        .screen-table tr.data-row:hover td:nth-child(2) span {
+            color: #5c9df5;
+        }
+        .th-sort {
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.15s;
+        }
         .th-sort:hover { color: #fff; }
-        .th-sort.asc::after { content: ' ▲'; font-size: 0.6rem; color: #4A90E2; }
-        .th-sort.desc::after { content: ' ▼'; font-size: 0.6rem; color: #4A90E2; }
-        .text-green { color: #089981; }
-        .text-red { color: #f23645; }
+        .th-sort.asc::after { content: ' ▲'; font-size: 0.6rem; color: #5c9df5; }
+        .th-sort.desc::after { content: ' ▼'; font-size: 0.6rem; color: #5c9df5; }
 
-        /* RSI badge */
-        .rsi-ob { color: #f23645; font-weight: 700; }
-        .rsi-os { color: #089981; font-weight: 700; }
+        /* Status & Badges */
+        .text-green { color: var(--pro-green); }
+        .text-red { color: var(--pro-red); }
+        .chg-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.8rem;
+        }
+        .chg-pill.pos {
+            background: var(--pro-green-bg);
+            color: var(--pro-green);
+        }
+        .chg-pill.neg {
+            background: var(--pro-red-bg);
+            color: var(--pro-red);
+        }
 
-        /* Sector badge */
-        .sector-tag { display: inline-block; padding: 1px 7px; background: rgba(255,255,255,0.05); border-radius: 10px; font-size: 0.7rem; color: #a1a1aa; }
+        .rsi-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.78rem;
+        }
+        .rsi-ob {
+            color: var(--pro-red);
+            background: var(--pro-red-bg);
+        }
+        .rsi-os {
+            color: var(--pro-green);
+            background: var(--pro-green-bg);
+        }
+        .rsi-norm {
+            color: #c4c4c8;
+        }
+
+        .sector-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 6px;
+            font-size: 0.7rem;
+            color: #a1a1aa;
+            font-weight: 500;
+        }
+
+        /* Mobile Stock Cards List (hidden on desktop) */
+        .mobile-stocks-list {
+            display: none;
+            flex-direction: column;
+            gap: 0.5rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .mobile-stock-card {
+            background: #131316;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 0.8rem 0.9rem;
+            cursor: pointer;
+            transition: all 0.12s ease;
+            -webkit-tap-highlight-color: transparent;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .mobile-stock-card:active {
+            background: rgba(255,255,255,0.05);
+            border-color: rgba(74,144,226,0.3);
+            transform: scale(0.99);
+        }
+        .m-card-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.3rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .m-ticker {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: #fff;
+            letter-spacing: 0.2px;
+        }
+        .m-price {
+            font-family: 'Roboto Mono', monospace;
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: #fff;
+        }
+        .m-card-mid {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            margin-bottom: 0.45rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .m-name {
+            font-size: 0.75rem;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 58%;
+        }
+        .m-card-bot {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            padding-top: 0.35rem;
+            border-top: 1px solid rgba(255,255,255,0.04);
+            font-size: 0.72rem;
+            color: #9ca3af;
+            font-family: 'Roboto Mono', monospace;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        /* Mobile Controls Toolbar (hidden on desktop) */
+        .mobile-controls-bar {
+            display: none;
+            margin-bottom: 0.75rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .mobile-search-row {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.65rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .mobile-search-input-wrap {
+            position: relative;
+            flex: 1;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        .mobile-search-input-wrap input {
+            width: 100%;
+            height: 38px;
+            padding: 0.4rem 2rem 0.4rem 2.2rem;
+            background: #141418;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 0.82rem;
+            font-family: 'Inter', sans-serif;
+            outline: none;
+            box-sizing: border-box;
+        }
+        .mobile-search-input-wrap input:focus {
+            border-color: rgba(74,144,226,0.5);
+            background: #1a1a20;
+        }
+        .mobile-search-icon {
+            position: absolute;
+            left: 0.7rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #666;
+            pointer-events: none;
+        }
+        .mobile-search-clear {
+            position: absolute;
+            right: 0.6rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #888;
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 2px 5px;
+            display: none;
+        }
+        .btn-filter-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0 0.85rem;
+            height: 38px;
+            background: #18181e;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 8px;
+            color: #ddd;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            font-family: 'Inter', sans-serif;
+            box-sizing: border-box;
+        }
+        .btn-filter-toggle.active {
+            background: rgba(74,144,226,0.15);
+            border-color: rgba(74,144,226,0.5);
+            color: #5c9df5;
+        }
+        .filter-count-badge {
+            background: #2563eb;
+            color: #fff;
+            border-radius: 10px;
+            font-size: 0.65rem;
+            padding: 1px 5px;
+            font-weight: 700;
+            display: none;
+        }
+
+        /* Mobile Collapsible Filters Drawer */
+        .mobile-filters-drawer {
+            display: none;
+            background: #121216;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 0.85rem;
+            margin-bottom: 0.75rem;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .mobile-filters-drawer.open {
+            display: block;
+        }
+        .mobile-filters-drawer .filter-row {
+            margin-bottom: 0.55rem;
+        }
+        .mobile-filters-drawer .filter-row label {
+            font-size: 0.7rem;
+            margin-bottom: 3px;
+            color: #a1a1aa;
+            font-weight: 500;
+        }
+        .mobile-filters-drawer input, .mobile-filters-drawer select {
+            height: 35px !important;
+            font-size: 0.78rem !important;
+            padding: 0.35rem 0.6rem !important;
+            border-radius: 6px !important;
+            background: #18181e;
+            border: 1px solid rgba(255,255,255,0.09);
+        }
+        .mobile-filters-drawer select {
+            padding-right: 1.8rem !important;
+        }
+
+        /* Mobile Horizontal Quick Scans Bar */
+        .mobile-presets-strip {
+            display: none;
+            overflow-x: auto;
+            white-space: nowrap;
+            gap: 0.45rem;
+            padding: 2px 0 0.6rem 0;
+            margin-bottom: 0.5rem;
+            width: 100%;
+            box-sizing: border-box;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .mobile-presets-strip::-webkit-scrollbar { display: none; }
+        .m-preset-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.4rem 0.75rem;
+            background: #141418;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 20px;
+            color: #a1a1aa;
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            user-select: none;
+            transition: all 0.12s ease;
+        }
+        .m-preset-pill.active {
+            background: rgba(74,144,226,0.16);
+            border-color: rgba(74,144,226,0.45);
+            color: #5c9df5;
+            font-weight: 600;
+        }
 
         /* Pagination */
-        .pagination { display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,0.06); }
-        .pg-btn { padding: 5px 14px; background: #111; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #ddd; font-size: 0.8rem; cursor: pointer; font-family: 'Inter', sans-serif; transition: all 0.15s; }
-        .pg-btn:hover:not(:disabled) { border-color: rgba(74,144,226,0.4); color: #4A90E2; }
-        .pg-btn:disabled { opacity: 0.35; cursor: default; }
-        .pg-info { font-size: 0.8rem; color: var(--text-secondary); }
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1.25rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .pg-btn {
+            padding: 6px 14px;
+            background: #141418;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: #ddd;
+            font-size: 0.8rem;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            transition: all 0.15s;
+        }
+        .pg-btn:hover:not(:disabled) {
+            border-color: rgba(74,144,226,0.4);
+            color: #5c9df5;
+            background: rgba(74,144,226,0.05);
+        }
+        .pg-btn:disabled {
+            opacity: 0.35;
+            cursor: default;
+        }
+        .pg-info {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
 
         /* Spinner */
         @keyframes spin { to { transform: rotate(360deg); } }
-        .spin { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(74,144,226,0.3); border-top-color: #4A90E2; border-radius: 50%; animation: spin 0.75s linear infinite; }
+        .spin {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(74,144,226,0.3);
+            border-top-color: #5c9df5;
+            border-radius: 50%;
+            animation: spin 0.75s linear infinite;
+        }
 
         /* Page layout */
-        .page-title { font-size: 1.45rem; font-weight: 700; margin-bottom: 0.2rem; }
-        .page-subtitle { color: var(--text-secondary); font-size: 0.88rem; margin-bottom: 1.5rem; }
+        .page-title {
+            font-size: 1.45rem;
+            font-weight: 700;
+            margin-bottom: 0.2rem;
+            color: #fff;
+        }
+        .page-subtitle {
+            color: var(--text-secondary);
+            font-size: 0.88rem;
+            margin-bottom: 1.25rem;
+        }
 
+        /* Responsive Breakpoints */
         @media (max-width: 768px) {
-            .screen-layout { flex-direction: column; }
-            .screen-sidebar { width: 100%; position: static; max-height: none; }
-            .screen-table th:nth-child(6), .screen-table td:nth-child(6),
-            .screen-table th:nth-child(7), .screen-table td:nth-child(7) { display: none; }
+            .screen-container { 
+                padding: 0.6rem 0.65rem 3.5rem 0.65rem; 
+                width: 100%;
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+            .page-title { font-size: 1.2rem; }
+            .page-subtitle { font-size: 0.78rem; margin-bottom: 0.75rem; }
+            .screen-layout { 
+                flex-direction: column; 
+                gap: 0; 
+                width: 100%;
+                max-width: 100%;
+                box-sizing: border-box;
+            }
+            .screen-sidebar { display: none; } /* Replaced with mobile toolbar & drawer */
+            .screen-main {
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
+            }
+            .mobile-controls-bar { 
+                display: block; 
+                width: 100%;
+                box-sizing: border-box;
+            }
+            .mobile-presets-strip { 
+                display: flex; 
+                width: 100%;
+                box-sizing: border-box;
+            }
+            .table-responsive { display: none; } /* Switched to mobile cards */
+            .mobile-stocks-list { 
+                display: flex; 
+                width: 100%;
+                max-width: 100%;
+                box-sizing: border-box;
+                gap: 0.5rem;
+            }
+        }
+
+        @media (min-width: 769px) {
+            .mobile-controls-bar { display: none !important; }
+            .mobile-presets-strip { display: none !important; }
+            .mobile-filters-drawer { display: none !important; }
+            .mobile-stocks-list { display: none !important; }
+            .table-responsive { display: block !important; }
         }
     </style>
     <script src="page-cache.js"></script>
@@ -111,134 +835,261 @@
 <body style="background-color: #0A0A0B;">
     <div id="nav-root"></div>
     <main class="page-content">
-        <h1 class="page-title">Stock Screener</h1>
-        <p class="page-subtitle">Filter stocks by price, momentum, RSI, volume &amp; sector</p>
+        <div class="screen-container">
+            <h1 class="page-title">Stock Screener</h1>
+            <p class="page-subtitle">Filter &amp; scan all NSE stocks by momentum, RSI, price, volume &amp; sector</p>
 
-        <div class="screen-layout">
-            <!-- Sidebar -->
-            <aside class="screen-sidebar">
-                <div class="preset-section">
-                    <h3>Quick Scans</h3>
-                    <button class="preset-btn active" data-preset="all" onclick="runPreset('all',this)">
-                        <span class="preset-icon">📋</span> All Stocks
-                    </button>
-                    <button class="preset-btn" data-preset="breakout" onclick="runPreset('breakout',this)">
-                        <span class="preset-icon">🚀</span> Bullish Breakout
-                    </button>
-                    <button class="preset-btn" data-preset="volume" onclick="runPreset('volume',this)">
-                        <span class="preset-icon">⚡</span> Unusual Volume
-                    </button>
-                    <button class="preset-btn" data-preset="momentum" onclick="runPreset('momentum',this)">
-                        <span class="preset-icon">📈</span> High Momentum
-                    </button>
-                    <button class="preset-btn" data-preset="rsi_os" onclick="runPreset('rsi_os',this)">
-                        <span class="preset-icon">🟢</span> RSI Oversold (&lt;30)
-                    </button>
-                    <button class="preset-btn" data-preset="rsi_ob" onclick="runPreset('rsi_ob',this)">
-                        <span class="preset-icon">🔴</span> RSI Overbought (&gt;70)
-                    </button>
-                    <button class="preset-btn" data-preset="losers" onclick="runPreset('losers',this)">
-                        <span class="preset-icon">📉</span> Top Losers
-                    </button>
-                </div>
+            <!-- Mobile Quick Scans Horizontal Strip -->
+            <div class="mobile-presets-strip" id="mobilePresetsStrip">
+                <div class="m-preset-pill active" data-preset="all" onclick="runPreset('all', this)">📋 All Stocks</div>
+                <div class="m-preset-pill" data-preset="gainers" onclick="runPreset('gainers', this)">🏆 Top Gainers</div>
+                <div class="m-preset-pill" data-preset="breakout" onclick="runPreset('breakout', this)">🚀 Breakout</div>
+                <div class="m-preset-pill" data-preset="volume" onclick="runPreset('volume', this)">⚡ Volume Surge</div>
+                <div class="m-preset-pill" data-preset="momentum" onclick="runPreset('momentum', this)">📈 Momentum</div>
+                <div class="m-preset-pill" data-preset="losers" onclick="runPreset('losers', this)">📉 Top Losers</div>
+                <div class="m-preset-pill" data-preset="rsi_os" onclick="runPreset('rsi_os', this)">🟢 Oversold (&lt;30)</div>
+                <div class="m-preset-pill" data-preset="rsi_ob" onclick="runPreset('rsi_ob', this)">🔴 Overbought (&gt;70)</div>
+            </div>
 
-                <div class="filter-card">
-                    <div class="filter-card-title">🔍 Search</div>
-                    <div class="filter-row">
-                        <input type="text" id="fSearch" placeholder="Ticker or company name…" oninput="onSearchInput()">
+            <!-- Mobile Controls Toolbar (Search + Filter Drawer Toggle) -->
+            <div class="mobile-controls-bar">
+                <div class="mobile-search-row">
+                    <div class="mobile-search-input-wrap">
+                        <svg class="mobile-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="mSearch" placeholder="Search ticker or company…" oninput="onMobileSearchInput(this.value)">
+                        <span class="mobile-search-clear" id="mSearchClear" onclick="clearMobileSearch()">✕</span>
                     </div>
+                    <button class="btn-filter-toggle" id="btnFilterToggle" onclick="toggleMobileFilters()">
+                        <span>⚙️ Filters</span>
+                        <span class="filter-count-badge" id="filterCountBadge">0</span>
+                    </button>
                 </div>
 
-                <div class="filter-card">
-                    <div class="filter-card-title">⚙️ Filters</div>
-
+                <!-- Mobile Expandable Filters Drawer -->
+                <div class="mobile-filters-drawer" id="mobileFiltersDrawer">
+                    <div class="filter-card-header">
+                        <span class="filter-card-title">Detailed Filters</span>
+                        <button class="refresh-btn" onclick="clearAll(); toggleMobileFilters();" style="padding:2px 8px;font-size:0.7rem;">Reset All</button>
+                    </div>
                     <div class="filter-row">
                         <label>Sector</label>
-                        <select id="fSector" onchange="markCustom()">
-                            <option value="">All Sectors</option>
-                        </select>
-                    </div>
-
-                    <div class="filter-row">
-                        <label>Price (₹)</label>
-                        <div class="range-row">
-                            <input type="number" id="fPriceMin" placeholder="Min" onchange="markCustom()">
-                            <input type="number" id="fPriceMax" placeholder="Max" onchange="markCustom()">
+                        <div class="custom-select-wrapper" id="mSectorWrapper">
+                            <button type="button" class="custom-select-trigger" id="mSectorBtn" onclick="toggleCustomSelect('mSectorWrapper')">
+                                <span id="mSectorLabel">All Sectors</span>
+                                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                            </button>
+                            <div class="custom-select-menu" id="mSectorMenu"></div>
+                            <select id="mSector" style="display:none;" onchange="syncFromMobile(); markCustom();">
+                                <option value="">All Sectors</option>
+                            </select>
                         </div>
                     </div>
-
+                    <div class="filter-row">
+                        <label>Price Range (₹)</label>
+                        <div class="range-row">
+                            <input type="number" id="mPriceMin" placeholder="Min ₹" oninput="syncFromMobile(); markCustom();" onkeydown="handleEnter(event)">
+                            <input type="number" id="mPriceMax" placeholder="Max ₹" oninput="syncFromMobile(); markCustom();" onkeydown="handleEnter(event)">
+                        </div>
+                    </div>
                     <div class="filter-row">
                         <label>Change %</label>
                         <div class="range-row">
-                            <input type="number" id="fChgMin" placeholder="Min %" onchange="markCustom()">
-                            <input type="number" id="fChgMax" placeholder="Max %" onchange="markCustom()">
+                            <input type="number" id="mChgMin" placeholder="Min %" oninput="syncFromMobile(); markCustom();" onkeydown="handleEnter(event)">
+                            <input type="number" id="mChgMax" placeholder="Max %" oninput="syncFromMobile(); markCustom();" onkeydown="handleEnter(event)">
                         </div>
                     </div>
-
                     <div class="filter-row">
-                        <label>RSI</label>
+                        <label>RSI (14)</label>
                         <div class="range-row">
-                            <input type="number" id="fRsiMin" placeholder="Min" min="0" max="100" onchange="markCustom()">
-                            <input type="number" id="fRsiMax" placeholder="Max" min="0" max="100" onchange="markCustom()">
+                            <input type="number" id="mRsiMin" placeholder="Min" min="0" max="100" oninput="syncFromMobile(); markCustom();" onkeydown="handleEnter(event)">
+                            <input type="number" id="mRsiMax" placeholder="Max" min="0" max="100" oninput="syncFromMobile(); markCustom();" onkeydown="handleEnter(event)">
+                        </div>
+                    </div>
+                    <div class="filter-row">
+                        <label>Volume Ratio (vs 20D avg)</label>
+                        <div class="custom-select-wrapper" id="mVolRatioWrapper">
+                            <button type="button" class="custom-select-trigger" id="mVolRatioBtn" onclick="toggleCustomSelect('mVolRatioWrapper')">
+                                <span id="mVolRatioLabel">Any Volume</span>
+                                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                            </button>
+                            <div class="custom-select-menu" id="mVolRatioMenu">
+                                <div class="custom-select-item active" data-value="" onclick="selectCustomOption('mVolRatio', '', 'Any Volume')">Any Volume</div>
+                                <div class="custom-select-item" data-value="1" onclick="selectCustomOption('mVolRatio', '1', 'Above 1× avg')">Above 1× avg</div>
+                                <div class="custom-select-item" data-value="1.5" onclick="selectCustomOption('mVolRatio', '1.5', 'Above 1.5× avg')">Above 1.5× avg</div>
+                                <div class="custom-select-item" data-value="2" onclick="selectCustomOption('mVolRatio', '2', 'Above 2× avg')">Above 2× avg</div>
+                                <div class="custom-select-item" data-value="3" onclick="selectCustomOption('mVolRatio', '3', 'Above 3× avg')">Above 3× avg</div>
+                                <div class="custom-select-item" data-value="5" onclick="selectCustomOption('mVolRatio', '5', 'Above 5× avg')">Above 5× avg</div>
+                            </div>
+                            <select id="mVolRatio" style="display:none;" onchange="syncFromMobile(); markCustom();">
+                                <option value="">Any Volume</option>
+                                <option value="1">Above 1×</option>
+                                <option value="1.5">Above 1.5×</option>
+                                <option value="2">Above 2×</option>
+                                <option value="3">Above 3×</option>
+                                <option value="5">Above 5×</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn-apply" onclick="applyFilters(); toggleMobileFilters();">Apply Filters</button>
+                </div>
+            </div>
+
+            <div class="screen-layout">
+                <!-- Desktop Sidebar -->
+                <aside class="screen-sidebar">
+                    <div class="preset-section">
+                        <h3>Quick Scans</h3>
+                        <div class="preset-list">
+                            <button class="preset-btn active" data-preset="all" onclick="runPreset('all',this)">
+                                <span class="preset-icon">📋</span> All Stocks
+                            </button>
+                            <button class="preset-btn" data-preset="gainers" onclick="runPreset('gainers',this)">
+                                <span class="preset-icon">🏆</span> Top Gainers (&gt;2%)
+                            </button>
+                            <button class="preset-btn" data-preset="breakout" onclick="runPreset('breakout',this)">
+                                <span class="preset-icon">🚀</span> Bullish Breakout
+                            </button>
+                            <button class="preset-btn" data-preset="volume" onclick="runPreset('volume',this)">
+                                <span class="preset-icon">⚡</span> Unusual Volume (&gt;2×)
+                            </button>
+                            <button class="preset-btn" data-preset="momentum" onclick="runPreset('momentum',this)">
+                                <span class="preset-icon">📈</span> High Momentum
+                            </button>
+                            <button class="preset-btn" data-preset="losers" onclick="runPreset('losers',this)">
+                                <span class="preset-icon">📉</span> Top Losers (&lt;-1%)
+                            </button>
+                            <button class="preset-btn" data-preset="rsi_os" onclick="runPreset('rsi_os',this)">
+                                <span class="preset-icon">🟢</span> RSI Oversold (&lt;30)
+                            </button>
+                            <button class="preset-btn" data-preset="rsi_ob" onclick="runPreset('rsi_ob',this)">
+                                <span class="preset-icon">🔴</span> RSI Overbought (&gt;70)
+                            </button>
                         </div>
                     </div>
 
-                    <div class="filter-row">
-                        <label>Volume Ratio (× avg)</label>
-                        <select id="fVolRatio" onchange="markCustom()">
-                            <option value="">Any</option>
-                            <option value="1">Above 1×</option>
-                            <option value="1.5">Above 1.5×</option>
-                            <option value="2">Above 2×</option>
-                            <option value="3">Above 3×</option>
-                            <option value="5">Above 5×</option>
-                        </select>
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <span class="filter-card-title">🔍 Search</span>
+                        </div>
+                        <div class="filter-row" style="margin-bottom:0;">
+                            <input type="text" id="fSearch" placeholder="Ticker or company name…" oninput="onSearchInput(this.value)">
+                        </div>
                     </div>
 
-                    <button class="btn-apply" onclick="applyFilters()">Apply Filters</button>
-                    <button class="btn-clear" id="btnClear" onclick="clearAll()">✕ Clear All</button>
-                </div>
-            </aside>
+                    <div class="filter-card">
+                        <div class="filter-card-header">
+                            <span class="filter-card-title">⚙️ Filters</span>
+                        </div>
 
-            <!-- Main content -->
-            <div class="screen-main">
-                <div class="chips-row" id="chipsRow"></div>
+                        <div class="filter-row">
+                            <label>Sector</label>
+                            <select id="fSector" onchange="syncToMobile(); markCustom();">
+                                <option value="">All Sectors</option>
+                            </select>
+                        </div>
 
-                <div class="results-header">
-                    <h2 id="resultsTitle">All Stocks</h2>
-                    <div class="results-meta">
-                        <span class="results-count" id="resultsCount">—</span>
-                        <button class="refresh-btn" onclick="reload()">↻ Refresh</button>
+                        <div class="filter-row">
+                            <label>Price Range (₹)</label>
+                            <div class="range-row">
+                                <input type="number" id="fPriceMin" placeholder="Min" oninput="syncToMobile(); markCustom();" onkeydown="handleEnter(event)">
+                                <input type="number" id="fPriceMax" placeholder="Max" oninput="syncToMobile(); markCustom();" onkeydown="handleEnter(event)">
+                            </div>
+                        </div>
+
+                        <div class="filter-row">
+                            <label>Change %</label>
+                            <div class="range-row">
+                                <input type="number" id="fChgMin" placeholder="Min %" oninput="syncToMobile(); markCustom();" onkeydown="handleEnter(event)">
+                                <input type="number" id="fChgMax" placeholder="Max %" oninput="syncToMobile(); markCustom();" onkeydown="handleEnter(event)">
+                            </div>
+                        </div>
+
+                        <div class="filter-row">
+                            <label>RSI (14)</label>
+                            <div class="range-row">
+                                <input type="number" id="fRsiMin" placeholder="Min" min="0" max="100" oninput="syncToMobile(); markCustom();" onkeydown="handleEnter(event)">
+                                <input type="number" id="fRsiMax" placeholder="Max" min="0" max="100" oninput="syncToMobile(); markCustom();" onkeydown="handleEnter(event)">
+                            </div>
+                        </div>
+
+                        <div class="filter-row">
+                            <label>Volume Ratio (vs 20D avg)</label>
+                            <select id="fVolRatio" onchange="syncToMobile(); markCustom();">
+                                <option value="">Any</option>
+                                <option value="1">Above 1×</option>
+                                <option value="1.5">Above 1.5×</option>
+                                <option value="2">Above 2×</option>
+                                <option value="3">Above 3×</option>
+                                <option value="5">Above 5×</option>
+                            </select>
+                        </div>
+
+                        <button class="btn-apply" onclick="applyFilters()">Apply Filters</button>
+                        <button class="btn-clear" id="btnClear" onclick="clearAll()">✕ Clear All</button>
                     </div>
-                </div>
+                </aside>
 
-                <div style="overflow-x:auto;">
-                    <table class="screen-table">
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th class="th-sort" data-col="ticker" onclick="setSort('ticker')">Ticker</th>
-                                <th class="th-sort" data-col="price" onclick="setSort('price')">Price</th>
-                                <th class="th-sort" data-col="change" onclick="setSort('change')">Change</th>
-                                <th class="th-sort desc" data-col="change_pct" onclick="setSort('change_pct')">Chg %</th>
-                                <th class="th-sort" data-col="rsi" onclick="setSort('rsi')">RSI</th>
-                                <th class="th-sort" data-col="vol_ratio" onclick="setSort('vol_ratio')">Vol×</th>
-                                <th class="th-sort" data-col="volume" onclick="setSort('volume')">Volume</th>
-                                <th class="th-sort" data-col="sector" onclick="setSort('sector')">Sector</th>
-                            </tr>
-                        </thead>
-                        <tbody id="resultsBody">
-                            <tr><td colspan="9" style="text-align:center;padding:3rem;color:var(--text-secondary);">
-                                <div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading…</div>
-                            </td></tr>
-                        </tbody>
-                    </table>
-                </div>
+                <!-- Main Results Content -->
+                <div class="screen-main">
+                    <div class="chips-row" id="chipsRow"></div>
 
-                <div class="pagination" id="paginationRow" style="display:none;">
-                    <button class="pg-btn" id="pgPrev" onclick="changePage(-1)">← Prev</button>
-                    <span class="pg-info" id="pgInfo"></span>
-                    <button class="pg-btn" id="pgNext" onclick="changePage(1)">Next →</button>
+                    <div class="results-header">
+                        <div class="results-title-wrap">
+                            <h2 id="resultsTitle">All Stocks</h2>
+                            <span class="results-count" id="resultsCount">—</span>
+                        </div>
+                        <div class="results-meta">
+                            <button class="refresh-btn" onclick="reload()">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                                </svg>
+                                <span>Refresh</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Desktop View Table -->
+                    <div class="table-responsive">
+                        <table class="screen-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;">#</th>
+                                    <th class="th-sort" data-col="ticker" onclick="setSort('ticker')">Ticker</th>
+                                    <th class="th-sort" data-col="price" onclick="setSort('price')">Price (₹)</th>
+                                    <th class="th-sort" data-col="change" onclick="setSort('change')">Change</th>
+                                    <th class="th-sort desc" data-col="change_pct" onclick="setSort('change_pct')">Chg %</th>
+                                    <th class="th-sort" data-col="rsi" onclick="setSort('rsi')">RSI (14)</th>
+                                    <th class="th-sort" data-col="vol_ratio" onclick="setSort('vol_ratio')">Vol Ratio</th>
+                                    <th class="th-sort" data-col="volume" onclick="setSort('volume')">Volume</th>
+                                    <th class="th-sort" data-col="sector" onclick="setSort('sector')">Sector</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsBody">
+                                <tr><td colspan="9" style="text-align:center;padding:3rem;color:var(--text-secondary);">
+                                    <div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading market scans…</div>
+                                </td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Mobile View Stock Cards List -->
+                    <div class="mobile-stocks-list" id="mobileResultsList">
+                        <div style="text-align:center;padding:2.5rem;color:var(--text-secondary);">
+                            <div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading market scans…</div>
+                        </div>
+                    </div>
+
+                    <!-- Pagination -->
+                    <div class="pagination" id="paginationRow" style="display:none;">
+                        <button class="pg-btn" id="pgPrev" onclick="changePage(-1)">← Prev</button>
+                        <span class="pg-info" id="pgInfo"></span>
+                        <button class="pg-btn" id="pgNext" onclick="changePage(1)">Next →</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -252,19 +1103,162 @@
         var sortCol = 'change_pct';
         var sortAsc = false;
         var currentPreset = 'all';
-        var sectorsLoaded = false;
         var searchTimer = null;
         var refreshTimer = null;
+        var currentData = [];
 
-        // Preset definitions: { title, params }
+        var KNOWN_SECTORS = [
+            'Auto', 'Banking', 'Consumer Durables', 'Energy', 'FMCG', 
+            'IT', 'Industrials', 'Media', 'Metal', 'Pharma', 'Realty', 'Telecom'
+        ];
+
+        // Preset definitions
         var PRESETS = {
-            all:       { title: 'All Stocks',           params: {} },
-            breakout:  { title: '🚀 Bullish Breakout',  params: { change_min: 1.5, vol_ratio_min: 1.5 } },
-            volume:    { title: '⚡ Unusual Volume',     params: { vol_ratio_min: 2 } },
-            momentum:  { title: '📈 High Momentum',     params: { change_min: 0.5, vol_ratio_min: 1 } },
-            rsi_os:    { title: '🟢 RSI Oversold',      params: { rsi_max: 30 } },
-            rsi_ob:    { title: '🔴 RSI Overbought',    params: { rsi_min: 70 } },
-            losers:    { title: '📉 Top Losers',        params: { change_max: -1 } },
+            all:       { title: 'All Stocks',          params: {} },
+            gainers:   { title: '🏆 Top Gainers',       params: { change_min: 2 } },
+            breakout:  { title: '🚀 Bullish Breakout', params: { change_min: 1.5, vol_ratio_min: 1.5 } },
+            volume:    { title: '⚡ Unusual Volume',    params: { vol_ratio_min: 2 } },
+            momentum:  { title: '📈 High Momentum',    params: { change_min: 0.5, vol_ratio_min: 1 } },
+            losers:    { title: '📉 Top Losers',       params: { change_max: -1 } },
+            rsi_os:    { title: '🟢 RSI Oversold',     params: { rsi_max: 30 } },
+            rsi_ob:    { title: '🔴 RSI Overbought',   params: { rsi_min: 70 } },
+        };
+
+        // Custom Select helpers
+        window.toggleCustomSelect = function(wrapperId) {
+            var wrapper = document.getElementById(wrapperId);
+            if (!wrapper) return;
+            var isOpen = wrapper.classList.contains('open');
+            document.querySelectorAll('.custom-select-wrapper.open').forEach(function(w) {
+                if (w !== wrapper) w.classList.remove('open');
+            });
+            wrapper.classList.toggle('open', !isOpen);
+        };
+
+        window.selectCustomOption = function(selectId, value, labelText) {
+            var sel = document.getElementById(selectId);
+            if (sel) {
+                sel.value = value;
+                if (selectId.startsWith('m')) {
+                    syncFromMobile();
+                } else {
+                    syncToMobile();
+                }
+                markCustom();
+            }
+            var wrapper = document.getElementById(selectId + 'Wrapper');
+            if (wrapper) wrapper.classList.remove('open');
+        };
+
+        function updateCustomSelectUI(selectId, labelId, menuId, defaultText) {
+            var sel = document.getElementById(selectId);
+            var lbl = document.getElementById(labelId);
+            var menu = document.getElementById(menuId);
+            if (!sel || !lbl) return;
+            var val = sel.value;
+            var text = defaultText;
+            if (sel.selectedIndex >= 0 && sel.options[sel.selectedIndex]) {
+                text = sel.options[sel.selectedIndex].text;
+            }
+            lbl.textContent = text || defaultText;
+            if (menu) {
+                menu.querySelectorAll('.custom-select-item').forEach(function(item) {
+                    item.classList.toggle('active', item.dataset.value === val);
+                });
+            }
+        }
+
+        // Initialize sectors in both dropdowns
+        function initSectors() {
+            var selD = document.getElementById('fSector');
+            var selM = document.getElementById('mSector');
+            var menuM = document.getElementById('mSectorMenu');
+
+            if (menuM) {
+                menuM.innerHTML = '<div class="custom-select-item active" data-value="" onclick="selectCustomOption(\'mSector\', \'\', \'All Sectors\')">All Sectors</div>';
+            }
+
+            KNOWN_SECTORS.forEach(function (sec) {
+                if (selD) {
+                    var optD = document.createElement('option');
+                    optD.value = sec; optD.textContent = sec;
+                    selD.appendChild(optD);
+                }
+
+                if (selM) {
+                    var optM = document.createElement('option');
+                    optM.value = sec; optM.textContent = sec;
+                    selM.appendChild(optM);
+                }
+
+                if (menuM) {
+                    var item = document.createElement('div');
+                    item.className = 'custom-select-item';
+                    item.dataset.value = sec;
+                    item.textContent = sec;
+                    (function(secName) {
+                        item.onclick = function() {
+                            selectCustomOption('mSector', secName, secName);
+                        };
+                    })(sec);
+                    menuM.appendChild(item);
+                }
+            });
+        }
+        initSectors();
+
+        // Sync Desktop & Mobile filter inputs
+        window.syncToMobile = function() {
+            document.getElementById('mSector').value = document.getElementById('fSector').value;
+            document.getElementById('mPriceMin').value = document.getElementById('fPriceMin').value;
+            document.getElementById('mPriceMax').value = document.getElementById('fPriceMax').value;
+            document.getElementById('mChgMin').value = document.getElementById('fChgMin').value;
+            document.getElementById('mChgMax').value = document.getElementById('fChgMax').value;
+            document.getElementById('mRsiMin').value = document.getElementById('fRsiMin').value;
+            document.getElementById('mRsiMax').value = document.getElementById('fRsiMax').value;
+            document.getElementById('mVolRatio').value = document.getElementById('fVolRatio').value;
+            updateCustomSelectUI('mSector', 'mSectorLabel', 'mSectorMenu', 'All Sectors');
+            updateCustomSelectUI('mVolRatio', 'mVolRatioLabel', 'mVolRatioMenu', 'Any Volume');
+            updateFilterCountBadge();
+        };
+
+        window.syncFromMobile = function() {
+            document.getElementById('fSector').value = document.getElementById('mSector').value;
+            document.getElementById('fPriceMin').value = document.getElementById('mPriceMin').value;
+            document.getElementById('fPriceMax').value = document.getElementById('mPriceMax').value;
+            document.getElementById('fChgMin').value = document.getElementById('mChgMin').value;
+            document.getElementById('fChgMax').value = document.getElementById('mChgMax').value;
+            document.getElementById('fRsiMin').value = document.getElementById('mRsiMin').value;
+            document.getElementById('fRsiMax').value = document.getElementById('mRsiMax').value;
+            document.getElementById('fVolRatio').value = document.getElementById('mVolRatio').value;
+            updateCustomSelectUI('mSector', 'mSectorLabel', 'mSectorMenu', 'All Sectors');
+            updateCustomSelectUI('mVolRatio', 'mVolRatioLabel', 'mVolRatioMenu', 'Any Volume');
+            updateFilterCountBadge();
+        };
+
+        window.toggleMobileFilters = function() {
+            var drawer = document.getElementById('mobileFiltersDrawer');
+            var btn = document.getElementById('btnFilterToggle');
+            drawer.classList.toggle('open');
+            btn.classList.toggle('active', drawer.classList.contains('open'));
+        };
+
+        function updateFilterCountBadge() {
+            var p = getFilterParams();
+            var count = Object.keys(p).length;
+            var badge = document.getElementById('filterCountBadge');
+            if (badge) {
+                badge.textContent = count;
+                badge.style.display = count > 0 ? 'inline-block' : 'none';
+            }
+        }
+
+        window.handleEnter = function(e) {
+            if (e.key === 'Enter') {
+                applyFilters();
+                var drawer = document.getElementById('mobileFiltersDrawer');
+                if (drawer && drawer.classList.contains('open')) toggleMobileFilters();
+            }
         };
 
         // ── Filter state ──────────────────────────────────────────────────────
@@ -290,12 +1284,12 @@
         }
 
         function hasFilters(params) {
-            return Object.keys(params).length > 0;
+            return Object.keys(params).length > 0 || (document.getElementById('fSearch').value.trim().length > 0);
         }
 
         // ── Query builder ────────────────────────────────────────────────────
         function buildUrl(params, page) {
-            var search = document.getElementById('fSearch').value.trim();
+            var search = (document.getElementById('fSearch').value || document.getElementById('mSearch').value || '').trim();
             var qs = [];
             if (search) qs.push('search=' + encodeURIComponent(search));
             Object.keys(params).forEach(function (k) {
@@ -315,7 +1309,6 @@
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 var json = await res.json();
 
-                // Support both old list format and new paginated format
                 var data, total, pg, ps;
                 if (Array.isArray(json)) {
                     data = json; total = json.length; pg = 1; ps = json.length;
@@ -326,43 +1319,62 @@
 
                 currentPage = pg;
                 totalResults = total;
+                currentData = data;
 
-                // Populate sector dropdown once
-                if (!sectorsLoaded && data.length) {
-                    populateSectors(data);
-                    sectorsLoaded = true;
-                }
+                // Dynamically append any unknown sectors from backend data
+                data.forEach(function (s) {
+                    if (s.sector && s.sector !== 'Unknown' && KNOWN_SECTORS.indexOf(s.sector) === -1) {
+                        KNOWN_SECTORS.push(s.sector);
+                        var optD = document.createElement('option');
+                        optD.value = s.sector; optD.textContent = s.sector;
+                        document.getElementById('fSector')?.appendChild(optD);
+                        var optM = document.createElement('option');
+                        optM.value = s.sector; optM.textContent = s.sector;
+                        document.getElementById('mSector')?.appendChild(optM);
 
-                // Client-side sort (server returns by abs change desc; user may re-sort)
+                        var menuM = document.getElementById('mSectorMenu');
+                        if (menuM) {
+                            var item = document.createElement('div');
+                            item.className = 'custom-select-item';
+                            item.dataset.value = s.sector;
+                            item.textContent = s.sector;
+                            (function(secName) {
+                                item.onclick = function() {
+                                    selectCustomOption('mSector', secName, secName);
+                                };
+                            })(s.sector);
+                            menuM.appendChild(item);
+                        }
+                    }
+                });
+
                 var sorted = clientSort(data);
-                renderTable(sorted, title, (pg - 1) * ps);
+                renderTableAndCards(sorted, title, (pg - 1) * ps);
                 renderPagination(total, pg, ps);
                 renderChips(params);
-                document.getElementById('btnClear').style.display = hasFilters(params) ? 'block' : 'none';
+                updateFilterCountBadge();
+
+                var activeFilter = hasFilters(params);
+                document.getElementById('btnClear').style.display = activeFilter ? 'block' : 'none';
             } catch (e) {
                 document.getElementById('resultsBody').innerHTML =
-                    '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Failed: ' + e.message + '</td></tr>';
+                    '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2rem;">Failed to load screener: ' + e.message + '</td></tr>';
+                document.getElementById('mobileResultsList').innerHTML =
+                    '<div style="text-align:center;color:var(--text-secondary);padding:2rem;">Failed to load screener: ' + e.message + '</div>';
                 document.getElementById('resultsCount').textContent = 'Error';
             }
         }
 
-        function populateSectors(data) {
-            var sectors = {};
-            data.forEach(function (s) { if (s.sector && s.sector !== 'Unknown') sectors[s.sector] = true; });
-            var sel = document.getElementById('fSector');
-            Object.keys(sectors).sort().forEach(function (sec) {
-                var opt = document.createElement('option');
-                opt.value = sec; opt.textContent = sec;
-                sel.appendChild(opt);
-            });
-        }
-
         function setLoading() {
-            document.getElementById('resultsCount').textContent = 'Loading…';
+            document.getElementById('resultsCount').textContent = 'Scanning…';
             document.getElementById('resultsBody').innerHTML =
                 '<tr><td colspan="9" style="text-align:center;padding:2.5rem;color:var(--text-secondary);">' +
-                '<div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading…</div>' +
+                '<div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading market scans…</div>' +
                 '</td></tr>';
+            document.getElementById('mobileResultsList').innerHTML =
+                '<div style="text-align:center;padding:2.5rem;color:var(--text-secondary);">' +
+                '<div style="display:inline-flex;align-items:center;gap:0.6rem;"><div class="spin"></div> Loading market scans…</div>' +
+                '</div>';
             document.getElementById('paginationRow').style.display = 'none';
         }
 
@@ -386,11 +1398,12 @@
             });
             var th = document.querySelector('.th-sort[data-col="' + col + '"]');
             if (th) th.classList.add(sortAsc ? 'asc' : 'desc');
-            // Re-render current page with new sort
-            applyFilters();
+            
+            var sorted = clientSort(currentData);
+            renderTableAndCards(sorted, document.getElementById('resultsTitle').innerHTML, (currentPage - 1) * PAGE_SIZE);
         };
 
-        // ── Table render ──────────────────────────────────────────────────────
+        // ── Formatters ────────────────────────────────────────────────────────
         function fmtVol(v) {
             if (!v) return '--';
             if (v >= 1e7) return (v / 1e7).toFixed(2) + ' Cr';
@@ -402,37 +1415,74 @@
         function rsiHtml(rsi) {
             if (rsi == null) return '<span style="color:#555;">—</span>';
             var v = rsi.toFixed(1);
-            if (rsi >= 70) return '<span class="rsi-ob">' + v + '</span>';
-            if (rsi <= 30) return '<span class="rsi-os">' + v + '</span>';
-            return '<span style="color:#c4c4c8;">' + v + '</span>';
+            if (rsi >= 70) return '<span class="rsi-badge rsi-ob">' + v + '</span>';
+            if (rsi <= 30) return '<span class="rsi-badge rsi-os">' + v + '</span>';
+            return '<span class="rsi-badge rsi-norm">' + v + '</span>';
         }
 
-        function renderTable(data, title, offset) {
-            document.getElementById('resultsTitle').innerHTML = title || 'Results';
+        // ── Render Desktop Table & Mobile Cards ───────────────────────────────
+        function renderTableAndCards(data, title, offset) {
+            document.getElementById('resultsTitle').innerHTML = title || 'All Stocks';
             document.getElementById('resultsCount').textContent = totalResults + ' result' + (totalResults !== 1 ? 's' : '');
+            
             var body = document.getElementById('resultsBody');
+            var mList = document.getElementById('mobileResultsList');
+
             if (!data.length) {
-                body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2.5rem;">No stocks match your criteria</td></tr>';
+                var emptyMsg = '<div style="text-align:center;color:var(--text-secondary);padding:2.5rem;">No stocks match your scan criteria</div>';
+                body.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:2.5rem;">No stocks match your scan criteria</td></tr>';
+                mList.innerHTML = emptyMsg;
                 return;
             }
+
+            // 1. Desktop Table HTML
             body.innerHTML = data.map(function (s, i) {
-                var cls  = s.change >= 0 ? 'text-green' : 'text-red';
-                var sign = s.change >= 0 ? '+' : '';
-                var vr   = s.vol_ratio != null ? s.vol_ratio.toFixed(1) + '×' : '—';
-                var sec  = s.sector && s.sector !== 'Unknown' ? '<span class="sector-tag">' + s.sector + '</span>' : '<span style="color:#444;">—</span>';
+                var isPos = s.change >= 0;
+                var cls   = isPos ? 'text-green' : 'text-red';
+                var sign  = isPos ? '+' : '';
+                var pillCls = isPos ? 'pos' : 'neg';
+                var vr    = s.vol_ratio != null ? s.vol_ratio.toFixed(1) + '×' : '—';
+                var sec   = s.sector && s.sector !== 'Unknown' ? '<span class="sector-tag">' + s.sector + '</span>' : '<span style="color:#444;">—</span>';
+                
                 return '<tr class="data-row" onclick="window.location.href=\'overview.html?ticker=' + s.ticker + '\'">' +
                     '<td style="color:#555;font-size:0.75rem;">' + (offset + i + 1) + '</td>' +
-                    '<td><span style="font-weight:600;color:#e0e0e0;">' + s.ticker + '</span>' +
-                        (s.name && s.name !== s.ticker ? '<div style="font-size:0.7rem;color:#666;margin-top:1px;max-width:160px;overflow:hidden;text-overflow:ellipsis;">' + s.name + '</div>' : '') +
+                    '<td><span style="font-weight:600;color:#fff;">' + s.ticker + '</span>' +
+                        (s.name && s.name !== s.ticker ? '<div style="font-size:0.7rem;color:#71717a;margin-top:1px;max-width:180px;overflow:hidden;text-overflow:ellipsis;">' + s.name + '</div>' : '') +
                     '</td>' +
-                    '<td style="font-family:Roboto Mono,monospace;">₹' + s.price.toFixed(2) + '</td>' +
+                    '<td style="font-family:Roboto Mono,monospace;font-weight:600;">₹' + s.price.toFixed(2) + '</td>' +
                     '<td class="' + cls + '" style="font-family:Roboto Mono,monospace;">' + sign + s.change.toFixed(2) + '</td>' +
-                    '<td class="' + cls + '" style="font-family:Roboto Mono,monospace;font-weight:600;">' + sign + s.change_pct.toFixed(2) + '%</td>' +
+                    '<td><span class="chg-pill ' + pillCls + '" style="font-family:Roboto Mono,monospace;">' + sign + s.change_pct.toFixed(2) + '%</span></td>' +
                     '<td style="font-family:Roboto Mono,monospace;">' + rsiHtml(s.rsi) + '</td>' +
                     '<td style="font-family:Roboto Mono,monospace;color:#a1a1aa;">' + vr + '</td>' +
                     '<td style="font-family:Roboto Mono,monospace;font-size:0.8rem;color:#a1a1aa;">' + fmtVol(s.volume) + '</td>' +
                     '<td>' + sec + '</td>' +
                     '</tr>';
+            }).join('');
+
+            // 2. Mobile Pro Cards HTML
+            mList.innerHTML = data.map(function (s) {
+                var isPos = s.change >= 0;
+                var sign  = isPos ? '+' : '';
+                var pillCls = isPos ? 'pos' : 'neg';
+                var vr    = s.vol_ratio != null ? s.vol_ratio.toFixed(1) + '×' : '—';
+                var sec   = s.sector && s.sector !== 'Unknown' ? s.sector : 'Equities';
+
+                return '<div class="mobile-stock-card" onclick="window.location.href=\'overview.html?ticker=' + s.ticker + '\'">' +
+                    '<div class="m-card-top">' +
+                        '<div class="m-ticker">' + s.ticker + '</div>' +
+                        '<div class="m-price">₹' + s.price.toFixed(2) + '</div>' +
+                    '</div>' +
+                    '<div class="m-card-mid">' +
+                        '<div class="m-name">' + (s.name || s.ticker) + '</div>' +
+                        '<div class="chg-pill ' + pillCls + '" style="font-family:Roboto Mono,monospace;">' + sign + s.change_pct.toFixed(2) + '% (' + sign + s.change.toFixed(2) + ')</div>' +
+                    '</div>' +
+                    '<div class="m-card-bot">' +
+                        '<span class="sector-tag">' + sec + '</span>' +
+                        '<span>RSI: ' + (s.rsi != null ? s.rsi.toFixed(1) : '—') + '</span>' +
+                        '<span>Vol×: ' + vr + '</span>' +
+                        '<span style="margin-left:auto;color:#71717a;">' + fmtVol(s.volume) + '</span>' +
+                    '</div>' +
+                '</div>';
             }).join('');
         }
 
@@ -465,14 +1515,23 @@
             vol_ratio_min: function(v) { return 'Vol ≥ ' + v + '×'; },
         };
         var CHIP_CLEAR = {
-            sector: 'fSector', price_min: 'fPriceMin', price_max: 'fPriceMax',
-            change_min: 'fChgMin', change_max: 'fChgMax',
-            rsi_min: 'fRsiMin', rsi_max: 'fRsiMax', vol_ratio_min: 'fVolRatio',
+            sector: ['fSector', 'mSector'],
+            price_min: ['fPriceMin', 'mPriceMin'],
+            price_max: ['fPriceMax', 'mPriceMax'],
+            change_min: ['fChgMin', 'mChgMin'],
+            change_max: ['fChgMax', 'mChgMax'],
+            rsi_min: ['fRsiMin', 'mRsiMin'],
+            rsi_max: ['fRsiMax', 'mRsiMax'],
+            vol_ratio_min: ['fVolRatio', 'mVolRatio'],
         };
 
         function renderChips(params) {
             var row = document.getElementById('chipsRow');
             var html = '';
+            var search = (document.getElementById('fSearch').value || document.getElementById('mSearch').value || '').trim();
+            if (search) {
+                html += '<span class="chip">Search: ' + search + '<span class="chip-remove" onclick="clearSearchChip()">✕</span></span>';
+            }
             Object.keys(params).forEach(function (k) {
                 var label = CHIP_LABELS[k] ? CHIP_LABELS[k](params[k]) : k + ': ' + params[k];
                 html += '<span class="chip">' + label +
@@ -481,12 +1540,23 @@
             row.innerHTML = html;
         }
 
+        window.clearSearchChip = function() {
+            document.getElementById('fSearch').value = '';
+            document.getElementById('mSearch').value = '';
+            document.getElementById('mSearchClear').style.display = 'none';
+            applyFilters();
+        };
+
         window.clearChip = function (key) {
-            var elId = CHIP_CLEAR[key];
-            if (elId) {
-                var el = document.getElementById(elId);
-                if (el) { el.tagName === 'SELECT' ? (el.selectedIndex = 0) : (el.value = ''); }
+            var elIds = CHIP_CLEAR[key];
+            if (elIds) {
+                elIds.forEach(function(elId) {
+                    var el = document.getElementById(elId);
+                    if (el) { el.tagName === 'SELECT' ? (el.selectedIndex = 0) : (el.value = ''); }
+                });
             }
+            updateCustomSelectUI('mSector', 'mSectorLabel', 'mSectorMenu', 'All Sectors');
+            updateCustomSelectUI('mVolRatio', 'mVolRatioLabel', 'mVolRatioMenu', 'Any Volume');
             markCustom();
             applyFilters();
         };
@@ -494,28 +1564,51 @@
         // ── Preset & filter actions ───────────────────────────────────────────
         window.runPreset = function (name, btn) {
             currentPreset = name;
-            document.querySelectorAll('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
-            if (btn) btn.classList.add('active');
+            
+            // Sync active state in desktop and mobile buttons
+            document.querySelectorAll('.preset-btn').forEach(function (b) {
+                b.classList.toggle('active', b.dataset.preset === name);
+            });
+            document.querySelectorAll('.m-preset-pill').forEach(function (b) {
+                b.classList.toggle('active', b.dataset.preset === name);
+            });
+
             // Clear all filter inputs
-            ['fSector','fVolRatio'].forEach(function(id){
+            ['fSector','mSector','fVolRatio','mVolRatio'].forEach(function(id){
                 var el = document.getElementById(id); if(el) el.selectedIndex = 0;
             });
-            ['fPriceMin','fPriceMax','fChgMin','fChgMax','fRsiMin','fRsiMax'].forEach(function(id){
+            ['fPriceMin','mPriceMin','fPriceMax','mPriceMax','fChgMin','mChgMin','fChgMax','mChgMax','fRsiMin','mRsiMin','fRsiMax','mRsiMax'].forEach(function(id){
                 var el = document.getElementById(id); if(el) el.value = '';
             });
-            // Apply preset params to inputs
+
             var def = PRESETS[name] || {};
             var pp = def.params || {};
-            if (pp.change_min !== undefined) document.getElementById('fChgMin').value = pp.change_min;
-            if (pp.change_max !== undefined) document.getElementById('fChgMax').value = pp.change_max;
-            if (pp.rsi_min !== undefined)    document.getElementById('fRsiMin').value = pp.rsi_min;
-            if (pp.rsi_max !== undefined)    document.getElementById('fRsiMax').value = pp.rsi_max;
+            if (pp.change_min !== undefined) { document.getElementById('fChgMin').value = pp.change_min; document.getElementById('mChgMin').value = pp.change_min; }
+            if (pp.change_max !== undefined) { document.getElementById('fChgMax').value = pp.change_max; document.getElementById('mChgMax').value = pp.change_max; }
+            if (pp.rsi_min !== undefined)    { document.getElementById('fRsiMin').value = pp.rsi_min; document.getElementById('mRsiMin').value = pp.rsi_min; }
+            if (pp.rsi_max !== undefined)    { document.getElementById('fRsiMax').value = pp.rsi_max; document.getElementById('mRsiMax').value = pp.rsi_max; }
             if (pp.vol_ratio_min !== undefined) {
-                var sel = document.getElementById('fVolRatio');
-                for (var i = 0; i < sel.options.length; i++) {
-                    if (parseFloat(sel.options[i].value) === pp.vol_ratio_min) { sel.selectedIndex = i; break; }
-                }
+                ['fVolRatio', 'mVolRatio'].forEach(function(selId){
+                    var sel = document.getElementById(selId);
+                    for (var i = 0; i < sel.options.length; i++) {
+                        if (parseFloat(sel.options[i].value) === pp.vol_ratio_min) { sel.selectedIndex = i; break; }
+                    }
+                });
             }
+            // Configure sort direction
+            if (name === 'losers') {
+                sortCol = 'change_pct';
+                sortAsc = true; // Ascending by percentage (-15% before -1%) = biggest loss first
+            } else {
+                sortCol = 'change_pct';
+                sortAsc = false; // Descending by percentage (+15% before +1%) = biggest gain first
+            }
+            document.querySelectorAll('.th-sort').forEach(function (th) { th.classList.remove('asc', 'desc'); });
+            document.querySelector('.th-sort[data-col="change_pct"]')?.classList.add(sortAsc ? 'asc' : 'desc');
+
+            updateCustomSelectUI('mSector', 'mSectorLabel', 'mSectorMenu', 'All Sectors');
+            updateCustomSelectUI('mVolRatio', 'mVolRatioLabel', 'mVolRatioMenu', 'Any Volume');
+            updateFilterCountBadge();
             document.getElementById('btnClear').style.display = Object.keys(pp).length ? 'block' : 'none';
             currentPage = 1;
             fetch_and_render(pp, def.title, 1);
@@ -531,36 +1624,69 @@
         window.markCustom = function () {
             currentPreset = 'custom';
             document.querySelectorAll('.preset-btn').forEach(function (b) { b.classList.remove('active'); });
+            document.querySelectorAll('.m-preset-pill').forEach(function (b) { b.classList.remove('active'); });
+            updateFilterCountBadge();
         };
 
         window.clearAll = function () {
-            ['fSector','fVolRatio'].forEach(function(id){ var el=document.getElementById(id); if(el) el.selectedIndex=0; });
-            ['fPriceMin','fPriceMax','fChgMin','fChgMax','fRsiMin','fRsiMax','fSearch'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+            ['fSector','mSector','fVolRatio','mVolRatio'].forEach(function(id){ var el=document.getElementById(id); if(el) el.selectedIndex=0; });
+            ['fPriceMin','mPriceMin','fPriceMax','mPriceMax','fChgMin','mChgMin','fChgMax','mChgMax','fRsiMin','mRsiMin','fRsiMax','mRsiMax','fSearch','mSearch'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+            updateCustomSelectUI('mSector', 'mSectorLabel', 'mSectorMenu', 'All Sectors');
+            updateCustomSelectUI('mVolRatio', 'mVolRatioLabel', 'mVolRatioMenu', 'Any Volume');
             document.getElementById('btnClear').style.display = 'none';
+            document.getElementById('mSearchClear').style.display = 'none';
             document.getElementById('chipsRow').innerHTML = '';
+            updateFilterCountBadge();
             currentPage = 1;
             currentPreset = 'all';
-            document.querySelector('.preset-btn[data-preset="all"]').classList.add('active');
+            document.querySelector('.preset-btn[data-preset="all"]')?.classList.add('active');
+            document.querySelector('.m-preset-pill[data-preset="all"]')?.classList.add('active');
             fetch_and_render({}, 'All Stocks', 1);
         };
 
-        window.onSearchInput = function () {
+        // Dismiss open custom selects when clicking outside
+        document.addEventListener('click', function (e) {
+            if (!e.target.closest('.custom-select-wrapper')) {
+                document.querySelectorAll('.custom-select-wrapper.open').forEach(function (w) {
+                    w.classList.remove('open');
+                });
+            }
+        });
+
+        window.onSearchInput = function (val) {
+            document.getElementById('mSearch').value = val;
+            document.getElementById('mSearchClear').style.display = val ? 'block' : 'none';
             if (searchTimer) clearTimeout(searchTimer);
             searchTimer = setTimeout(function () {
                 markCustom();
                 applyFilters();
-            }, 350);
+            }, 300);
+        };
+
+        window.onMobileSearchInput = function (val) {
+            document.getElementById('fSearch').value = val;
+            document.getElementById('mSearchClear').style.display = val ? 'block' : 'none';
+            if (searchTimer) clearTimeout(searchTimer);
+            searchTimer = setTimeout(function () {
+                markCustom();
+                applyFilters();
+            }, 300);
+        };
+
+        window.clearMobileSearch = function() {
+            document.getElementById('fSearch').value = '';
+            document.getElementById('mSearch').value = '';
+            document.getElementById('mSearchClear').style.display = 'none';
+            applyFilters();
         };
 
         window.reload = function () {
-            // Force refresh by clearing cache timestamp via re-fetch
             var params = currentPreset !== 'custom' ? (PRESETS[currentPreset] || {}).params || {} : getFilterParams();
             fetch_and_render(params, document.getElementById('resultsTitle').innerHTML, currentPage);
         };
 
         // ── Init ──────────────────────────────────────────────────────────────
-        // Mark initial sort column
-        document.querySelector('.th-sort[data-col="change_pct"]').classList.add('desc');
+        document.querySelector('.th-sort[data-col="change_pct"]')?.classList.add('desc');
 
         fetch_and_render({}, 'All Stocks', 1);
 
@@ -584,6 +1710,6 @@
     </script>
 
     <script src="stocks.js"></script>
-    <script src="nav.js?v=8"></script>
+    <script src="nav.js?v=9"></script>
 </body>
 </html>

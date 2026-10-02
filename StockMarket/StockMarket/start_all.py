@@ -102,9 +102,13 @@ def free_port(port, timeout=20):
 
 
 def port_is_serving(port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        return s.connect_ex(("127.0.0.1", port)) == 0
+    import urllib.request
+    try:
+        url = f"http://127.0.0.1:{port}/api/time" if port == 8000 else f"http://127.0.0.1:{port}/docs"
+        with urllib.request.urlopen(url, timeout=1.0) as resp:
+            return resp.status in (200, 404)
+    except Exception:
+        return False
 
 
 def wait_until_serving(proc, port, name, timeout=900):
@@ -131,9 +135,9 @@ def _spawn(cwd, module, port, extra_env=None):
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
-    # -u on the child too, so its logs stream instead of arriving in chunks.
+    # Bind to 0.0.0.0 so devices on the same Wi-Fi (phones/tablets) can access it.
     return subprocess.Popen(
-        [PYTHON_EXE, "-u", "-m", "uvicorn", module, "--host", "127.0.0.1", "--port", str(port)],
+        [PYTHON_EXE, "-u", "-m", "uvicorn", module, "--host", "0.0.0.0", "--port", str(port)],
         cwd=cwd, env=env,
     )
 
@@ -148,6 +152,17 @@ def start_stock_market():
     log(f"Starting Stock Market backend on port {STOCK_PORT}...")
     free_port(STOCK_PORT)
     return _spawn(STOCK_BACKEND_DIR, "main:app", STOCK_PORT, {"PYTHONPATH": STOCK_BACKEND_DIR})
+
+
+def _get_lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 if __name__ == "__main__":
@@ -175,12 +190,13 @@ if __name__ == "__main__":
             ready[name] = wait_until_serving(proc, port, name)
 
         log()
+        lan_ip = _get_lan_ip()
         if all(ready.values()):
             log("Both platforms are running:")
         else:
             log("Launcher finished starting, but not everything came up:")
-        log(f"   - Stock Market:   http://127.0.0.1:{STOCK_PORT}   [{'ready' if ready.get('Stock Market') else 'NOT READY'}]")
-        log(f"   - News Sentiment: http://127.0.0.1:{NEWS_PORT}   [{'ready' if ready.get('News Sentiment') else 'NOT READY'}]")
+        log(f"   - Stock Market:   http://localhost:{STOCK_PORT} (Mobile: http://{lan_ip}:{STOCK_PORT})   [{'ready' if ready.get('Stock Market') else 'NOT READY'}]")
+        log(f"   - News Sentiment: http://localhost:{NEWS_PORT} (Mobile: http://{lan_ip}:{NEWS_PORT})   [{'ready' if ready.get('News Sentiment') else 'NOT READY'}]")
         log()
         log("Press Ctrl+C to stop both services.")
         log()

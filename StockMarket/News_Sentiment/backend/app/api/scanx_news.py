@@ -43,14 +43,15 @@ async def _refresh_news_cache(limit: int = 20):
     if _news_cache["refresh_in_progress"]:
         return
     _news_cache["refresh_in_progress"] = True
+    scraper = None
     try:
         import os
         parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         if parent_dir not in sys.path:
             sys.path.insert(0, parent_dir)
-        from scrapers.google_news_playwright_scraper import scrape_all_sync
-        loop = asyncio.get_event_loop()
-        articles = await loop.run_in_executor(_scraper_executor, scrape_all_sync, limit)
+        from scrapers.google_news_playwright_scraper import GoogleNewsPlaywrightScraper
+        scraper = GoogleNewsPlaywrightScraper()
+        articles = await scraper.scrape_all_news(limit)
         response = []
         for idx, article in enumerate(articles):
             headline = article.get('headline', '')
@@ -74,6 +75,11 @@ async def _refresh_news_cache(limit: int = 20):
     except Exception as e:
         print(f"[Cache] Refresh failed: {e}")
     finally:
+        if scraper:
+            try:
+                await scraper.close_browser()
+            except Exception:
+                pass
         _news_cache["refresh_in_progress"] = False
 
 

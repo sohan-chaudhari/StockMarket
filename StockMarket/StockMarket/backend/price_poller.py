@@ -48,6 +48,17 @@ class PricePoller:
         print(f"[PricePoller] Using {len(self.all_tickers)} pre-configured tickers")
         return len(self.all_tickers)
 
+    def add_ticker(self, ticker: str):
+        if not ticker: return
+        t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+        if t not in self.all_tickers:
+            self.all_tickers.append(t)
+
+    def poll_now(self, ticker: str):
+        if not ticker: return
+        t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+        threading.Thread(target=self._poll_one, args=(t,), daemon=True).start()
+
     async def start(self):
         self._running = True
         count = self.load_tickers()
@@ -135,9 +146,16 @@ class PricePoller:
                 if not inst:
                     return False
                 self._token_cache[ticker] = inst
-            instrument = self._token_cache[ticker]
+            t = ticker.upper()
+            now_ts = time.time()
+            with svc.latest_ticks_lock:
+                existing = svc.latest_ticks.get(t, {})
+                ws_received_ts = existing.get("_received_ts", 0)
+                if now_ts - ws_received_ts < 10 and existing.get("_source") == "angel_ws":
+                    return True
 
             with self._api_sem:
+                instrument = self._token_cache[ticker]  # FIX: `instrument` was undefined; use cached token info
                 raw = svc.smart_api.ltpData(
                     exchange=instrument["exchange"],
                     tradingsymbol=instrument["symbol"],

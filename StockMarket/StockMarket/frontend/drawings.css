@@ -14,9 +14,9 @@
     --header-text: #787b86;
 }
 
-/* Body Padding Adjustment for Toolbar */
+/* Body Padding Adjustment for Toolbar: Reset to 0 (docked sidebar used) */
 body {
-    padding-left: calc(var(--toolbar-width) + 24px);
+    padding-left: 0;
 }
 
 /* ===================== MOBILE "MORE" MENU (chart header) ===================== */
@@ -71,100 +71,123 @@ body {
     background: rgba(255,255,255,0.06);
 }
 
-/* Toolbar Container */
+/* Toolbar Container - TradingView Style Docked Sidebar */
 .drawing-toolbar {
-    position: fixed;
-    left: 12px;
-    top: 82px;
-    width: var(--toolbar-width);
-    background: var(--toolbar-bg);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--toolbar-border);
-    border-radius: 14px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 8px 0;
-    z-index: 1000;
-    user-select: none;
-    transition: all 0.2s ease;
+    position: relative !important;
+    top: 0 !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 52px !important;
+    min-width: 52px !important;
+    max-width: 52px !important;
+    height: 100% !important;
+    min-height: 100% !important;
+    background: #131722 !important;
+    border: none !important;
+    border-right: 1px solid #2a2e39 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    padding: 6px 0 10px !important;
+    box-sizing: border-box !important;
+    z-index: 100 !important;
+    user-select: none !important;
+    flex-shrink: 0 !important;
+    align-self: stretch !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    scrollbar-width: none !important;
+}
+
+.drawing-toolbar::-webkit-scrollbar {
+    display: none !important;
 }
 
 .toolbar-item {
-    width: 34px;
-    height: 34px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-bottom: 2px;
-    cursor: pointer;
-    border-radius: 6px;
-    position: relative;
-    color: var(--icon-color);
-    transition: all 0.2s ease;
+    width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 2px 0 !important;
+    cursor: pointer !important;
+    border-radius: 4px !important;
+    position: relative !important;
+    color: #b2b5be !important;
+    transition: background 0.15s ease, color 0.15s ease !important;
+    flex-shrink: 0 !important;
+    background: transparent !important;
+    transform: none !important;
 }
 
 .toolbar-item:hover {
-    background: var(--icon-hover-bg);
-    color: #e0e3eb;
-    transform: scale(1.08);
+    background: #2a2e39 !important;
+    color: #f0f3fa !important;
+    transform: none !important;
 }
 
 .toolbar-item:active {
-    transform: scale(0.96);
+    transform: none !important;
 }
 
-.toolbar-item.active {
-    color: var(--icon-active-color);
-    background: transparent;
-}
-
+.toolbar-item.active,
 .toolbar-item[data-active="true"] {
-    color: var(--icon-active-color);
+    background: #2a2e39 !important;
+    color: #2962ff !important;
 }
 
 .toolbar-item[data-active="true"] svg {
-    filter: drop-shadow(0 0 6px var(--icon-active-color));
+    filter: none !important;
 }
 
 .toolbar-item svg {
-    width: 20px;
-    height: 20px;
-    fill: currentColor;
-    stroke: currentColor;
-    stroke-width: 2.5px;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    width: 20px !important;
+    height: 20px !important;
+    fill: currentColor !important;
+    stroke: currentColor !important;
+    stroke-width: 2px !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
 }
 
-/* Arrow Indicator for Groups */
-.arrow-indicator.arrow-trigger {
-    position: absolute;
-    bottom: 0px;
-    right: 0px;
-    width: 14px;
-    height: 14px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--icon-color, #b2b5be);
-    opacity: 0.6;
-    border-radius: 0 0 6px 0;
-    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
-    z-index: 2;
+/* Arrow Indicator for Groups (Vertically centered on the right edge, shown on hover like TradingView) */
+.side-arrow-indicator {
+    position: absolute !important;
+    top: 50% !important;
+    right: 3px !important;
+    transform: translateY(-50%) !important;
+    width: 6px !important;
+    height: 10px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: #b2b5be !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    transition: opacity 0.15s ease, visibility 0.15s ease, color 0.15s ease !important;
+    pointer-events: none !important;
+    z-index: 5 !important;
 }
 
-.toolbar-item:hover .arrow-indicator.arrow-trigger {
-    opacity: 1;
-    color: #ffffff;
+.side-arrow-indicator svg {
+    width: 5px !important;
+    height: 9px !important;
+    fill: none !important;
+    stroke: currentColor !important;
+    stroke-width: 1.8px !important;
 }
 
-.arrow-indicator.arrow-trigger:hover {
-    background: rgba(255, 255, 255, 0.18);
-    opacity: 1;
-    color: #ffffff;
+.toolbar-item:hover .side-arrow-indicator,
+.toolbar-item.menu-open .side-arrow-indicator {
+    opacity: 1 !important;
+    visibility: visible !important;
+    color: #ffffff !important;
 }
 
 .arrow-svg {
@@ -175,26 +198,24 @@ body {
 
 /* Submenu Panel */
 .drawing-submenu {
-    position: absolute;
-    left: calc(100% + 4px);
-    top: -8px;
-    margin-left: 2px;
-    background: rgba(26, 29, 35, 0.92);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-    border: 1px solid var(--submenu-border);
-    border-radius: 10px;
-    min-width: 240px;
-    max-height: min(480px, calc(100vh - 160px));
-    overflow-y: auto;
-    display: none;
-    z-index: 1001;
-    padding: 6px 0;
+    position: fixed !important;
+    left: 53px !important;
+    background: #1e222d !important;
+    border: 1px solid #2a2e39 !important;
+    border-radius: 6px !important;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7) !important;
+    min-width: 240px !important;
+    max-height: min(520px, calc(100vh - 80px)) !important;
+    overflow-y: auto !important;
+    display: none !important;
+    z-index: 99999 !important;
+    padding: 6px 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
 }
 
 .drawing-submenu.visible {
-    display: block;
+    display: block !important;
 }
 
 .submenu-header {
@@ -288,6 +309,7 @@ body {
     width: calc(100% - 76px);
     height: calc(100% - 28px);
     pointer-events: none;
+    touch-action: none;
     /* Default: chart handles events */
     z-index: 50;
     overflow: hidden;
@@ -297,28 +319,38 @@ body {
     width: 100%;
     height: 100%;
     pointer-events: none;
+    touch-action: none;
 }
 
 /* Enable pointer events when in drawing mode */
 .drawing-mode-active #drawing-canvas-container,
 .drawing-mode-active #drawing-canvas {
     pointer-events: auto;
+    touch-action: none;
     cursor: crosshair;
+}
+
+.drawing-mode-active #chart-container,
+.drawing-mode-active #chart-container canvas {
+    touch-action: none !important;
 }
 
 /* Enable pointer events for selection mode */
 .selection-mode-active #drawing-canvas-container,
 .selection-mode-active #drawing-canvas {
     pointer-events: none;
+    touch-action: none;
     /* cursor is handled by js on checking hover */
 }
 
 /* Separator */
 .toolbar-separator {
-    width: 20px;
-    height: 1px;
-    background: #363a45;
-    margin: 6px 0;
+    width: 32px !important;
+    height: 1px !important;
+    min-height: 1px !important;
+    background: #2a2e39 !important;
+    margin: 4px 0 !important;
+    flex-shrink: 0 !important;
 }
 
 /* ===== Drawing Style Panel ===== */
@@ -612,36 +644,7 @@ body {
     stroke-linejoin: round;
 }
 
-/* Side Arrow (Chevron Right on Hover / Active as in TradingView) */
-.side-arrow-indicator {
-    position: absolute;
-    right: -7px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 10px;
-    height: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #888e9b;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.15s ease, color 0.15s ease;
-    z-index: 5;
-}
 
-.toolbar-item:hover .side-arrow-indicator,
-.toolbar-item.menu-open .side-arrow-indicator {
-    opacity: 1;
-    color: #ffffff;
-}
-
-.side-arrow-indicator svg {
-    width: 6px;
-    height: 10px;
-    fill: none;
-    stroke: currentColor;
-}
 
 /* Submenu Items Enhancement */
 .submenu-item {
@@ -893,3 +896,316 @@ body {
     stroke-width: 2;
     pointer-events: none;
 }
+
+/* ==========================================================================
+   MOBILE FAVORITE SHORTCUT BUTTONS IN TOOLBAR
+   ========================================================================== */
+
+.mobile-favorites-container {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+@media (max-width: 768px) {
+    .mobile-favorites-container {
+        display: flex;
+    }
+}
+
+.fav-shortcut-item {
+    position: relative;
+    cursor: pointer;
+}
+
+.fav-shortcut-item.active {
+    background: rgba(41, 98, 255, 0.2) !important;
+    color: #2962ff !important;
+    border-color: rgba(41, 98, 255, 0.5) !important;
+}
+
+.fav-shortcut-item svg {
+    width: 18px;
+    height: 18px;
+    stroke: currentColor;
+    fill: currentColor;
+    stroke-width: 1.8px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    pointer-events: none;
+}
+
+.mobile-fav-separator {
+    margin: 4px 0 !important;
+    opacity: 0.6;
+}
+
+/* ==========================================================================
+   WHATSAPP & TRADINGVIEW STYLE EMOJI PICKER MODAL
+   ========================================================================== */
+
+.emoji-picker-panel {
+    display: none;
+    position: fixed;
+    z-index: 100002;
+    background: #1e222d;
+    border: 1px solid #2a2e39;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.75), 0 2px 8px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    user-select: none;
+    flex-direction: column;
+}
+
+.emoji-picker-panel.visible {
+    display: flex !important;
+}
+
+/* Desktop Docked Popover */
+.emoji-picker-panel.is-desktop {
+    width: 360px;
+    height: 480px;
+    max-height: calc(100vh - 40px);
+    border-radius: 10px;
+}
+
+/* Mobile Drawer Bottom-Sheet */
+.emoji-picker-panel.is-mobile {
+    width: 100vw;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    max-height: 68vh;
+    height: 68vh;
+    border-radius: 18px 18px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.85);
+    animation: emojiSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes emojiSlideUp {
+    from {
+        transform: translateY(100%);
+    }
+    to {
+        transform: translateY(0);
+    }
+}
+
+/* Header Area */
+.emoji-picker-header {
+    display: flex;
+    flex-direction: column;
+    padding: 12px 14px 8px;
+    background: #181b22;
+    border-bottom: 1px solid #2a2e39;
+    border-radius: 10px 10px 0 0;
+    flex-shrink: 0;
+}
+
+.emoji-picker-panel.is-mobile .emoji-picker-header {
+    border-radius: 18px 18px 0 0;
+    padding: 10px 16px 8px;
+}
+
+.emoji-picker-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.emoji-picker-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #f0f3fa;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+.emoji-picker-close-btn {
+    background: transparent;
+    border: none;
+    color: #787b86;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.emoji-picker-close-btn:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* Search Bar */
+.emoji-search-wrapper {
+    display: flex;
+    align-items: center;
+    background: #131722;
+    border: 1px solid #2a2e39;
+    border-radius: 6px;
+    padding: 4px 10px;
+    margin-bottom: 8px;
+    gap: 8px;
+    transition: border-color 0.15s;
+}
+
+.emoji-search-wrapper:focus-within {
+    border-color: #2962ff;
+}
+
+.emoji-search-icon {
+    font-size: 13px;
+    opacity: 0.6;
+}
+
+.emoji-search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #d1d4dc;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.emoji-search-input::placeholder {
+    color: #606470;
+}
+
+/* Category Tabs */
+.emoji-category-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 2px 0;
+}
+
+.emoji-category-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.emoji-cat-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, transform 0.1s;
+    flex-shrink: 0;
+}
+
+.emoji-cat-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.emoji-cat-btn.active {
+    background: rgba(41, 98, 255, 0.2);
+    border-color: rgba(41, 98, 255, 0.5);
+    transform: scale(1.08);
+}
+
+/* Picker Scrollable Body */
+.emoji-picker-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px 14px 14px;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: #434651 transparent;
+}
+
+.emoji-picker-body::-webkit-scrollbar {
+    width: 6px;
+}
+
+.emoji-picker-body::-webkit-scrollbar-thumb {
+    background: #434651;
+    border-radius: 3px;
+}
+
+/* Category Sections */
+.emoji-category-section {
+    margin-bottom: 14px;
+}
+
+.emoji-category-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #787b86;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+    position: sticky;
+    top: -10px;
+    background: #1e222d;
+    padding: 4px 0;
+    z-index: 2;
+}
+
+/* Emoji Grid */
+.emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+@media (max-width: 480px) {
+    .emoji-grid {
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+    }
+}
+
+.emoji-item-btn {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.12s, transform 0.1s, border-color 0.12s;
+    user-select: none;
+}
+
+.emoji-item-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.18);
+    z-index: 3;
+}
+
+.emoji-item-btn:active {
+    transform: scale(0.92);
+}
+
+.emoji-item-btn.selected {
+    background: rgba(41, 98, 255, 0.25);
+    border-color: #2962ff;
+}
+
+.emoji-no-results {
+    text-align: center;
+    color: #787b86;
+    font-size: 13px;
+    padding: 30px 10px;
+}
+
+

@@ -186,18 +186,25 @@
       var cumPrice2Vol = 0;
       var currentSessionKey = null;
 
+      var effAnchor = anchor || 'Session';
+      if (effAnchor === 'Session' && n >= 2) {
+        var intervalSec = Calc._ichimokuBarInterval(candles);
+        if (intervalSec >= 86400) {
+          // On Daily+ charts, session VWAP defaults to weekly anchor like TradingView
+          effAnchor = 'Week';
+        }
+      }
+
       for (var i = 0; i < n; i++) {
         var c = candles[i];
-        var sKey = Calc.candleSessionKey(c, i);
-        if (anchor === 'Session' || !anchor) {
-          if (currentSessionKey !== null && sKey !== currentSessionKey) {
-            // New trading session boundary: reset cumulative totals
-            cumVol = 0;
-            cumPriceVol = 0;
-            cumPrice2Vol = 0;
-          }
-          currentSessionKey = sKey;
+        var sKey = Calc.candleAnchorKey(c, i, effAnchor);
+        if (currentSessionKey !== null && sKey !== currentSessionKey) {
+          // New period boundary: reset cumulative totals
+          cumVol = 0;
+          cumPriceVol = 0;
+          cumPrice2Vol = 0;
         }
+        currentSessionKey = sKey;
 
         var tp = src[i];
         var v = (c.volume !== undefined && c.volume !== null) ? Number(c.volume) : 0;
@@ -262,6 +269,15 @@
         return y + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
       }
       return String(realT);
+    },
+
+    /** Anchor key based on anchor type: 'Session', 'Week', 'Month', 'Year' */
+    candleAnchorKey: function (c, index, anchor) {
+      var dayKey = this.candleSessionKey(c, index);
+      if (anchor === 'Week') return this._isoWeekKey(dayKey);
+      if (anchor === 'Month') return dayKey ? dayKey.slice(0, 7) : '';
+      if (anchor === 'Year') return dayKey ? dayKey.slice(0, 4) : '';
+      return dayKey;
     },
 
     /** ISO-8601 week key ('yyyy-Www') from a 'yyyy-mm-dd' session day key. */
@@ -3068,10 +3084,12 @@
     RSI: {
       id: 'RSI', name: 'RSI', fullName: 'RSI', type: 'pane',
       paramDefs: {
-        length: { label: 'Length',     type: 'int',   default: 14,  min: 1,  max: 200 },
-        source: { label: 'Source',     type: 'source',default: 'close' },
-        upper:  { label: 'Overbought', type: 'float', default: 70,  min: 50, max: 100 },
-        lower:  { label: 'Oversold',   type: 'float', default: 30,  min: 0,  max: 50 }
+        length:   { label: 'Length',        type: 'int',    default: 14,    min: 1,  max: 200 },
+        source:   { label: 'Source',        type: 'source', default: 'close' },
+        upper:    { label: 'Overbought',    type: 'float',  default: 70,    min: 50, max: 100 },
+        lower:    { label: 'Oversold',      type: 'float',  default: 30,    min: 0,  max: 50 },
+        showMa:   { label: 'RSI-based MA',  type: 'select', default: 'On',   options: ['On', 'Off'] },
+        maLength: { label: 'MA Length',     type: 'int',    default: 14,    min: 1,  max: 200 }
       },
       defaultColor: '#B388FF'
     },
@@ -3123,7 +3141,7 @@
       id: 'VWAP', name: 'VWAP', fullName: 'VWAP (Volume Weighted Average Price)', type: 'overlay',
       paramDefs: {
         source:   { label: 'Source',          type: 'source', default: 'hlc3' },
-        anchor:   { label: 'Anchor',          type: 'select', default: 'Session', options: ['Session'] },
+        anchor:   { label: 'Anchor',          type: 'select', default: 'Session', options: ['Session', 'Week', 'Month', 'Year'] },
         bands:    { label: 'Bands',           type: 'select', default: 'On',      options: ['On', 'Off'] },
         bandMult: { label: 'Band Multiplier', type: 'float',  default: 1.0,       min: 0.1, max: 10 }
       },
@@ -3283,7 +3301,7 @@
 
   var _isSyncingRange = false;
   function _broadcastLogicalRange(sourceChart, lr) {
-    if (_isSyncingRange || !lr) return;
+    if (_isSyncingRange || !lr || typeof lr.from !== 'number' || typeof lr.to !== 'number' || isNaN(lr.from) || isNaN(lr.to) || lr.from === lr.to) return;
     _isSyncingRange = true;
     try {
       if (window.bigChart && window.bigChart !== sourceChart) {
@@ -3301,6 +3319,7 @@
   }
 
   var _bbCanvas = null;
+  var _drawBbCloud = function () { _drawOverlayClouds(); };
   function _drawOverlayClouds() {
     _drawPaneClouds();
 
@@ -5165,6 +5184,13 @@
               try { p.chart.clearCrosshairPosition(); } catch (e) {}
             }
           }
+          // Restore overlay chips to latest candle value
+          for (var instId in _instances) {
+            var inst = _instances[instId];
+            if (inst.visible && inst._chipValEl && _candles && _candles.length) {
+              _updateChipValue(inst, _candles[_candles.length - 1].time);
+            }
+          }
           return;
         }
 
@@ -5199,7 +5225,11 @@
         // 2. Update HUD values and clear non-active indicator panes
         for (var instId in _instances) {
           var inst = _instances[instId];
-          if (!inst.visible || !inst.paneId) continue;
+          if (!inst.visible) continue;
+          if (inst._chipValEl) {
+            _updateChipValue(inst, t);
+          }
+          if (!inst.paneId) continue;
           var pane = PaneManager.get(inst.paneId);
           if (!pane) continue;
           if (pane.chart && pane.chart !== sourceChart) {
@@ -5219,8 +5249,17 @@
               PaneManager.updateLegend(inst.paneId, html);
             }
           } else if (inst.def.id === 'RSI') {
-            if (valObj && valObj.rsi !== null && isFinite(valObj.rsi)) {
-              PaneManager.updateLegend(inst.paneId, '<span style="color:#B388FF;font-weight:600;">' + Number(valObj.rsi).toFixed(2) + '</span>');
+            if (valObj) {
+              var rVal = valObj.rsi;
+              var mVal = valObj.ma;
+              var rsiHtml = '';
+              if (rVal !== null && rVal !== undefined && isFinite(rVal)) {
+                rsiHtml += '<span style="color:#B388FF;font-weight:600;margin-right:6px;">' + Number(rVal).toFixed(2) + '</span>';
+              }
+              if (mVal !== null && mVal !== undefined && isFinite(mVal)) {
+                rsiHtml += '<span style="color:#FFD54F;font-weight:600;">' + Number(mVal).toFixed(2) + '</span>';
+              }
+              if (rsiHtml) PaneManager.updateLegend(inst.paneId, rsiHtml);
             }
           } else if (inst.def.id === 'STOCH') {
             if (valObj) {
@@ -5239,9 +5278,9 @@
               var aVal = valObj.adx;
               var pVal = valObj.plusDi;
               var mVal = valObj.minusDi;
-              var html = (aVal !== null && aVal !== undefined && isFinite(aVal) ? '<span style="color:#E91E63;font-weight:600;margin-right:6px;">' + Number(aVal).toFixed(4) + '</span>' : '') +
-                         (pVal !== null && pVal !== undefined && isFinite(pVal) ? '<span style="color:#2196F3;font-weight:600;margin-right:6px;">' + Number(pVal).toFixed(4) + '</span>' : '') +
-                         (mVal !== null && mVal !== undefined && isFinite(mVal) ? '<span style="color:#FF9800;font-weight:600;">' + Number(mVal).toFixed(4) + '</span>' : '');
+              var html = (aVal !== null && aVal !== undefined && isFinite(aVal) ? '<span style="color:#E91E63;font-weight:600;margin-right:6px;">' + Number(aVal).toFixed(2) + '</span>' : '') +
+                         (pVal !== null && pVal !== undefined && isFinite(pVal) ? '<span style="color:#2196F3;font-weight:600;margin-right:6px;">+' + Number(pVal).toFixed(2) + '</span>' : '') +
+                         (mVal !== null && mVal !== undefined && isFinite(mVal) ? '<span style="color:#FF9800;font-weight:600;">-' + Number(mVal).toFixed(2) + '</span>' : '');
               PaneManager.updateLegend(inst.paneId, html);
             }
           } else if (inst.def.id === 'ADX') {
@@ -5387,7 +5426,12 @@
       var w = cp.clientWidth;
       var h = cp.clientHeight;
       if (w > 0 && h > 0) {
+        var savedLr = null;
+        try { savedLr = window.bigChart.timeScale().getVisibleLogicalRange(); } catch (e) {}
         try { window.bigChart.applyOptions({ width: w, height: h }); } catch (e) {}
+        if (savedLr) {
+          try { window.bigChart.timeScale().setVisibleLogicalRange(savedLr); } catch (e) {}
+        }
       }
     }
     if (window.toolManager && typeof window.toolManager.resizeCanvas === 'function') {
@@ -5490,7 +5534,7 @@
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }
       });
 
-      var pane = { chart: chart, wrapper: wrapper, titleEl: titleEl, paneId: paneId, baseTitle: titleText, _paneSync: null };
+      var pane = { chart: chart, wrapper: wrapper, titleEl: titleEl, paneId: paneId, baseTitle: titleText, _paneSync: null, _initialized: false };
       this._panes[paneId] = pane;
 
       // Splitter Hover & Drag Interactions
@@ -5562,6 +5606,7 @@
 
       // Bidirectional pan/scroll/zoom synchronization with main chart & other panes
       var _paneSync = function (lr) {
+        if (!pane._initialized) return;
         _broadcastLogicalRange(chart, lr);
       };
       chart.timeScale().subscribeVisibleLogicalRangeChange(_paneSync);
@@ -5652,6 +5697,9 @@
                 tickMarkFormatter: window.customTickMarkFormatter
               })
             });
+            if (curLr) {
+              window.bigChart.timeScale().setVisibleLogicalRange({ from: curLr.from, to: curLr.to });
+            }
           } catch (e) {}
         }
         if (_sharedCrosshairEl) _sharedCrosshairEl.style.display = 'none';
@@ -5669,6 +5717,9 @@
             rightPriceScale: { minimumWidth: 68 },
             timeScale: { visible: false }
           });
+          if (curLr) {
+            window.bigChart.timeScale().setVisibleLogicalRange({ from: curLr.from, to: curLr.to });
+          }
         } catch (e) {}
       }
       var lastKey = paneKeys[paneKeys.length - 1];
@@ -5701,12 +5752,13 @@
 
       requestAnimationFrame(function () {
         if (window.bigChart) {
-          var lr = window.bigChart.timeScale().getVisibleLogicalRange();
-          if (lr) {
+          var targetLr = curLr || window.bigChart.timeScale().getVisibleLogicalRange();
+          if (targetLr) {
+            try { window.bigChart.timeScale().setVisibleLogicalRange({ from: targetLr.from, to: targetLr.to }); } catch (e) {}
             for (var pid in PaneManager._panes) {
               var p = PaneManager._panes[pid];
               if (p && p.chart) {
-                try { p.chart.timeScale().setVisibleLogicalRange({ from: lr.from, to: lr.to }); } catch (e) {}
+                try { p.chart.timeScale().setVisibleLogicalRange({ from: targetLr.from, to: targetLr.to }); } catch (e) {}
               }
             }
           }
@@ -6050,6 +6102,7 @@
         var dot = LWC.LineStyle ? LWC.LineStyle.Dotted : 2;
         var dsh = LWC.LineStyle ? LWC.LineStyle.Dashed : 1;
         inst.series.rsi    = pane.chart.addLineSeries(_lineOpts('#B388FF', 1.5, LWC.LineStyle ? LWC.LineStyle.Solid : 0, true));
+        inst.series.ma     = pane.chart.addLineSeries(_lineOpts('#FFD54F', 1.5, LWC.LineStyle ? LWC.LineStyle.Solid : 0, true));
         inst.series.upper  = pane.chart.addLineSeries(_lineOpts('rgba(242,54,69,0.6)', 1, dsh, false));
         inst.series.lower  = pane.chart.addLineSeries(_lineOpts('rgba(8,153,129,0.6)', 1, dsh, false));
         inst.series.middle = pane.chart.addLineSeries(_lineOpts('rgba(120,123,134,0.35)', 1, dot, false));
@@ -6074,7 +6127,9 @@
         var pane = PaneManager.getOrCreate('DMI', 'DMI (' + pDi + ', ' + pAdx + ')');
         if (!pane) break;
         inst.paneId = 'DMI';
+        var dsh = LWC.LineStyle ? LWC.LineStyle.Dashed : 1;
         inst.series.anchor  = pane.chart.addLineSeries(_lineOpts('rgba(0,0,0,0)', 1, 0, false));
+        inst.series.ref20   = pane.chart.addLineSeries(_lineOpts('rgba(120,123,134,0.35)', 1, dsh, false));
         inst.series.adx     = pane.chart.addLineSeries(_lineOpts('#E91E63', 1.5, LWC.LineStyle ? LWC.LineStyle.Solid : 0, true));
         inst.series.plusDi  = pane.chart.addLineSeries(_lineOpts('#2196F3', 1.5, LWC.LineStyle ? LWC.LineStyle.Solid : 0, true));
         inst.series.minusDi = pane.chart.addLineSeries(_lineOpts('#FF9800', 1.5, LWC.LineStyle ? LWC.LineStyle.Solid : 0, true));
@@ -6594,17 +6649,35 @@
 
     switch (inst.def.id) {
       case 'SMA': {
+        var offset = parseInt(p.offset, 10) || 0;
         var vals = Calc.sma(src, p.length);
-        if (inst.series.main) {
-          try { inst.series.main.setData(_seriesData(times, vals)); } catch(e) {}
+        inst._dataByTime = {};
+        for (var i = 0; i < times.length; i++) {
+          inst._dataByTime[times[i]] = { value: vals[i] };
         }
+        if (inst.series.main) {
+          try {
+            var data = offset !== 0 ? _offsetSeriesData(_candles, times, vals, offset) : _seriesData(times, vals);
+            inst.series.main.setData(data);
+          } catch(e) {}
+        }
+        _updateChipValue(inst, times[times.length - 1]);
         break;
       }
       case 'EMA': {
+        var offset = parseInt(p.offset, 10) || 0;
         var vals = Calc.ema(src, p.length);
-        if (inst.series.main) {
-          try { inst.series.main.setData(_seriesData(times, vals)); } catch(e) {}
+        inst._dataByTime = {};
+        for (var i = 0; i < times.length; i++) {
+          inst._dataByTime[times[i]] = { value: vals[i] };
         }
+        if (inst.series.main) {
+          try {
+            var data = offset !== 0 ? _offsetSeriesData(_candles, times, vals, offset) : _seriesData(times, vals);
+            inst.series.main.setData(data);
+          } catch(e) {}
+        }
+        _updateChipValue(inst, times[times.length - 1]);
         break;
       }
       case 'SUPERTREND': {
@@ -6625,7 +6698,7 @@
         }
         if (inst.series.main) {
           try {
-            if (lastValidVal !== null) {
+            if (lastValidVal !== null && _candles.length > 0) {
               inst.series.main.applyOptions({
                 color: (lastValidTrend === 1 ? '#4FAF7B' : '#EF5350')
               });
@@ -6636,11 +6709,13 @@
             }
           } catch(e) {}
         }
+        _updateChipValue(inst, times[times.length - 1]);
         _drawOverlayClouds();
         break;
       }
       case 'PSAR': {
         _renderPsar(inst);
+        _updateChipValue(inst, times[times.length - 1]);
         break;
       }
       case 'PIVOTPOINTS': {
@@ -6685,29 +6760,44 @@
       }
       case 'DONCHIAN': {
         _renderDonchian(inst);
+        _updateChipValue(inst, times[times.length - 1]);
         break;
       }
       case 'BB': {
         var bb = Calc.bollingerBands(src, p.length, p.stdDev);
         inst._lastBb = bb;
+        inst._dataByTime = {};
+        for (var i = 0; i < times.length; i++) {
+          inst._dataByTime[times[i]] = { basis: bb.basis[i], upper: bb.upper[i], lower: bb.lower[i] };
+        }
         if (inst.series.basis) { try { inst.series.basis.setData(_seriesData(times, bb.basis)); } catch(e) {} }
         if (inst.series.upper) { try { inst.series.upper.setData(_seriesData(times, bb.upper)); } catch(e) {} }
         if (inst.series.lower) { try { inst.series.lower.setData(_seriesData(times, bb.lower)); } catch(e) {} }
+        _updateChipValue(inst, times[times.length - 1]);
         _drawBbCloud();
         break;
       }
       case 'KELTNER': {
         var kc = Calc.keltner(_candles, p.length, p.atrLength, p.multiplier);
         inst._lastKeltner = kc;
+        inst._dataByTime = {};
+        for (var i = 0; i < times.length; i++) {
+          inst._dataByTime[times[i]] = { middle: kc.middle[i], upper: kc.upper[i], lower: kc.lower[i] };
+        }
         if (inst.series.middle) { try { inst.series.middle.setData(_seriesData(times, kc.middle)); } catch(e) {} }
         if (inst.series.upper)  { try { inst.series.upper.setData(_seriesData(times, kc.upper)); } catch(e) {} }
         if (inst.series.lower)  { try { inst.series.lower.setData(_seriesData(times, kc.lower)); } catch(e) {} }
+        _updateChipValue(inst, times[times.length - 1]);
         _drawOverlayClouds();
         break;
       }
       case 'VWAP': {
         var res = Calc.vwap(_candles, p.source || 'hlc3', p.anchor || 'Session', p.bandMult || 1.0, p.bands === 'On');
         inst._lastVwap = res;
+        inst._dataByTime = {};
+        for (var i = 0; i < times.length; i++) {
+          inst._dataByTime[times[i]] = { vwap: res.vwap[i], upper: res.upper[i], lower: res.lower[i], stdDev: res.stdDev[i] };
+        }
         if (inst.series.main) {
           try { inst.series.main.setData(_seriesData(times, res.vwap)); } catch (e) {}
         }
@@ -6724,33 +6814,45 @@
           if (inst.series.upper) { try { window.bigChart.removeSeries(inst.series.upper); } catch (e) {} delete inst.series.upper; }
           if (inst.series.lower) { try { window.bigChart.removeSeries(inst.series.lower); } catch (e) {} delete inst.series.lower; }
         }
+        _updateChipValue(inst, times[times.length - 1]);
         _drawOverlayClouds();
         break;
       }
       case 'RSI': {
         var vals = Calc.rsi(src, p.length);
+        var showMa = (p.showMa !== 'Off');
+        var maLen = p.maLength || 14;
+        var maVals = showMa ? Calc.sma(vals, maLen) : [];
         inst._dataByTime = {};
         for (var i = 0; i < times.length; i++) {
-          inst._dataByTime[times[i]] = { rsi: vals[i] };
+          inst._dataByTime[times[i]] = { rsi: vals[i], ma: (maVals[i] !== undefined ? maVals[i] : null) };
         }
         var uLvl = times.map(function (t) { return { time: t, value: Number(p.upper) }; });
         var lLvl = times.map(function (t) { return { time: t, value: Number(p.lower) }; });
         var mLvl = times.map(function (t) { return { time: t, value: 50 }; });
 
         var rsiData = _seriesData(times, vals);
+        var maData  = showMa ? _seriesData(times, maVals) : [];
         var uData   = _seriesData(times, uLvl.map(function(x){return x.value;}));
         var lData   = _seriesData(times, lLvl.map(function(x){return x.value;}));
         var mData   = _seriesData(times, mLvl.map(function(x){return x.value;}));
 
         if (inst.series.rsi)    { try { inst.series.rsi.setData(rsiData); } catch(e) {} }
+        if (inst.series.ma)     { try { inst.series.ma.setData(maData); } catch(e) {} }
         if (inst.series.upper)  { try { inst.series.upper.setData(uData); } catch(e) {} }
         if (inst.series.lower)  { try { inst.series.lower.setData(lData); } catch(e) {} }
         if (inst.series.middle) { try { inst.series.middle.setData(mData); } catch(e) {} }
         _syncPane(inst.paneId);
         var lastRsi = vals.length > 0 ? vals[vals.length - 1] : null;
-        if (lastRsi !== null) {
-          PaneManager.updateLegend(inst.paneId, '<span style="color:#B388FF;font-weight:600;">' + lastRsi.toFixed(2) + '</span>');
+        var lastMa  = maVals.length > 0 ? maVals[maVals.length - 1] : null;
+        var rsiHtml = '';
+        if (lastRsi !== null && isFinite(lastRsi)) {
+          rsiHtml += '<span style="color:#B388FF;font-weight:600;margin-right:6px;">' + Number(lastRsi).toFixed(2) + '</span>';
         }
+        if (showMa && lastMa !== null && isFinite(lastMa)) {
+          rsiHtml += '<span style="color:#FFD54F;font-weight:600;">' + Number(lastMa).toFixed(2) + '</span>';
+        }
+        if (rsiHtml) PaneManager.updateLegend(inst.paneId, rsiHtml);
         break;
       }
       case 'STOCH': {
@@ -6793,11 +6895,13 @@
           inst._dataByTime[times[i]] = { adx: res.adx[i], plusDi: res.plusDi[i], minusDi: res.minusDi[i], dx: res.dx[i] };
         }
         var anchorData  = times.map(function (t) { return { time: t, value: 0 }; });
+        var ref20Data   = times.map(function (t) { return { time: t, value: 20 }; });
         var adxData     = _seriesData(times, res.adx);
         var plusDiData  = _seriesData(times, res.plusDi);
         var minusDiData = _seriesData(times, res.minusDi);
 
         if (inst.series.anchor)  { try { inst.series.anchor.setData(anchorData); } catch(e) {} }
+        if (inst.series.ref20)   { try { inst.series.ref20.setData(_seriesData(times, ref20Data.map(function(x){return x.value;}))); } catch(e) {} }
         if (inst.series.adx)     { try { inst.series.adx.setData(adxData); } catch(e) {} }
         if (inst.series.plusDi)  { try { inst.series.plusDi.setData(plusDiData); } catch(e) {} }
         if (inst.series.minusDi) { try { inst.series.minusDi.setData(minusDiData); } catch(e) {} }
@@ -6806,9 +6910,9 @@
         var lastPlus = res.plusDi.length > 0 ? res.plusDi[res.plusDi.length - 1] : null;
         var lastMinus = res.minusDi.length > 0 ? res.minusDi[res.minusDi.length - 1] : null;
         if (lastAdx !== null || lastPlus !== null || lastMinus !== null) {
-          var html = (lastAdx !== null && isFinite(lastAdx) ? '<span style="color:#E91E63;font-weight:600;margin-right:6px;">' + Number(lastAdx).toFixed(4) + '</span>' : '') +
-                     (lastPlus !== null && isFinite(lastPlus) ? '<span style="color:#2196F3;font-weight:600;margin-right:6px;">' + Number(lastPlus).toFixed(4) + '</span>' : '') +
-                     (lastMinus !== null && isFinite(lastMinus) ? '<span style="color:#FF9800;font-weight:600;">' + Number(lastMinus).toFixed(4) + '</span>' : '');
+          var html = (lastAdx !== null && isFinite(lastAdx) ? '<span style="color:#E91E63;font-weight:600;margin-right:6px;">' + Number(lastAdx).toFixed(2) + '</span>' : '') +
+                     (lastPlus !== null && isFinite(lastPlus) ? '<span style="color:#2196F3;font-weight:600;margin-right:6px;">+' + Number(lastPlus).toFixed(2) + '</span>' : '') +
+                     (lastMinus !== null && isFinite(lastMinus) ? '<span style="color:#FF9800;font-weight:600;">-' + Number(lastMinus).toFixed(2) + '</span>' : '');
           PaneManager.updateLegend(inst.paneId, html);
         }
         break;
@@ -7085,6 +7189,7 @@
     if (lr) {
       try { pane.chart.timeScale().setVisibleLogicalRange({ from: lr.from, to: lr.to }); } catch (e) {}
     }
+    pane._initialized = true;
     requestAnimationFrame(function () {
       if (window.bigChart && pane && pane.chart) {
         var curLr = window.bigChart.timeScale().getVisibleLogicalRange();
@@ -7092,6 +7197,7 @@
           try { pane.chart.timeScale().setVisibleLogicalRange({ from: curLr.from, to: curLr.to }); } catch (e) {}
         }
       }
+      pane._initialized = true;
       _drawOverlayClouds();
     });
   }
@@ -7111,18 +7217,32 @@
       switch (inst.def.id) {
         case 'SMA': {
           if (n < p.length) break;
-          var sum = 0;
-          for (var j = n - p.length; j < n; j++) sum += src[j];
-          var v = sum / p.length;
-          if (inst.series.main) inst.series.main.update({ time: lastTime, value: v });
+          var offset = parseInt(p.offset, 10) || 0;
+          if (offset !== 0) {
+            _calcAll(inst);
+          } else {
+            var sum = 0;
+            for (var j = n - p.length; j < n; j++) sum += src[j];
+            var v = sum / p.length;
+            if (!inst._dataByTime) inst._dataByTime = {};
+            inst._dataByTime[lastTime] = { value: v };
+            if (inst.series.main) inst.series.main.update({ time: lastTime, value: v });
+            _updateChipValue(inst, lastTime);
+          }
           break;
         }
         case 'EMA': {
-          // Full O(n) recalc from proper seed — avoids re-seeding divergence.
-          // Only the last value is pushed to the chart via update() (cheap render path).
-          var vals = Calc.ema(src, p.length);
-          var last = vals[vals.length - 1];
-          if (last !== null && inst.series.main) inst.series.main.update({ time: lastTime, value: last });
+          var offset = parseInt(p.offset, 10) || 0;
+          if (offset !== 0) {
+            _calcAll(inst);
+          } else {
+            var vals = Calc.ema(src, p.length);
+            var last = vals[vals.length - 1];
+            if (!inst._dataByTime) inst._dataByTime = {};
+            inst._dataByTime[lastTime] = { value: last };
+            if (last !== null && inst.series.main) inst.series.main.update({ time: lastTime, value: last });
+            _updateChipValue(inst, lastTime);
+          }
           break;
         }
         case 'SUPERTREND': {
@@ -7138,14 +7258,16 @@
               inst.series.main.applyOptions({
                 color: (lastTr === 1 ? '#4FAF7B' : '#EF5350')
               });
-              inst.series.main.update({ time: lastTime, value: Number(lastSt) });
+              inst.series.main.setData([{ time: lastTime, value: Number(lastSt) }]);
             } catch(e) {}
           }
+          _updateChipValue(inst, lastTime);
           _drawOverlayClouds();
           break;
         }
         case 'PSAR': {
           _renderPsar(inst);
+          _updateChipValue(inst, lastTime);
           break;
         }
         case 'PIVOTPOINTS': {
@@ -7190,6 +7312,7 @@
         }
         case 'DONCHIAN': {
           _renderDonchian(inst);
+          _updateChipValue(inst, lastTime);
           break;
         }
         case 'BB': {
@@ -7204,28 +7327,29 @@
           if (inst.series.basis) inst.series.basis.update({ time: lastTime, value: mean });
           if (inst.series.upper) inst.series.upper.update({ time: lastTime, value: mean + p.stdDev * sd });
           if (inst.series.lower) inst.series.lower.update({ time: lastTime, value: mean - p.stdDev * sd });
+          if (!inst._dataByTime) inst._dataByTime = {};
+          inst._dataByTime[lastTime] = { basis: mean, upper: mean + p.stdDev * sd, lower: mean - p.stdDev * sd };
           if (inst._lastBb) {
             inst._lastBb.basis[n - 1] = mean;
             inst._lastBb.upper[n - 1] = mean + p.stdDev * sd;
             inst._lastBb.lower[n - 1] = mean - p.stdDev * sd;
           }
+          _updateChipValue(inst, lastTime);
           _drawBbCloud();
           break;
         }
         case 'KELTNER': {
-          // Full O(n) recalc, like Supertrend/EMA/RSI above — both EMA and
-          // ATR are recurrence relations seeded from history, so only the
-          // current candle's inputs changing still requires replaying the
-          // whole series to get an exact (not re-seeded/approximated) value.
-          // Only the last point is pushed to the chart via update().
           var kc = Calc.keltner(_candles, p.length, p.atrLength, p.multiplier);
           inst._lastKeltner = kc;
           var lastMid = kc.middle[n - 1];
           var lastUp  = kc.upper[n - 1];
           var lastLo  = kc.lower[n - 1];
+          if (!inst._dataByTime) inst._dataByTime = {};
+          inst._dataByTime[lastTime] = { middle: lastMid, upper: lastUp, lower: lastLo };
           if (lastMid !== null && inst.series.middle) inst.series.middle.update({ time: lastTime, value: lastMid });
           if (lastUp  !== null && inst.series.upper)  inst.series.upper.update({ time: lastTime, value: lastUp });
           if (lastLo  !== null && inst.series.lower)  inst.series.lower.update({ time: lastTime, value: lastLo });
+          _updateChipValue(inst, lastTime);
           _drawOverlayClouds();
           break;
         }
@@ -7233,6 +7357,8 @@
           var res = Calc.vwap(_candles, p.source || 'hlc3', p.anchor || 'Session', p.bandMult || 1.0, p.bands === 'On');
           inst._lastVwap = res;
           var lastV = res.vwap[n - 1];
+          if (!inst._dataByTime) inst._dataByTime = {};
+          inst._dataByTime[lastTime] = { vwap: lastV, upper: (p.bands === 'On' ? res.upper[n - 1] : null), lower: (p.bands === 'On' ? res.lower[n - 1] : null), stdDev: res.stdDev[n - 1] };
           if (inst.series.main && lastV !== null) inst.series.main.update({ time: lastTime, value: lastV });
           if (p.bands === 'On') {
             var lastU = res.upper[n - 1];
@@ -7240,22 +7366,32 @@
             if (inst.series.upper && lastU !== null) inst.series.upper.update({ time: lastTime, value: lastU });
             if (inst.series.lower && lastL !== null) inst.series.lower.update({ time: lastTime, value: lastL });
           }
+          _updateChipValue(inst, lastTime);
           _drawOverlayClouds();
           break;
         }
         case 'RSI': {
-          // Full O(n) recalc from proper seed for exact Wilder's smoothing.
           var vals = Calc.rsi(src, p.length);
           var last = vals[vals.length - 1];
+          var showMa = (p.showMa !== 'Off');
+          var maLen = p.maLength || 14;
+          var maVals = showMa ? Calc.sma(vals, maLen) : [];
+          var lastMa = maVals.length > 0 ? maVals[maVals.length - 1] : null;
           if (!inst._dataByTime) inst._dataByTime = {};
-          inst._dataByTime[lastTime] = { rsi: last };
+          inst._dataByTime[lastTime] = { rsi: last, ma: lastMa };
           if (last !== null && inst.series.rsi) inst.series.rsi.update({ time: lastTime, value: last });
+          if (showMa && lastMa !== null && inst.series.ma) inst.series.ma.update({ time: lastTime, value: lastMa });
           if (inst.series.upper) inst.series.upper.update({ time: lastTime, value: Number(p.upper) });
           if (inst.series.lower) inst.series.lower.update({ time: lastTime, value: Number(p.lower) });
           if (inst.series.middle) inst.series.middle.update({ time: lastTime, value: 50 });
-          if (last !== null) {
-            PaneManager.updateLegend(inst.paneId, '<span style="color:#B388FF;font-weight:600;">' + last.toFixed(2) + '</span>');
+          var rsiHtml = '';
+          if (last !== null && isFinite(last)) {
+            rsiHtml += '<span style="color:#B388FF;font-weight:600;margin-right:6px;">' + Number(last).toFixed(2) + '</span>';
           }
+          if (showMa && lastMa !== null && isFinite(lastMa)) {
+            rsiHtml += '<span style="color:#FFD54F;font-weight:600;">' + Number(lastMa).toFixed(2) + '</span>';
+          }
+          if (rsiHtml) PaneManager.updateLegend(inst.paneId, rsiHtml);
           _drawOverlayClouds();
           break;
         }
@@ -7296,6 +7432,9 @@
           if (!inst._dataByTime) inst._dataByTime = {};
           inst._dataByTime[lastTime] = { adx: lastAdx, plusDi: lastPlus, minusDi: lastMinus, dx: lastDx };
 
+          if (inst.series.ref20) {
+            inst.series.ref20.update({ time: lastTime, value: 20 });
+          }
           if (lastAdx !== null && isFinite(lastAdx) && inst.series.adx) {
             inst.series.adx.update({ time: lastTime, value: Number(lastAdx) });
           }
@@ -7307,9 +7446,9 @@
           }
 
           if (lastAdx !== null || lastPlus !== null || lastMinus !== null) {
-            var html = (lastAdx !== null && isFinite(lastAdx) ? '<span style="color:#E91E63;font-weight:600;margin-right:6px;">' + Number(lastAdx).toFixed(4) + '</span>' : '') +
-                       (lastPlus !== null && isFinite(lastPlus) ? '<span style="color:#2196F3;font-weight:600;margin-right:6px;">+' + Number(lastPlus).toFixed(4) + '</span>' : '') +
-                       (lastMinus !== null && isFinite(lastMinus) ? '<span style="color:#FF9800;font-weight:600;">-' + Number(lastMinus).toFixed(4) + '</span>' : '');
+            var html = (lastAdx !== null && isFinite(lastAdx) ? '<span style="color:#E91E63;font-weight:600;margin-right:6px;">' + Number(lastAdx).toFixed(2) + '</span>' : '') +
+                       (lastPlus !== null && isFinite(lastPlus) ? '<span style="color:#2196F3;font-weight:600;margin-right:6px;">+' + Number(lastPlus).toFixed(2) + '</span>' : '') +
+                       (lastMinus !== null && isFinite(lastMinus) ? '<span style="color:#FF9800;font-weight:600;">-' + Number(lastMinus).toFixed(2) + '</span>' : '');
             PaneManager.updateLegend(inst.paneId, html);
           }
           _drawOverlayClouds();
@@ -7520,12 +7659,111 @@
   }
 
   // ═══════════════════════════════════════════════════
-  // UI — ACTIVE INDICATORS BAR (legend chips)
-  // ═══════════════════════════════════════════════════
+  function _updateChipValue(inst, t) {
+    if (!inst || !inst._chipValEl) return;
+    var el = inst._chipValEl;
+    if (!inst.visible) {
+      el.textContent = '';
+      return;
+    }
+    if (!t && _candles && _candles.length) {
+      t = _candles[_candles.length - 1].time;
+    }
+    var data = (inst._dataByTime && t !== undefined) ? inst._dataByTime[t] : null;
+    if (!data && _candles && _candles.length) {
+      data = inst._dataByTime ? inst._dataByTime[_candles[_candles.length - 1].time] : null;
+    }
+    if (!data) {
+      el.textContent = '';
+      return;
+    }
+
+    switch (inst.def.id) {
+      case 'SMA':
+      case 'EMA':
+        if (data.value !== null && data.value !== undefined && isFinite(data.value)) {
+          el.innerHTML = '<span style="color:' + (inst.color || '#F2994A') + '">' + Number(data.value).toFixed(2) + '</span>';
+        } else {
+          el.textContent = '';
+        }
+        break;
+      case 'SUPERTREND':
+        if (data.supertrend !== null && data.supertrend !== undefined && isFinite(data.supertrend)) {
+          var stCol = data.trend === 1 ? '#4FAF7B' : '#EF5350';
+          el.innerHTML = '<span style="color:' + stCol + '">' + Number(data.supertrend).toFixed(2) + '</span>';
+        } else {
+          el.textContent = '';
+        }
+        break;
+      case 'BB':
+        if (data.basis !== null && data.basis !== undefined && isFinite(data.basis)) {
+          el.innerHTML = '<span style="color:#2196F3">' + Number(data.basis).toFixed(2) + '</span>' +
+                         (data.upper ? ' <span style="color:rgba(255,255,255,0.45);font-size:11px;">(' + Number(data.upper).toFixed(2) + '/' + Number(data.lower).toFixed(2) + ')</span>' : '');
+        } else {
+          el.textContent = '';
+        }
+        break;
+      case 'VWAP':
+        if (data.vwap !== null && data.vwap !== undefined && isFinite(data.vwap)) {
+          el.innerHTML = '<span style="color:' + (inst.color || '#6B8FD6') + '">' + Number(data.vwap).toFixed(2) + '</span>';
+        } else {
+          el.textContent = '';
+        }
+        break;
+      case 'PSAR':
+        if (data.sar !== null && data.sar !== undefined && isFinite(data.sar)) {
+          var psarCol = data.trend === 1 ? '#4FAF7B' : '#EF5350';
+          el.innerHTML = '<span style="color:' + psarCol + '">' + Number(data.sar).toFixed(2) + '</span>';
+        } else {
+          el.textContent = '';
+        }
+        break;
+      case 'DONCHIAN':
+        if (data.middle !== null && data.middle !== undefined && isFinite(data.middle)) {
+          el.innerHTML = '<span style="color:#FF6D00">' + Number(data.middle).toFixed(2) + '</span>' +
+                         (data.upper ? ' <span style="color:rgba(255,255,255,0.45);font-size:11px;">(' + Number(data.upper).toFixed(2) + '/' + Number(data.lower).toFixed(2) + ')</span>' : '');
+        } else {
+          el.textContent = '';
+        }
+        break;
+      case 'KELTNER':
+        if (data.middle !== null && data.middle !== undefined && isFinite(data.middle)) {
+          el.innerHTML = '<span style="color:#FF6D00">' + Number(data.middle).toFixed(2) + '</span>' +
+                         (data.upper ? ' <span style="color:rgba(255,255,255,0.45);font-size:11px;">(' + Number(data.upper).toFixed(2) + '/' + Number(data.lower).toFixed(2) + ')</span>' : '');
+        } else {
+          el.textContent = '';
+        }
+        break;
+      default:
+        el.textContent = '';
+    }
+  }
 
   function _refreshBar() {
     var bar = document.getElementById('active-indicators-bar');
-    if (!bar) return;
+    if (!bar) {
+      var chartContainer = document.getElementById('chart') || document.getElementById('chart-container') || document.querySelector('.chart-wrapper');
+      if (chartContainer && chartContainer.parentElement) {
+        bar = document.createElement('div');
+        bar.id = 'active-indicators-bar';
+        bar.className = 'active-indicators-bar';
+        chartContainer.parentElement.appendChild(bar);
+      } else {
+        return;
+      }
+    }
+    var isMobile = window.innerWidth <= 768;
+    bar.style.position = 'absolute';
+    bar.style.top = 'auto';
+    bar.style.bottom = isMobile ? '42px' : '46px';
+    bar.style.left = isMobile ? (window.innerWidth <= 480 ? '8px' : '12px') : '18px';
+    bar.style.zIndex = '25';
+    bar.style.display = 'flex';
+    bar.style.flexWrap = 'wrap';
+    bar.style.gap = isMobile ? '4px' : '6px';
+    bar.style.alignItems = 'center';
+    bar.style.pointerEvents = 'auto';
+    bar.style.maxWidth = isMobile ? (window.innerWidth <= 480 ? 'calc(100% - 70px)' : 'calc(100% - 80px)') : 'calc(100% - 160px)';
     bar.innerHTML = '';
 
     for (var id in _instances) {
@@ -7550,6 +7788,15 @@
         lbl.style.cssText = 'font-weight:600;letter-spacing:0.2px;';
         lbl.textContent = _chipLabel(inst);
         chip.appendChild(lbl);
+
+        var valSpan = document.createElement('span');
+        valSpan.className = 'chip-val';
+        valSpan.style.cssText = 'font-weight:700;margin-left:4px;font-size:12px;';
+        chip.appendChild(valSpan);
+        inst._chipValEl = valSpan;
+        if (_candles && _candles.length) {
+          _updateChipValue(inst, _candles[_candles.length - 1].time);
+        }
 
         var eyeBtn = document.createElement('span');
         eyeBtn.textContent = inst.visible ? '👁' : '🙈';
@@ -7586,8 +7833,8 @@
   function _chipLabel(inst) {
     var p = inst.params;
     switch (inst.def.id) {
-      case 'SMA':        return 'SMA ' + p.length;
-      case 'EMA':        return 'EMA ' + p.length;
+      case 'SMA':        return 'SMA ' + p.length + (p.offset ? ' (' + p.offset + ')' : '');
+      case 'EMA':        return 'EMA ' + p.length + (p.offset ? ' (' + p.offset + ')' : '');
       case 'SUPERTREND': return 'Supertrend ' + p.length + ',' + p.multiplier;
       case 'PSAR':        return 'PSAR ' + p.initialAF + ',' + p.increment + ',' + p.maximumAF;
       case 'PIVOTPOINTS': return 'Pivot Points (' + p.method + ', ' + p.period + ')';
@@ -7843,9 +8090,9 @@
     var wasOpen = !!(menu.style && (menu.style.display === 'flex' || menu.style.display === 'block'));
     menu.innerHTML = '';
     menu.style.cssText = [
-      'position:absolute', 'top:calc(100% + 6px)', 'left:0',
+      'position:fixed',
       'background:#1e222d', 'border:1px solid #2a2e39', 'border-radius:8px',
-      'min-width:230px', 'max-height:380px', 'z-index:2000', 'box-shadow:0 4px 20px rgba(0,0,0,0.7)',
+      'min-width:240px', 'max-height:380px', 'z-index:99999', 'box-shadow:0 4px 20px rgba(0,0,0,0.8)',
       'overflow:hidden', 'padding:0', 'flex-direction:column'
     ].join(';');
     menu.style.display = wasOpen ? 'flex' : 'none';
@@ -7884,6 +8131,61 @@
     var c = EMA_COLORS[_emaColorIdx % EMA_COLORS.length];
     _emaColorIdx++;
     return c;
+  }
+
+  function _ensureViewportAtLastCandle(savedLr) {
+    if (!window.bigChart || typeof window.bigChart.timeScale !== 'function') return;
+    var numCandles = (_candles && _candles.length > 0) ? _candles.length : (window._chartCandles ? window._chartCandles.length : 0);
+    var endIdx = numCandles - 1;
+    var ts = window.bigChart.timeScale();
+
+    var targetLr = null;
+    if (savedLr && typeof savedLr.from === 'number' && typeof savedLr.to === 'number' && isFinite(savedLr.from) && isFinite(savedLr.to)) {
+      var span = savedLr.to - savedLr.from;
+      if (span <= 0) span = 60;
+      // If the saved range was pushed into future whitespace (to > endIdx + 10), clamp it back near the last candle!
+      if (endIdx >= 0 && savedLr.to > endIdx + 10) {
+        var newTo = endIdx + 5;
+        targetLr = { from: newTo - span, to: newTo };
+      } else {
+        targetLr = { from: savedLr.from, to: savedLr.to };
+      }
+    } else if (endIdx >= 0) {
+      var defaultSpan = Math.min(90, Math.max(30, numCandles));
+      targetLr = { from: Math.max(0, endIdx - defaultSpan), to: endIdx + 5 };
+    }
+
+    if (targetLr) {
+      try { ts.setVisibleLogicalRange(targetLr); } catch (e) {}
+      for (var pid in PaneManager._panes) {
+        var p = PaneManager._panes[pid];
+        if (p && p.chart) {
+          try { p.chart.timeScale().setVisibleLogicalRange(targetLr); } catch (e) {}
+        }
+      }
+    }
+
+    var reapply = function () {
+      if (!window.bigChart || typeof window.bigChart.timeScale !== 'function') return;
+      var cur = window.bigChart.timeScale().getVisibleLogicalRange();
+      if (!cur && targetLr) {
+        try { window.bigChart.timeScale().setVisibleLogicalRange(targetLr); } catch (e) {}
+      } else if (cur && endIdx >= 0 && cur.to > endIdx + 10) {
+        var s = cur.to - cur.from;
+        if (s <= 0) s = 60;
+        var clampedTo = endIdx + 5;
+        var clampedLr = { from: clampedTo - s, to: clampedTo };
+        try { window.bigChart.timeScale().setVisibleLogicalRange(clampedLr); } catch (e) {}
+        for (var pid in PaneManager._panes) {
+          var p = PaneManager._panes[pid];
+          if (p && p.chart) {
+            try { p.chart.timeScale().setVisibleLogicalRange(clampedLr); } catch (e) {}
+          }
+        }
+      }
+    };
+    requestAnimationFrame(reapply);
+    setTimeout(reapply, 50);
   }
 
   // ═══════════════════════════════════════════════════
@@ -7954,6 +8256,11 @@
       // re-applies the persisted config on top of it and creates duplicates.
       _persistenceRestored = true;
 
+      // Capture visible range before adding series or panes
+      var preAddLr = (window.bigChart && typeof window.bigChart.timeScale === 'function')
+        ? window.bigChart.timeScale().getVisibleLogicalRange()
+        : null;
+
       // Synchronize latest chart candles
       _candles = _getEffectiveCandles();
       _candleByTime = {};
@@ -7993,6 +8300,9 @@
       _drawOverlayClouds();
       _refreshBar();
       if (!opts.skipSave) _savePersistedConfig();
+
+      // Ensure viewport stays at the last candle without jumping into future whitespace
+      _ensureViewportAtLastCandle(preAddLr);
       return id;
     },
 
@@ -8000,6 +8310,9 @@
     removeIndicator: function (instanceId) {
       var inst = _instances[instanceId];
       if (!inst) return;
+      var preLr = (window.bigChart && typeof window.bigChart.timeScale === 'function')
+        ? window.bigChart.timeScale().getVisibleLogicalRange()
+        : null;
       var typeId = inst.def.id;
       // Delete from _instances BEFORE _removeSeries: _removeSeries triggers
       // _drawOverlayClouds (pane-usage checks and the Pivot Points High Low
@@ -8012,17 +8325,23 @@
       // Recycle EMA color index on removal (approximate)
       if (inst.def.id === 'EMA') { _emaColorIdx = Math.max(0, _emaColorIdx - 1); }
       // Sync checkmark indicators in stock.html
-      if (typeId === 'SMA') { var c = document.getElementById('check_SMA_20'); if (c) c.style.opacity = '0'; }
-      if (typeId === 'EMA') { var c = document.getElementById('check_EMA_20'); if (c) c.style.opacity = '0'; }
-      if (typeId === 'BB')  { var c = document.getElementById('check_BB');     if (c) c.style.opacity = '0'; }
+      var checkSelectors = ['check_' + typeId, 'check_' + typeId + '_20', 'check_' + instanceId];
+      checkSelectors.forEach(function(cid) {
+        var c = document.getElementById(cid);
+        if (c) c.style.opacity = '0';
+      });
       _refreshBar();
       _savePersistedConfig();
+      _ensureViewportAtLastCandle(preLr);
     },
 
     /** Toggle visibility of an indicator instance. */
     toggleIndicator: function (instanceId) {
       var inst = _instances[instanceId];
       if (!inst) return;
+      var preLr = (window.bigChart && typeof window.bigChart.timeScale === 'function')
+        ? window.bigChart.timeScale().getVisibleLogicalRange()
+        : null;
       inst.visible = !inst.visible;
       for (var k in inst.series) {
         try { inst.series[k].applyOptions({ visible: inst.visible }); } catch (e) {}
@@ -8030,12 +8349,16 @@
       _drawOverlayClouds();
       _refreshBar();
       _savePersistedConfig();
+      _ensureViewportAtLastCandle(preLr);
     },
 
     /** Update parameters and recalculate. */
     updateParams: function (instanceId, params) {
       var inst = _instances[instanceId];
       if (!inst) return;
+      var preLr = (window.bigChart && typeof window.bigChart.timeScale === 'function')
+        ? window.bigChart.timeScale().getVisibleLogicalRange()
+        : null;
       inst.params = Object.assign({}, inst.params, params);
       // Update pane title if relevant
       if (inst.paneId) {
@@ -8059,6 +8382,7 @@
       }
       _refreshBar();
       _savePersistedConfig();
+      _ensureViewportAtLastCandle(preLr);
     },
 
     /**
@@ -8073,7 +8397,7 @@
         'EMA_20': ['EMA', { length: 20 }],
         'BB':     ['BB',  {}]
       };
-      var entry = map[oldId];
+      var entry = map[oldId] || (DEFS[oldId] ? [oldId, {}] : null);
       if (!entry) return;
       var indId = entry[0];
       // Find existing instance with same type
@@ -8081,7 +8405,7 @@
       for (var id in _instances) {
         if (_instances[id].def.id === indId) { existing = id; break; }
       }
-      var check = document.getElementById('check_' + oldId);
+      var check = document.getElementById('check_' + oldId) || document.getElementById('check_' + indId);
       if (existing) {
         this.removeIndicator(existing);
         if (check) check.style.opacity = '0';
@@ -8111,11 +8435,20 @@
     IndicatorEngine.legacyToggle(id, event);
   };
 
-  window.toggleIndicatorMenu = function toggleIndicatorMenu() {
+  window.toggleIndicatorMenu = function toggleIndicatorMenu(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
     var menu = document.getElementById('indicatorMenu');
+    var btn = document.querySelector('.indicator-dropdown');
     if (menu) {
       var isClosed = (menu.style.display === 'none' || !menu.style.display);
       _buildMenu();
+      if (btn && isClosed) {
+        var rect = btn.getBoundingClientRect();
+        menu.style.position = 'fixed';
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 250)) + 'px';
+        menu.style.zIndex = '99999';
+      }
       menu.style.display = isClosed ? 'flex' : 'none';
       if (isClosed) {
         var input = menu.querySelector('input');

@@ -1185,6 +1185,14 @@ class HitTestService {
             // Previously Body (12px) fired before Midpoint (6px), making midpoint
             // handles impossible to hit on any non-zero-width drawing.
 
+            // 0. Custom handles (e.g. Emoji corner resize handles, Position handles)
+            if (d.hitTestHandle) {
+                var handleHit = d.hitTestHandle(pos, chartState);
+                if (handleHit) {
+                    return { drawing: d, hitType: 'edge', handleLabel: handleHit };
+                }
+            }
+
             // 1. Anchor handles (highest priority)
             result = this._hitAnchorHandles(pos, d, pixels, chartState);
             if (result) return result;
@@ -1216,8 +1224,14 @@ class HitTestService {
         return this._hitAnchorHandles(pos, drawing, pixels, chartState);
     }
 
-    // Check if any handle (anchor or midpoint) is hit
+    // Check if any handle (anchor or midpoint or custom) is hit
     hitTestAnyHandle(pos, drawing, chartState) {
+        if (drawing.hitTestHandle) {
+            var customHandle = drawing.hitTestHandle(pos, chartState);
+            if (customHandle) {
+                return { drawing: drawing, hitType: 'edge', handleLabel: customHandle };
+            }
+        }
         var pixels = this._getPixels(drawing, chartState);
         if (!pixels) return null;
         var result = this._hitAnchorHandles(pos, drawing, pixels, chartState);
@@ -1329,11 +1343,13 @@ class HitTestService {
                 }
             }
         }
-        // For single-point drawings, check distance to point
+        // For single-point drawings, check distance to point (dynamic radius matching drawing size)
         if (pixels.length === 1 && pixels[0]) {
             var p = pixels[0];
+            var size = (d.style && (d.style.fontSize || d.style.size)) || (d.getObjectDef && d.getObjectDef() && d.getObjectDef().defaults && (d.getObjectDef().defaults.fontSize || d.getObjectDef().defaults.size)) || 28;
+            var radius = Math.max(this.bodyThreshold, size / 2 + 8);
             var dist = Math.sqrt((pos.x - p.x) * (pos.x - p.x) + (pos.y - p.y) * (pos.y - p.y));
-            if (dist <= this.bodyThreshold) {
+            if (dist <= radius) {
                 return { drawing: d, hitType: 'body', handleIndex: 0, pixel: p };
             }
         }
@@ -3569,9 +3585,43 @@ class DrawingEngine {
         var selIds = this.selection.getSelected();
         for (var si2 = 0; si2 < selIds.length; si2++) selectedSet[selIds[si2]] = true;
 
-        // 3. Draw each drawing in layer + z-order
+        // 3. Draw each drawing in layer + z-order with candle overlay support
+        var belowDrawings = [];
+        var aboveDrawings = [];
         for (var i = 0; i < sorted.length; i++) {
             var d = sorted[i];
+            var isBelow = (d instanceof (window.EmojiDrawing || Object)) || 
+                          (d.getObjectDef && d.getObjectDef() && d.getObjectDef().geometry === 3) ||
+                          (d.model && (d.model.layer === 'drawings_below' || d.model.layer === 'background')) ||
+                          (d.style && d.style.behindCandles);
+            if (isBelow) {
+                belowDrawings.push(d);
+            } else {
+                aboveDrawings.push(d);
+            }
+        }
+
+        // Draw below-candle drawings (e.g. Emojis, Watermarks)
+        for (var i = 0; i < belowDrawings.length; i++) {
+            var d = belowDrawings[i];
+            var dId = d.model ? d.model.id : null;
+            var isSelected = !!(dId && selectedSet[dId]);
+            var isHovered = !!(dId && dId === hoveredId);
+            if (d.draw) {
+                ctx.save();
+                d.draw(ctx, chartState, isSelected, isHovered);
+                ctx.restore();
+            }
+        }
+
+        // Render candle overlay over below drawings so candles are drawn on top of emojis
+        if (belowDrawings.length > 0 && typeof window.drawVisibleCandlesOverlay === 'function') {
+            window.drawVisibleCandlesOverlay(ctx, chartState);
+        }
+
+        // Draw standard / above-candle drawings
+        for (var i = 0; i < aboveDrawings.length; i++) {
+            var d = aboveDrawings[i];
             var dId = d.model ? d.model.id : null;
             var isSelected = !!(dId && selectedSet[dId]);
             var isHovered = !!(dId && dId === hoveredId);

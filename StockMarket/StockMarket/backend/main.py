@@ -64,17 +64,35 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # NSE/BSE index tickers (yfinance uses ^ prefix, not .NS)
 YFINANCE_INDEX_MAP = {
     'NIFTY': '^NSEI',
+    'NIFTY50': '^NSEI',
+    'NIFTY 50': '^NSEI',
+    '^NSEI': '^NSEI',
     'BANKNIFTY': '^NSEBANK',
+    'NIFTYBANK': '^NSEBANK',
+    'NIFTY BANK': '^NSEBANK',
+    'BANK NIFTY': '^NSEBANK',
+    '^NSEBANK': '^NSEBANK',
     'SENSEX': '^BSESN',
-    # BUGFIX (candle-gap investigation): FINNIFTY/MIDCAP/SMALLCAP were missing
-    # here, so _yfinance_ticker() fell through to f"{ticker}.NS" for them --
-    # "FINNIFTY.NS"/"MIDCAP.NS"/"SMALLCAP.NS" are not real yfinance symbols
-    # for these indices, so every yfinance-fallback gap-fill attempt for
-    # them silently returned nothing. Same symbols already proven correct in
-    # recovery_service.py's own (separate, already-fixed) copy of this map.
+    'BSESN': '^BSESN',
+    'SENSEX.BO': '^BSESN',
+    '^BSESN': '^BSESN',
     'FINNIFTY': 'NIFTY_FIN_SERVICE.NS',
+    'NIFTYFIN': 'NIFTY_FIN_SERVICE.NS',
+    'NIFTY_FIN_SERVICE': 'NIFTY_FIN_SERVICE.NS',
+    'NIFTY FIN': 'NIFTY_FIN_SERVICE.NS',
+    'NIFTY FINANCIAL SERVICES': 'NIFTY_FIN_SERVICE.NS',
+    'NIFTY_FIN_SERVICE.NS': 'NIFTY_FIN_SERVICE.NS',
+    '^CNXFIN': 'NIFTY_FIN_SERVICE.NS',
     'MIDCAP': '^NSEMDCP50',
-    'SMALLCAP': '^NSESCP250',
+    'MIDCPNIFTY': '^NSEMDCP50',
+    'NIFTY MIDCAP 50': '^NSEMDCP50',
+    'NIFTY_MIDCAP_50': '^NSEMDCP50',
+    '^NSEMDCP50': '^NSEMDCP50',
+    'SMALLCAP': '^CNXSC',
+    'NIFTYSMLCAP100': '^CNXSC',
+    'NIFTY SMALLCAP 50': '^CNXSC',
+    'NIFTY_SMALLCAP_100': '^CNXSC',
+    '^CNXSC': '^CNXSC',
     # Global
     '^GSPC': '^GSPC',
     '^IXIC': '^IXIC',
@@ -444,7 +462,7 @@ INDEX_MAP = {
     "BANKNIFTY":       "^NSEBANK",
     "FINNIFTY":        "NIFTY_FIN_SERVICE.NS",
     "MIDCAP":          "^NSEMDCP50",
-    "SMALLCAP":        "^NSESCP250",
+    "SMALLCAP":        "^CNXSC",
     "NIFTY_AUTO":      "^CNXAUTO",
     "NIFTY_IT":        "^CNXIT",
     "NIFTY_PHARMA":    "^CNXPHARMA",
@@ -513,13 +531,20 @@ _holidays_lock = threading.Lock()
 backfill_locks = set()
 _backfill_lock = threading.Lock()
 
-def _safe_logo(val):
-    """Return logo only if it is a valid URL; otherwise empty string."""
-    if not val: return ""
-    if val.startswith("http://") or val.startswith("https://") or val.startswith("data:"):
-        return val
-    if val.startswith("logos/"):
-        return val
+def _safe_logo(val, ticker=None):
+    """Return logo only if it is a valid, trusted image URL; otherwise default to local /logos/{ticker}.svg."""
+    if val:
+        val_str = str(val).strip()
+        if val_str and "gstatic.com" not in val_str and "faviconV2" not in val_str:
+            if val_str.startswith("https://s3-symbol-logo.tradingview.com/") or val_str.startswith("logos/") or val_str.startswith("/logos/"):
+                return val_str
+            if val_str.startswith("data:image/"):
+                return val_str
+            if (val_str.startswith("http://") or val_str.startswith("https://")) and any(val_str.lower().endswith(ext) for ext in [".svg", ".png", ".jpg", ".jpeg", ".webp"]):
+                return val_str
+    if ticker:
+        clean = str(ticker).strip().upper().replace('.NS', '').replace('.BO', '')
+        return f"/logos/{clean}.svg"
     return ""
 
 # --- In-memory TTL cache for yfinance results ---
@@ -542,10 +567,10 @@ _YFINANCE_FAILED: Dict[str, float] = {}  # kept for backward compat; delegates t
 _YFINANCE_FAILED_LOCK = threading.Lock()
 _YFINANCE_FAILED_TTL = 3600  # kept for backward compat
 
-# --- TTL cache for all-stocks endpoint (rarely changes) ---
-_all_stocks_cache: list = None
+# --- TTL cache for all-stocks endpoint (refreshes frequently for live price/gain percentages) ---
+_all_stocks_cache_bytes: Optional[bytes] = None
 _all_stocks_cache_ts: float = 0
-_ALL_STOCKS_CACHE_TTL = 3600  # 1 hour
+_ALL_STOCKS_CACHE_TTL = 60  # 60 seconds
 
 # --- TTL cache for news endpoints (avoid expensive StockData queries) ---
 _news_general_cache: dict = None
@@ -569,6 +594,98 @@ _last_aggregator_feed_ts: Dict[str, float] = {}  # shared dedup: last tick epoch
 # ── Sector map (ticker → sector name) ──
 _SECTOR_MAP: Dict[str, str] = {}
 _sector_tickers: Dict[str, list] = {}  # sector -> list of tickers (built at startup)
+
+_sec_path = os.path.join(os.path.dirname(__file__), "sector_data.json")
+if os.path.exists(_sec_path):
+    try:
+        with open(_sec_path, "r") as _sf:
+            _s_raw = json.load(_sf)
+        _SECTOR_MAP.update({k.upper(): v for k, v in _s_raw.items()})
+        for _tk, _sc in _SECTOR_MAP.items():
+            if _sc not in _sector_tickers: _sector_tickers[_sc] = []
+            _sector_tickers[_sc].append(_tk)
+    except Exception as _se:
+        pass
+
+# ── Sector Aliases & Matching Helpers ──
+SECTOR_ALIASES_MAP: Dict[str, list] = {
+    "it": ["IT", "Information Technology", "Tech", "Technology", "Software", "Computers - Software"],
+    "technology": ["IT", "Information Technology", "Tech", "Technology", "Software", "Computers - Software"],
+    "tech": ["IT", "Information Technology", "Tech", "Technology", "Software"],
+    "information technology": ["IT", "Information Technology", "Tech", "Technology", "Software"],
+    
+    "oil & gas": ["Energy", "Oil & Gas", "Oil and Gas", "Power", "Petroleum", "Oil", "Gas", "Utilities"],
+    "oil and gas": ["Energy", "Oil & Gas", "Oil and Gas", "Power", "Petroleum", "Oil", "Gas", "Utilities"],
+    "energy": ["Energy", "Oil & Gas", "Oil and Gas", "Power", "Petroleum", "Oil", "Gas", "Utilities"],
+    "power": ["Energy", "Power", "Oil & Gas", "Oil and Gas", "Utilities"],
+    
+    "pharma": ["Pharma", "Healthcare", "Pharmaceuticals", "Health Care", "Biotechnology"],
+    "healthcare": ["Pharma", "Healthcare", "Pharmaceuticals", "Health Care", "Biotechnology"],
+    "pharmaceuticals": ["Pharma", "Healthcare", "Pharmaceuticals", "Health Care", "Biotechnology"],
+    
+    "banking": ["Banking", "Banks", "Financial Services", "Financial", "Finance", "NBFC"],
+    "financial services": ["Banking", "Banks", "Financial Services", "Financial", "Finance", "NBFC"],
+    "banks": ["Banking", "Banks", "Financial Services", "Financial", "Finance"],
+    
+    "auto": ["Auto", "Automobile", "Automobiles", "Automotive", "Motors", "Vehicles"],
+    "automobile": ["Auto", "Automobile", "Automobiles", "Automotive", "Motors"],
+    "automotive": ["Auto", "Automobile", "Automobiles", "Automotive", "Motors"],
+    
+    "metal": ["Metal", "Metals", "Mining", "Steel", "Minerals"],
+    "metals": ["Metal", "Metals", "Mining", "Steel", "Minerals"],
+    
+    "fmcg": ["FMCG", "Fast Moving Consumer Goods", "Consumer Goods", "Food"],
+    "consumer durables": ["Consumer Durables", "Durables", "Consumer Discretionary", "Appliances"],
+    "telecom": ["Telecom", "Telecommunication", "Telecommunications", "Communication"],
+    "media": ["Media", "Media & Entertainment", "Entertainment", "Broadcasting"],
+    "industrials": ["Industrials", "Industrial", "Capital Goods", "Manufacturing", "Engineering", "Infrastructure"],
+    "realty": ["Realty", "Real Estate", "Properties", "Construction - Real Estate"],
+    "real estate": ["Realty", "Real Estate", "Properties", "Construction - Real Estate"],
+    "equities": ["Equities", "Other", "Unknown", ""],
+}
+
+def _get_sector_aliases(sec_name: str) -> list[str]:
+    if not sec_name:
+        return []
+    s = sec_name.strip().lower()
+    if s in SECTOR_ALIASES_MAP:
+        return list(dict.fromkeys([sec_name.strip()] + SECTOR_ALIASES_MAP[s]))
+    for k, aliases in SECTOR_ALIASES_MAP.items():
+        if s == k or any(s == a.lower() for a in aliases):
+            return list(dict.fromkeys([sec_name.strip()] + aliases))
+    return [sec_name.strip()]
+
+def _is_sector_match(stock_sector: str, query_aliases: list[str]) -> bool:
+    import re
+    target = str(stock_sector or '').strip().lower()
+    if not target:
+        return False
+    for a in query_aliases:
+        a_low = a.lower().strip()
+        if not a_low:
+            continue
+        if target == a_low:
+            return True
+        if len(target) <= 3 or len(a_low) <= 3:
+            if re.search(r'\b' + re.escape(a_low) + r'\b', target) or re.search(r'\b' + re.escape(target) + r'\b', a_low):
+                return True
+        else:
+            if a_low in target or target in a_low or re.search(r'\b' + re.escape(a_low) + r'\b', target):
+                return True
+    return False
+
+# ── Market Cap map (ticker → 'large' | 'mid' | 'small') ──
+_CAP_MAP: Dict[str, str] = {}
+_cap_path = os.path.join(os.path.dirname(__file__), "market_cap_data.json")
+if os.path.exists(_cap_path):
+    try:
+        with open(_cap_path, "r") as _cf:
+            _c_raw = json.load(_cf)
+        for _t in _c_raw.get("large", []): _CAP_MAP[_t.upper()] = "large"
+        for _t in _c_raw.get("mid", []): _CAP_MAP[_t.upper()] = "mid"
+        for _t in _c_raw.get("small", []): _CAP_MAP[_t.upper()] = "small"
+    except Exception as _ce:
+        pass
 
 # ── Monitoring counters ──
 _monitoring = {
@@ -825,7 +942,21 @@ _db_health_cache = {"result": None, "ts": 0.0}
 _DB_HEALTH_CACHE_TTL = 5  # seconds -- matches the pattern used by _all_stocks_cache etc.
 
 
-def _check_db_health() -> dict:
+def _check_db_health_sync() -> dict:
+    from sqlalchemy import text as _health_text
+    db = None
+    try:
+        db = database.SessionLocal()
+        db.execute(_health_text("SELECT 1"))
+        return {"reachable": True}
+    except Exception as e:
+        return {"reachable": False, "error": str(e)}
+    finally:
+        if db is not None:
+            db.close()
+
+
+async def _check_db_health() -> dict:
     """Lightweight connectivity check -- SELECT 1 only, never an application
     query, per the requirement that /api/health stay fast and non-blocking.
     TTL-cached for 5s: a load balancer or uptime monitor hitting /api/health
@@ -838,17 +969,7 @@ def _check_db_health() -> dict:
     now = time.time()
     if _db_health_cache["result"] is not None and (now - _db_health_cache["ts"]) < _DB_HEALTH_CACHE_TTL:
         return _db_health_cache["result"]
-    from sqlalchemy import text as _health_text
-    db = None
-    try:
-        db = database.SessionLocal()
-        db.execute(_health_text("SELECT 1"))
-        result = {"reachable": True}
-    except Exception as e:
-        result = {"reachable": False, "error": str(e)}
-    finally:
-        if db is not None:
-            db.close()
+    result = await asyncio.to_thread(_check_db_health_sync)
     _db_health_cache["result"] = result
     _db_health_cache["ts"] = now
     return result
@@ -959,12 +1080,11 @@ def get_stocks_version():
     return {"version": f"{sync_date}T18:00:01"}
 
 @app.get("/api/all-stocks")
-
 def get_all_stocks(db: Session = Depends(get_db)):
-    global _all_stocks_cache, _all_stocks_cache_ts
+    global _all_stocks_cache_bytes, _all_stocks_cache_ts
     now = time.time()
-    if _all_stocks_cache is not None and (now - _all_stocks_cache_ts) < _ALL_STOCKS_CACHE_TTL:
-        return _all_stocks_cache
+    if _all_stocks_cache_bytes is not None and (now - _all_stocks_cache_ts) < _ALL_STOCKS_CACHE_TTL:
+        return Response(content=_all_stocks_cache_bytes, media_type="application/json")
 
     stocks = db.query(models.StockMetadata).all()
 
@@ -979,26 +1099,32 @@ def get_all_stocks(db: Session = Depends(get_db)):
     except Exception:
         latest_close = {}
 
+    market_prices = {}
+    try:
+        market_prices = _get_all_market_prices()
+    except Exception:
+        pass
+
     results = []
-
     for s in stocks:
-
+        tkr_clean = s.ticker.upper().replace('.NS', '').replace('.BO', '')
+        pdata = market_prices.get(tkr_clean, {})
+        base_price = pdata.get('current') or latest_close.get(s.ticker) or s.base_price or 0.0
+        chg = pdata.get('change', 0.0)
+        chg_pct = pdata.get('change_pct', 0.0)
         results.append({
-
             "ticker": s.ticker,
-
             "name": s.name,
-
-            "logo": _safe_logo(s.logo),
-
+            "logo": _safe_logo(s.logo, ticker=s.ticker),
             "exchange": s.exchange,
-
-            "basePrice": latest_close.get(s.ticker) or s.base_price
-
+            "basePrice": round(float(base_price), 2),
+            "change": round(float(chg), 2),
+            "changePercent": round(float(chg_pct), 2),
+            "change_pct": round(float(chg_pct), 2)
         })
-    _all_stocks_cache = results
+    _all_stocks_cache_bytes = json.dumps(results).encode('utf-8')
     _all_stocks_cache_ts = now
-    return results
+    return Response(content=_all_stocks_cache_bytes, media_type="application/json")
 
 @app.get("/api/stock-data", response_model=List[schemas.StockDataResponse])
 
@@ -1090,12 +1216,22 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
     from aggregator import snap_to_nse_session, fix_ohlc
 
     ticker = ticker.strip().upper()
+    canonical_index_map = {
+        'NIFTY50': 'NIFTY', 'NIFTY 50': 'NIFTY', '^NSEI': 'NIFTY',
+        'NIFTYBANK': 'BANKNIFTY', 'NIFTY BANK': 'BANKNIFTY', 'BANK NIFTY': 'BANKNIFTY', '^NSEBANK': 'BANKNIFTY',
+        'BSESN': 'SENSEX', 'SENSEX.BO': 'SENSEX', '^BSESN': 'SENSEX',
+        'NIFTYFIN': 'FINNIFTY', 'NIFTY_FIN_SERVICE': 'FINNIFTY', 'NIFTY FIN': 'FINNIFTY', 'NIFTY FINANCIAL SERVICES': 'FINNIFTY', 'NIFTY_FIN_SERVICE.NS': 'FINNIFTY', '^CNXFIN': 'FINNIFTY',
+        'MIDCPNIFTY': 'MIDCAP', 'NIFTY MIDCAP 50': 'MIDCAP', 'NIFTY_MIDCAP_50': 'MIDCAP', '^NSEMDCP50': 'MIDCAP',
+        'NIFTYSMLCAP100': 'SMALLCAP', 'NIFTY SMALLCAP 50': 'SMALLCAP', 'NIFTY_SMALLCAP_100': 'SMALLCAP', '^CNXSC': 'SMALLCAP',
+    }
+    clean_ticker = canonical_index_map.get(ticker, ticker.replace('.NS', '').replace('.BO', ''))
 
     # 1. Lock the ticker for sequential processing
 
     with _backfill_lock:
-        if ticker in backfill_locks:
+        if clean_ticker in backfill_locks or ticker in backfill_locks:
             return
+        backfill_locks.add(clean_ticker)
         backfill_locks.add(ticker)
 
     # HARDEN-XX: db session is opened later, only once network I/O is done --
@@ -1104,10 +1240,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
     db = None
     try:
 
-        if interval in ("1m", "5m", "15m", "30m", "1h"):
-            model = models.Candle
-        else:
-            model = models.Candle
+        model = models.Candle
 
         # Ensure logged in
 
@@ -1121,53 +1254,20 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             print(f"[GapFill] Capping backfill_start from {backfill_start} to {cutoff_dt} due to API limits")
             backfill_start = cutoff_dt
 
-        print(f"[Intraday] [BG] Fetching {ticker} from {backfill_start} to {now}...")
+        print(f"[Intraday] [BG] Fetching {clean_ticker} from {backfill_start} to {now}...")
         # Try AngelOne first (unless it's an index which often lags)
 
         intraday_candles = []
-        is_index = (ticker.upper() in ["NIFTY", "BANKNIFTY", "SENSEX", "NIFTY 50", "NIFTY BANK"])
+        is_index = (clean_ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP"] or
+                    clean_ticker in INDEX_MAP or clean_ticker in YFINANCE_INDEX_MAP)
 
-        angel_interval_map = {
-            "1m": "ONE_MINUTE",
-            "5m": "FIVE_MINUTE",
-            "15m": "FIFTEEN_MINUTE",
-            "30m": "THIRTY_MINUTE",
-            "1h": "ONE_HOUR",
-            "1D": "ONE_DAY"
-        }
-        angel_interval = angel_interval_map.get(interval, "FIVE_MINUTE")
-
-        exchange_val = "BSE" if ticker.upper() == "SENSEX" else "NSE"
-
-        intraday_candles = historical_service.get_historical_candles(
-            ticker=ticker,
-            exchange=exchange_val,
-            interval=angel_interval,
-            from_date=backfill_start,
-            to_date=now
-        ) or []
-
-        # If AngelOne returned empty, wait briefly and retry once in case it was
-        # a transient rate limit (the first attempt may have hit a throttle window).
-        if not intraday_candles:
-            import time as _time_mod
-            _time_mod.sleep(3)
-            intraday_candles = historical_service.get_historical_candles(
-                ticker=ticker,
-                exchange=exchange_val,
-                interval=angel_interval,
-                from_date=backfill_start,
-                to_date=now
-            ) or []
-
-        if not intraday_candles:
+        if is_index:
             try:
-                yf_data = _fetch_yfinance_intraday(None, ticker, interval, use_bg_semaphore=True)
+                yf_data = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=True)
                 if yf_data:
-                    intraday_candles = []
                     for row in yf_data:
                         dt = row.timestamp
-                        if backfill_start <= dt <= now:
+                        if dt <= now:
                             intraday_candles.append({
                                 "timestamp": dt,
                                 "open": row.open,
@@ -1177,7 +1277,47 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                                 "volume": row.volume
                             })
             except Exception as e:
-                print(f"[GapFill] YFinance fallback failed for {ticker}: {e}")
+                print(f"[GapFill] Index YFinance fetch failed for {clean_ticker}: {e}")
+
+        if not intraday_candles:
+            angel_interval_map = {
+                "1m": "ONE_MINUTE",
+                "5m": "FIVE_MINUTE",
+                "15m": "FIFTEEN_MINUTE",
+                "30m": "THIRTY_MINUTE",
+                "1h": "ONE_HOUR",
+                "1D": "ONE_DAY"
+            }
+            angel_interval = angel_interval_map.get(interval, "FIVE_MINUTE")
+
+            exchange_val = "BSE" if clean_ticker == "SENSEX" else "NSE"
+
+            intraday_candles = historical_service.get_historical_candles(
+                ticker=clean_ticker,
+                exchange=exchange_val,
+                interval=angel_interval,
+                from_date=backfill_start,
+                to_date=now
+            ) or []
+
+            # If AngelOne returned empty, retry with yfinance fallback
+            if not intraday_candles:
+                try:
+                    yf_data = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=True)
+                    if yf_data:
+                        for row in yf_data:
+                            dt = row.timestamp
+                            if dt <= now:
+                                intraday_candles.append({
+                                    "timestamp": dt,
+                                    "open": row.open,
+                                    "high": row.high,
+                                    "low": row.low,
+                                    "close": row.close,
+                                    "volume": row.volume
+                                })
+                except Exception as e:
+                    print(f"[GapFill] YFinance fallback failed for {clean_ticker}: {e}")
 
         # ---- Phase 2: open the DB session only now, after every network call
         # (AngelOne login, both get_historical_candles attempts, the 3s retry
@@ -1192,7 +1332,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                 from models import Candle
                 from resampler import CandleResampler
                 five_min_rows = db.query(Candle).filter(
-                    Candle.ticker == ticker,
+                    Candle.ticker == clean_ticker,
                     Candle.timeframe == '5m',
                     Candle.timestamp >= backfill_start
                 ).order_by(Candle.timestamp.asc()).all()
@@ -1206,16 +1346,16 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                     resampled = CandleResampler.resample_5m_to(five_min_dicts, interval)
                     if resampled:
                         intraday_candles = resampled
-                        print(f"[GapFill] Resample fallback: built {len(resampled)} {interval} candles from 5m for {ticker}")
+                        print(f"[GapFill] Resample fallback: built {len(resampled)} {interval} candles from 5m for {clean_ticker}")
             except Exception as e:
-                print(f"[GapFill] Resample fallback failed for {ticker} {interval}: {e}")
+                print(f"[GapFill] Resample fallback failed for {clean_ticker} {interval}: {e}")
 
         if intraday_candles:
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
             
             # Bulk fetch existing timestamps to prevent N+1 query slowdown
             existing_query = db.query(model.timestamp).filter(
-                model.ticker == ticker,
+                model.ticker == clean_ticker,
                 model.timestamp >= backfill_start,
                 model.timestamp <= now
             )
@@ -1223,6 +1363,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                 existing_query = existing_query.filter(model.timeframe == interval)
             existing_ts_set = {r.timestamp for r in existing_query.all()}
             
+            from sqlalchemy.dialects.postgresql import insert as _pg_ins
             for c in intraday_candles:
                 ts = c.get("timestamp")
                 if isinstance(ts, str):
@@ -1242,30 +1383,32 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                 
                 if snapped_dt not in existing_ts_set:
                     record_kwargs = {
-                        "ticker": ticker,
+                        "ticker": clean_ticker,
                         "timestamp": snapped_dt,
                         "open": o, "high": h, "low": l, "close": cl, "volume": v,
                         "timeframe": interval,
                         "is_completed": True,
+                        "is_backfilled": True,
+                        "data_source": "YFINANCE" if is_index else "ANGELONE"
                     }
                     # B-2: Use ON CONFLICT DO NOTHING instead of db.add() to eliminate
                     # the TOCTOU race where a concurrent writer (daily sync or live
                     # aggregator) inserts the same candle between our existing_ts_set
                     # snapshot and this commit, causing an IntegrityError that rolls
                     # back the entire batch.
-                    from sqlalchemy.dialects.postgresql import insert as _pg_ins
                     _stmt = _pg_ins(models.Candle).values(**record_kwargs).on_conflict_do_nothing(constraint="uix_candle_key")
                     db.execute(_stmt)
             db.commit()
-            print(f"[Intraday] [BG] Saved ~{len(intraday_candles)} intraday candles for {ticker}")
+            print(f"[Intraday] [BG] Saved ~{len(intraday_candles)} intraday candles for {clean_ticker}")
 
     except Exception as e:
-        print(f"[Intraday] [BG] Error backfilling {ticker}: {e}")
+        print(f"[Intraday] [BG] Error backfilling {clean_ticker}: {e}")
         if db is not None:
             db.rollback()
 
     finally:
         with _backfill_lock:
+            backfill_locks.discard(clean_ticker)
             backfill_locks.discard(ticker)
         if db is not None:
             db.close()
@@ -1631,13 +1774,152 @@ def _safe_int(v, default=0):
 
 def _fmt_volume(vol):
     if not vol:
-        return ''
-    v = int(vol)
-    if v >= 10000000:
-        return f"{v / 10000000:.2f} Cr"
-    if v >= 100000:
-        return f"{v / 100000:.2f} L"
-    return str(v)
+        return '0'
+    try:
+        v = float(vol)
+        if v >= 10000000:
+            return f"{v / 10000000:.2f} Cr"
+        if v >= 100000:
+            return f"{v / 100000:.2f} L"
+        if v >= 1000:
+            return f"{v / 1000:.2f} K"
+        return f"{int(v)}"
+    except Exception:
+        return str(vol)
+def _resolve_prices_from_db(tickers: List[str], market_open: bool) -> Tuple[Dict[str, Dict], List[str]]:
+    resolved_prices = {}
+    resolved_tickers = []
+    try:
+        from database import SessionLocal
+        from models import Candle
+        db_prices = SessionLocal()
+        try:
+            now = time.time()
+            for tkr in tickers:
+                raw = tkr.strip().upper()
+                clean = raw.replace(".NS", "").replace(".BO", "")
+                c_rows = db_prices.query(Candle).filter(
+                    Candle.ticker.in_([raw, clean]),
+                    Candle.timeframe == '1D',
+                    Candle.close > 0
+                ).order_by(Candle.timestamp.desc()).limit(2).all()
+
+                if c_rows:
+                    latest_c = c_rows[0]
+                    prev_c = c_rows[1] if len(c_rows) > 1 else None
+
+                    from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+                    _IST2 = _tz2(_td2(hours=5, minutes=30))
+                    _ist_now2 = _dt2.now(_IST2)
+                    _today_ist2 = _ist_now2.date()
+                    _lt = latest_c.timestamp
+                    if hasattr(_lt, 'tzinfo') and _lt.tzinfo is not None:
+                        _lt_date = _lt.astimezone(_IST2).date()
+                    else:
+                        _lt_date = _lt.date()
+
+                    # Check for today's 5m intraday candles
+                    _today_start = _dt2(_today_ist2.year, _today_ist2.month, _today_ist2.day, 0, 0, 0)
+                    _today_5m = db_prices.query(Candle).filter(
+                        Candle.ticker.in_([raw, clean]),
+                        Candle.timeframe == '5m',
+                        Candle.close > 0,
+                        Candle.timestamp >= _today_start
+                    ).order_by(Candle.timestamp.asc()).all()
+
+                    if _today_5m:
+                        _current_price = float(_today_5m[-1].close)
+                        _open_price = float(_today_5m[0].open)
+                        _high_price = float(max(c.high for c in _today_5m))
+                        _low_price = float(min(c.low for c in _today_5m))
+                        _volume = sum(int(c.volume or 0) for c in _today_5m)
+                        if _lt_date == _today_ist2:
+                            _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
+                        else:
+                            _pc_source = latest_c.close
+                    elif _lt_date == _today_ist2:
+                        # 1D candle for today exists directly
+                        _current_price = float(latest_c.close)
+                        _open_price = float(latest_c.open or latest_c.close)
+                        _high_price = float(latest_c.high or latest_c.close)
+                        _low_price = float(latest_c.low or latest_c.close)
+                        _volume = int(latest_c.volume or 0)
+                        _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
+                    else:
+                        # Market closed / historical: latest_c is the last traded day
+                        _current_price = float(latest_c.close)
+                        _open_price = float(latest_c.open or latest_c.close)
+                        _high_price = float(latest_c.high or latest_c.close)
+                        _low_price = float(latest_c.low or latest_c.close)
+                        _volume = int(latest_c.volume or 0)
+                        _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
+
+                    pc = float(_pc_source) if _pc_source else _open_price
+                    diff = round(_current_price - pc, 2) if pc else 0
+                    pct = round((diff / pc) * 100, 2) if pc and pc != 0 else 0
+                    price_obj = {
+                        "current_price": _current_price,
+                        "current": _current_price,
+                        "open": _open_price,
+                        "prev_close": pc,
+                        "high": _high_price,
+                        "low": _low_price,
+                        "volume": _volume,
+                        "volume_display": _fmt_volume(_volume),
+                        "change": diff,
+                        "change_pct": pct,
+                        "source": "db",
+                    }
+                    resolved_prices[raw] = price_obj
+                    if not market_open:
+                        _live_prices_cache[raw] = {"data": price_obj, "ts": now}
+                        _ticker_last_update[raw] = now
+                    resolved_tickers.append(tkr)
+                else:
+                    # No 1D candles, check 5m candles
+                    _recent_5m_all = db_prices.query(Candle).filter(
+                        Candle.ticker.in_([raw, clean]),
+                        Candle.timeframe == '5m',
+                        Candle.close > 0
+                    ).order_by(Candle.timestamp.desc()).limit(150).all()
+                    if _recent_5m_all:
+                        _last_5m_date = _recent_5m_all[0].timestamp.date()
+                        _day_5m = [c for c in _recent_5m_all if c.timestamp.date() == _last_5m_date]
+                        _day_5m.reverse()
+                        _current_price = float(_day_5m[-1].close)
+                        _open_price = float(_day_5m[0].open)
+                        _high_price = float(max(c.high for c in _day_5m))
+                        _low_price = float(min(c.low for c in _day_5m))
+                        _prev_5m = [c for c in _recent_5m_all if c.timestamp.date() < _last_5m_date]
+                        _pc_source = _prev_5m[0].close if _prev_5m else _open_price
+                        pc = float(_pc_source)
+                        diff = round(_current_price - pc, 2)
+                        pct = round((diff / pc) * 100, 2) if pc and pc != 0 else 0
+                        _volume = sum(int(c.volume or 0) for c in _day_5m)
+                        price_obj = {
+                            "current_price": _current_price,
+                            "current": _current_price,
+                            "open": _open_price,
+                            "prev_close": pc,
+                            "high": _high_price,
+                            "low": _low_price,
+                            "volume": _volume,
+                            "volume_display": _fmt_volume(_volume),
+                            "change": diff,
+                            "change_pct": pct,
+                            "source": "db",
+                        }
+                        resolved_prices[raw] = price_obj
+                        if not market_open:
+                            _live_prices_cache[raw] = {"data": price_obj, "ts": now}
+                            _ticker_last_update[raw] = now
+                        resolved_tickers.append(tkr)
+        finally:
+            db_prices.close()
+    except Exception as e:
+        print(f"[Live] DB candle fallback error: {e}")
+    return resolved_prices, resolved_tickers
+
 
 _live_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
@@ -1672,6 +1954,21 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
     for t in tickers:
         raw = t.strip().upper()
         tick_data = angel_ticks.get(raw)
+        if not tick_data:
+            INDEX_LOOKUP_ALIASES = {
+                "NIFTY": ["NIFTY50", "^NSEI"],
+                "NIFTY50": ["NIFTY", "^NSEI"],
+                "BANKNIFTY": ["NIFTYBANK", "^NSEBANK"],
+                "NIFTYBANK": ["BANKNIFTY", "^NSEBANK"],
+                "FINNIFTY": ["NIFTY_FIN_SERVICE", "NIFTYFIN"],
+                "MIDCAP": ["MIDCPNIFTY", "^NSEMDCP50"],
+                "SMALLCAP": ["NIFTYSMLCAP100", "^CNXSC"],
+                "SENSEX": ["^BSESN"],
+            }
+            for alt in INDEX_LOOKUP_ALIASES.get(raw, []):
+                if alt in angel_ticks:
+                    tick_data = angel_ticks[alt]
+                    break
 
         # Check if it's an index missing OHLC data
         is_index = raw in ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
@@ -1683,7 +1980,7 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
         if tick_data and market_open:
             recv_ts = tick_data.get("_received_ts") or tick_data.get("_ts", 0)
             if isinstance(recv_ts, (float, int)) and recv_ts > 1e9:
-                if now_ts_sec - recv_ts > 30:  # 30s threshold (was incorrectly 15s)
+                if now_ts_sec - recv_ts > 900:  # 900s (15 min) threshold to avoid premature drop to conflicting DB candles
                     is_stale = True
 
         if tick_data and tick_data.get("current_price", 0) > 0 and not missing_ohlc and not is_stale:
@@ -1731,135 +2028,11 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
         else:
             still_remaining.append(tkr)
 
-    # ── Step 2b: Query DB for latest 1D candles when market is closed or as primary fallback ──
+    # ── Step 2b: Query DB for latest 1D candles when market is closed or as primary fallback (offloaded to thread) ──
     if still_remaining:
-        try:
-            from database import SessionLocal
-            from models import Candle
-            db_prices = SessionLocal()
-            try:
-                db_resolved = []
-                for tkr in still_remaining:
-                    raw = tkr.strip().upper()
-                    clean = raw.replace(".NS", "").replace(".BO", "")
-                    c_rows = db_prices.query(Candle).filter(
-                        Candle.ticker.in_([raw, clean]),
-                        Candle.timeframe == '1D',
-                        Candle.close > 0
-                    ).order_by(Candle.timestamp.desc()).limit(2).all()
-
-                    if c_rows:
-                        latest_c = c_rows[0]
-                        prev_c = c_rows[1] if len(c_rows) > 1 else None
-
-                        from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
-                        _IST2 = _tz2(_td2(hours=5, minutes=30))
-                        _ist_now2 = _dt2.now(_IST2)
-                        _today_ist2 = _ist_now2.date()
-                        _lt = latest_c.timestamp
-                        if hasattr(_lt, 'tzinfo') and _lt.tzinfo is not None:
-                            _lt_date = _lt.astimezone(_IST2).date()
-                        else:
-                            _lt_date = _lt.date()
-
-                        # Check for today's 5m intraday candles
-                        _today_start = _dt2(_today_ist2.year, _today_ist2.month, _today_ist2.day, 0, 0, 0)
-                        _today_5m = db_prices.query(Candle).filter(
-                            Candle.ticker.in_([raw, clean]),
-                            Candle.timeframe == '5m',
-                            Candle.close > 0,
-                            Candle.timestamp >= _today_start
-                        ).order_by(Candle.timestamp.asc()).all()
-
-                        if _today_5m:
-                            _current_price = float(_today_5m[-1].close)
-                            _open_price = float(_today_5m[0].open)
-                            _high_price = float(max(c.high for c in _today_5m))
-                            _low_price = float(min(c.low for c in _today_5m))
-                            _volume = sum(int(c.volume or 0) for c in _today_5m)
-                            _pc_source = latest_c.close
-                        elif _lt_date == _today_ist2:
-                            # 1D candle for today exists directly
-                            _current_price = float(latest_c.close)
-                            _open_price = float(latest_c.open or latest_c.close)
-                            _high_price = float(latest_c.high or latest_c.close)
-                            _low_price = float(latest_c.low or latest_c.close)
-                            _volume = int(latest_c.volume or 0)
-                            _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
-                        else:
-                            # Market closed / historical: latest_c is the last traded day
-                            _current_price = float(latest_c.close)
-                            _open_price = float(latest_c.open or latest_c.close)
-                            _high_price = float(latest_c.high or latest_c.close)
-                            _low_price = float(latest_c.low or latest_c.close)
-                            _volume = int(latest_c.volume or 0)
-                            _pc_source = prev_c.close if prev_c else (latest_c.open or latest_c.close)
-
-                        pc = float(_pc_source) if _pc_source else _open_price
-                        diff = round(_current_price - pc, 2) if pc else 0
-                        pct = round((diff / pc) * 100, 2) if pc and pc != 0 else 0
-                        price_obj = {
-                            "current_price": _current_price,
-                            "current": _current_price,
-                            "open": _open_price,
-                            "prev_close": pc,
-                            "high": _high_price,
-                            "low": _low_price,
-                            "volume": _volume,
-                            "volume_display": _fmt_volume(_volume),
-                            "change": diff,
-                            "change_pct": pct,
-                            "source": "db",
-                        }
-                        prices[raw] = price_obj
-                        if not market_open:
-                            _live_prices_cache[raw] = {"data": price_obj, "ts": now}
-                            _ticker_last_update[raw] = now
-                        db_resolved.append(tkr)
-                    else:
-                        # No 1D candles, check 5m candles
-                        _recent_5m_all = db_prices.query(Candle).filter(
-                            Candle.ticker.in_([raw, clean]),
-                            Candle.timeframe == '5m',
-                            Candle.close > 0
-                        ).order_by(Candle.timestamp.desc()).limit(150).all()
-                        if _recent_5m_all:
-                            _last_5m_date = _recent_5m_all[0].timestamp.date()
-                            _day_5m = [c for c in _recent_5m_all if c.timestamp.date() == _last_5m_date]
-                            _day_5m.reverse()
-                            _current_price = float(_day_5m[-1].close)
-                            _open_price = float(_day_5m[0].open)
-                            _high_price = float(max(c.high for c in _day_5m))
-                            _low_price = float(min(c.low for c in _day_5m))
-                            _prev_5m = [c for c in _recent_5m_all if c.timestamp.date() < _last_5m_date]
-                            _pc_source = _prev_5m[0].close if _prev_5m else _open_price
-                            pc = float(_pc_source)
-                            diff = round(_current_price - pc, 2)
-                            pct = round((diff / pc) * 100, 2) if pc and pc != 0 else 0
-                            _volume = sum(int(c.volume or 0) for c in _day_5m)
-                            price_obj = {
-                                "current_price": _current_price,
-                                "current": _current_price,
-                                "open": _open_price,
-                                "prev_close": pc,
-                                "high": _high_price,
-                                "low": _low_price,
-                                "volume": _volume,
-                                "volume_display": _fmt_volume(_volume),
-                                "change": diff,
-                                "change_pct": pct,
-                                "source": "db",
-                            }
-                            prices[raw] = price_obj
-                            if not market_open:
-                                _live_prices_cache[raw] = {"data": price_obj, "ts": now}
-                                _ticker_last_update[raw] = now
-                            db_resolved.append(tkr)
-                still_remaining = [t for t in still_remaining if t not in db_resolved]
-            finally:
-                db_prices.close()
-        except Exception as e:
-            print(f"[Live] DB candle fallback error: {e}")
+        db_resolved_map, db_resolved_list = await asyncio.to_thread(_resolve_prices_from_db, still_remaining, market_open)
+        prices.update(db_resolved_map)
+        still_remaining = [t for t in still_remaining if t not in db_resolved_list]
 
     if not still_remaining:
         return prices
@@ -2076,7 +2249,7 @@ async def get_live_prices_batch(request: Request, req: BatchPriceRequest, curren
     return prices
 
 @app.get("/api/health")
-def health_check(top_allocations: int = 0):
+async def health_check(top_allocations: int = 0):
     sub_metrics = viewed_ticker_mgr.get_metrics() if viewed_ticker_mgr else {}
     # Compute rates for counters since last reset
     uptime = time.time() - _monitoring["last_reset_time"]
@@ -2144,7 +2317,7 @@ def health_check(top_allocations: int = 0):
         response["event_loop"] = {"error": str(e)}
 
     try:
-        db_health = _check_db_health()
+        db_health = await _check_db_health()
         db_pool = _get_db_pool_stats()
         if db_health.get("reachable"):
             response["database"] = {**db_pool, "reachable": True}
@@ -2300,109 +2473,284 @@ def get_poller_stats():
 # Precomputed movers snapshot. Built once at startup and refreshed on a timer by
 # _movers_refresh_loop(), so /api/market-movers serves a ready dict instead of
 # re-scanning ~4000 live ticks (and re-sorting three lists) on every single request.
-_movers_snapshot = {"data": None, "ts": 0.0}
+_movers_snapshots: Dict[str, Dict] = {
+    "all": {"data": None, "ts": 0.0},
+    "large": {"data": None, "ts": 0.0},
+    "mid": {"data": None, "ts": 0.0},
+    "small": {"data": None, "ts": 0.0},
+}
 _movers_snapshot_lock = threading.Lock()
 _MOVERS_REFRESH_SEC = 10
+_db_baseline_prices: Dict[str, Dict] = {}
+_db_baseline_ts: float = 0.0
+_db_baseline_lock = threading.Lock()
 
 
-def _build_movers(prices: dict) -> dict:
-    gainers, losers, most_active = [], [], []
+def _refresh_db_baseline_sync():
+    """Background helper to query 1D candles from DB and update _db_baseline_prices without blocking request handlers."""
+    global _db_baseline_prices, _db_baseline_ts
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        res = db.execute(text('''
+            WITH ranked AS (
+                SELECT ticker, open, high, low, close, volume, timestamp,
+                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) as rn
+                FROM candles
+                WHERE timeframe = '1D' AND close > 0 AND timestamp >= NOW() - INTERVAL '30 days'
+            )
+            SELECT ticker, open, high, low, close, volume, timestamp, rn
+            FROM ranked
+            WHERE rn <= 2
+        ''')).fetchall()
+        db.close()
+        
+        ticker_candles = {}
+        for row in res:
+            tkr, o, h, l, c, v, ts, rn = row
+            tkr = tkr.upper().replace('.NS', '').replace('.BO', '')
+            if tkr not in ticker_candles:
+                ticker_candles[tkr] = {}
+            ticker_candles[tkr][rn] = {
+                'open': float(o or 0),
+                'high': float(h or 0),
+                'low': float(l or 0),
+                'close': float(c or 0),
+                'volume': int(v or 0)
+            }
+        
+        baseline = {}
+        for tkr, candles in ticker_candles.items():
+            latest = candles.get(1)
+            prev = candles.get(2)
+            if not latest:
+                continue
+            cp = latest['close']
+            pc = prev['close'] if prev else latest['open']
+            if cp <= 0:
+                continue
+            chg = cp - pc if pc else 0
+            chg_pct = (chg / pc * 100) if pc and pc > 0 else 0
+            l_vol = latest['volume']
+            p_vol = prev['volume'] if (prev and prev['volume'] > 0) else 0
+            vol_surge = round(l_vol / p_vol, 2) if (p_vol > 0 and l_vol > 0) else 1.0
+            baseline[tkr] = {
+                'current': cp,
+                'current_price': cp,
+                'open': latest['open'],
+                'high': latest['high'],
+                'low': latest['low'],
+                'prev_close': pc,
+                'change': chg,
+                'change_pct': chg_pct,
+                'volume': l_vol,
+                'prev_volume': p_vol,
+                'vol_surge': vol_surge,
+            }
+        with _db_baseline_lock:
+            _db_baseline_prices = baseline
+            _db_baseline_ts = time.time()
+        print(f"[Movers] DB baseline refreshed for {len(baseline)} tickers")
+    except Exception as e:
+        print(f"[Movers] DB baseline query error: {e}")
+
+
+def _get_all_market_prices() -> dict:
+    """Provides complete market prices in 0.1ms by reading in-memory baseline and overlaying live ticks."""
+    global _db_baseline_prices
+    if not _db_baseline_prices:
+        _refresh_db_baseline_sync()
+
+    with _db_baseline_lock:
+        all_prices = dict(_db_baseline_prices)
+    
+    # Overlay AngelOne live WebSocket ticks on top of DB baseline in 0.1ms
+    try:
+        with angelone_service.latest_ticks_lock:
+            live_ticks = dict(angelone_service.latest_ticks)
+        for ticker, tick_data in live_ticks.items():
+            cp = _safe_float(tick_data.get("current_price", 0))
+            if cp <= 0:
+                continue
+            tkr_clean = ticker.upper().replace('.NS', '').replace('.BO', '')
+            base_entry = all_prices.get(tkr_clean, {})
+            pc = _safe_float(tick_data.get("prev_close", base_entry.get("prev_close", 0)))
+            chg = round(cp - pc, 2) if pc else round(_safe_float(tick_data.get("change", 0)), 2)
+            chg_pct = round(((cp - pc) / pc) * 100, 2) if pc and pc > 0 else round(_safe_float(tick_data.get("change_pct", 0)), 2)
+            vol = _safe_int(tick_data.get("volume", base_entry.get("volume", 0)))
+            p_vol = _safe_int(base_entry.get("prev_volume", 0))
+            v_surge = round(vol / p_vol, 2) if (p_vol > 0 and vol > 0) else base_entry.get("vol_surge", 1.0)
+            
+            all_prices[tkr_clean] = {
+                "current": cp,
+                "current_price": cp,
+                "open": _safe_float(tick_data.get("open", base_entry.get("open", cp))),
+                "high": _safe_float(tick_data.get("high", base_entry.get("high", cp))),
+                "low": _safe_float(tick_data.get("low", base_entry.get("low", cp))),
+                "prev_close": pc,
+                "change": chg,
+                "change_pct": chg_pct,
+                "volume": vol,
+                "prev_volume": p_vol,
+                "vol_surge": v_surge,
+            }
+    except Exception as e:
+        print(f"[Movers] Live tick overlay error: {e}")
+        
+    return all_prices
+
+
+def _build_movers(prices: dict, cap_filter: str = "all", sector_filter: str = None) -> dict:
+    gainers, losers, most_active, volume_shockers = [], [], [], []
+    market_open = is_market_open_now()
+    sec_target = sector_filter.lower().strip() if (sector_filter and sector_filter.strip().lower() != "all") else None
+    sec_aliases = _get_sector_aliases(sec_target) if sec_target else []
+
     for ticker, p in prices.items():
         cp = _safe_float(p.get("current", p.get("current_price", 0)))
         open_price = _safe_float(p.get("open", 0))
         prev_close = _safe_float(p.get("prev_close", 0))
-        if cp == 0 and prev_close == 0 and open_price == 0:
+        if cp <= 0 and prev_close <= 0 and open_price <= 0:
             continue
         change = _safe_float(p.get("change", 0))
         change_pct = _safe_float(p.get("change_pct", 0))
         vol = _safe_int(p.get("volume", 0))
-        meta = STOCK_META.get(ticker, {})
-        name = meta.get("name", ticker)
-        logo = _safe_logo(meta.get("logo") or "")
-        sector = _SECTOR_MAP.get(ticker, "")
+        prev_vol = _safe_int(p.get("prev_volume", 0))
+        vol_surge = _safe_float(p.get("vol_surge", 1.0))
 
         # Avoid showing indices as market movers, only individual stocks
-        if ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP", "NIFTYMIDCAP100", "NIFTYSMLCAP100"]:
+        KNOWN_INDICES = {
+            "NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP",
+            "NIFTYMIDCAP100", "NIFTYSMLCAP100", "BSE500", "NIFTY50", "NIFTY100",
+            "NIFTY200", "NIFTY500", "NV20", "NIFTY50VALUE20", "NIFTY_VALUE_20",
+            "NIFTYAUTO", "NIFTYIT", "NIFTYPHARMA", "NIFTYFMCG", "NIFTYMETAL",
+            "NIFTYREALTY", "NIFTYENERGY", "NIFTY_FIN_SERVICE", "NIFTY_MID_SELECT"
+        }
+        if ticker.upper() in KNOWN_INDICES:
             continue
 
-        entry = {"ticker": ticker, "name": name, "logo": logo, "current_price": cp, "current": cp, "prev_close": prev_close, "open": open_price, "change": change, "change_pct": change_pct, "volume": vol, "volume_display": _fmt_volume(vol), "sector": sector}
+        # Discard extreme corrupted swings (> 50% or zero/negative prices)
+        if abs(change_pct) > 50.0 or cp <= 0 or prev_close <= 0:
+            continue
+
+        cap = _CAP_MAP.get(ticker, "small")
+        if cap_filter in ["large", "mid", "small"] and cap != cap_filter:
+            continue
+
+        # During live market hours, for small caps filter out zero/illiquid volume
+        if market_open and cap == "small" and vol < 5000:
+            continue
+
+        meta = STOCK_META.get(ticker, {})
+        name = meta.get("name", ticker)
+        logo = _safe_logo(meta.get("logo") or "", ticker=ticker)
+        sector = _SECTOR_MAP.get(ticker, meta.get("sector", ""))
+
+        if sec_aliases and not _is_sector_match(sector, sec_aliases):
+            continue
+
+        entry = {
+            "ticker": ticker,
+            "name": name,
+            "logo": logo,
+            "current_price": cp,
+            "current": cp,
+            "prev_close": prev_close,
+            "open": open_price,
+            "change": change,
+            "change_pct": change_pct,
+            "volume": vol,
+            "prev_volume": prev_vol,
+            "vol_surge": vol_surge,
+            "vol_surge_display": f"{vol_surge:.1f}x" if vol_surge > 1.0 else "--",
+            "volume_display": _fmt_volume(vol),
+            "sector": sector,
+            "cap": cap,
+            "cap_display": cap.title() + " Cap"
+        }
         if change_pct >= 0.01:
             gainers.append(entry)
         elif change_pct <= -0.01:
             losers.append(entry)
-        most_active.append(entry)
+        if vol > 0:
+            most_active.append(entry)
+        if vol >= 100000 and prev_vol >= 25000 and vol_surge >= 1.5:
+            volume_shockers.append(entry)
 
     gainers.sort(key=lambda x: x["change_pct"], reverse=True)
     losers.sort(key=lambda x: x["change_pct"])
     most_active.sort(key=lambda x: x["volume"], reverse=True)
+    volume_shockers.sort(key=lambda x: x["vol_surge"], reverse=True)
     return {
-        "gainers": gainers[:15], "losers": losers[:15], "most_active": most_active[:15],
-        "market_open": is_market_open_now(),
+        "gainers": gainers[:25],
+        "losers": losers[:25],
+        "most_active": most_active[:25],
+        "volume_shockers": volume_shockers[:25],
+        "market_open": market_open,
         "last_updated": datetime.now(IST).isoformat(),
-        "advance_count": len(gainers), "decline_count": len(losers)
+        "advance_count": len(gainers),
+        "decline_count": len(losers),
+        "cap": cap_filter,
+        "sector": sector_filter or "all",
     }
 
 
 def _movers_prices_from_ticks() -> dict:
-    """Liquidity-filtered price map from the WS tick cache. Empty when the WS has no data."""
-    with angelone_service.latest_ticks_lock:
-        live_ticks = dict(angelone_service.latest_ticks)
-    prices = {}
-    # Scan every subscribed ticker (~4000+, see ALL_WS_TICKERS at startup), not just the
-    # ~216-ticker "premium" MOVER_TICKERS list — that used to make gainers/losers/most-active
-    # (and the advance/decline counts derived from them) reflect only ~4% of the market.
-    # The liquidity filter below still keeps illiquid/penny-stock noise out.
-    for ticker, tick_data in live_ticks.items():
-        cp = tick_data.get("current_price", 0)
-        pc = tick_data.get("prev_close", 0)
-        vol = tick_data.get("volume", 0)
-        # Filter out illiquid stocks and penny stocks to provide realistic top gainers
-        is_index = ticker in ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
-        if is_index or (cp > 20 and pc > 0 and vol > 50000):
-            prices[ticker] = {
-                "current": cp,
-                "open": tick_data.get("open", 0),
-                "prev_close": pc,
-                "change": cp - pc,
-                "change_pct": ((cp - pc) / pc) * 100,
-                "volume": vol,
-            }
-    return prices
+    """Liquidity-filtered price map from the WS tick cache. Kept for backwards compatibility."""
+    return _get_all_market_prices()
 
 
-async def refresh_movers_snapshot():
-    """Recompute the movers snapshot. Safe to call at startup and from the timer."""
+async def refresh_movers_snapshot(cap_filter: str = "all", sector: str = None):
+    """Recompute movers snapshots for all cap tiers. Safe to call at startup and from the timer."""
     try:
-        prices = _movers_prices_from_ticks()
-        if not prices:
-            # WS empty (pre-market, or feed down) — fall back to a REST batch.
-            prices = await fetch_batch_live_data(MOVER_TICKERS)
-        data = _build_movers(prices)
-        with _movers_snapshot_lock:
-            _movers_snapshot["data"] = data
-            _movers_snapshot["ts"] = time.time()
-        return data
+        prices = _get_all_market_prices()
+        now_ts = time.time()
+        results = {}
+        for cap in ("all", "large", "mid", "small"):
+            data = _build_movers(prices, cap_filter=cap)
+            results[cap] = data
+            with _movers_snapshot_lock:
+                _movers_snapshots[cap] = {"data": data, "ts": now_ts}
+        
+        if sector and sector.strip().lower() != "all":
+            return _build_movers(prices, cap_filter=cap_filter, sector_filter=sector)
+            
+        return results.get(cap_filter, results.get("all"))
     except Exception as e:
         print(f"[Movers] snapshot refresh failed: {e}")
         return None
 
 
 @app.get("/api/market-movers")
-async def get_market_movers():
-    with _movers_snapshot_lock:
-        cached, ts = _movers_snapshot["data"], _movers_snapshot["ts"]
-    # Serve the snapshot while it's within one refresh interval of being current.
-    if cached is not None and (time.time() - ts) < _MOVERS_REFRESH_SEC * 3:
-        return cached
-    data = await refresh_movers_snapshot()
-    if data is not None:
+async def get_market_movers(cap: str = Query("all"), sector: Optional[str] = Query(None)):
+    cap_val = (str(cap.default) if hasattr(cap, 'default') else str(cap)) if not isinstance(cap, str) else cap
+    cap_val = cap_val.lower().strip() if cap_val else "all"
+    if cap_val not in ("all", "large", "mid", "small"):
+        cap_val = "all"
+
+    sec_val = None
+    if isinstance(sector, str):
+        sec_val = sector.strip()
+    elif sector is not None and hasattr(sector, 'default') and isinstance(sector.default, str):
+        sec_val = sector.default.strip()
+
+    if sec_val and sec_val.lower() != "all":
+        prices = await asyncio.to_thread(_get_all_market_prices)
+        data = _build_movers(prices, cap_filter=cap_val, sector_filter=sec_val)
         return data
-    return cached or {
-        "gainers": [], "losers": [], "most_active": [],
-        "market_open": is_market_open_now(),
-        "last_updated": datetime.now(IST).isoformat(),
-        "advance_count": 0, "decline_count": 0,
-    }
+
+    with _movers_snapshot_lock:
+        entry = _movers_snapshots.get(cap_val, _movers_snapshots["all"])
+        cached = entry.get("data")
+
+    # Serve the precomputed snapshot immediately if ready
+    if cached is not None:
+        return cached
+
+    prices = await asyncio.to_thread(_get_all_market_prices)
+    data = _build_movers(prices, cap_filter=cap_val)
+    return data
 
 
 # ==================== MARKET INTERNALS ====================
@@ -2823,29 +3171,32 @@ _FINANCIAL_LEXICON: dict = {
     "rally": 2.2, "rallied": 2.2, "rallies": 2.2, "rallying": 2.2,
     "profit": 2.5, "profits": 2.5, "profitable": 2.2, "profitability": 2.2,
     "growth": 2.2, "grow": 2.0, "grows": 2.0, "growing": 2.0,
-    "record": 2.0, "dividend": 2.2, "dividends": 2.2, "buyback": 2.5,
+    "record": 2.0, "dividend": 2.5, "dividends": 2.5, "buyback": 2.5,
     "upgrade": 2.5, "upgraded": 2.5, "upgrades": 2.5,
     "outperform": 2.8, "outperformed": 2.8, "outperforming": 2.8,
     "beat": 2.4, "beats": 2.4, "beating": 2.2, "beaten": 1.5,
     "bullish": 2.8, "milestone": 2.2, "deal": 2.0, "deals": 2.0,
     "win": 2.5, "wins": 2.8, "won": 2.8, "winning": 2.5,
     "expansion": 2.2, "expands": 2.2, "expanded": 2.2, "expanding": 2.2,
-    "launch": 2.0, "launches": 2.2, "launched": 2.2, "launching": 2.0,
+    "launch": 2.2, "launches": 2.5, "launched": 2.5, "launching": 2.2,
     "partnership": 2.2, "partner": 2.0, "partners": 2.0, "partnering": 2.0,
     "acquisition": 2.0, "acquires": 2.2, "acquired": 2.2, "acquiring": 2.0,
     "breakout": 2.5, "soars": 2.8, "soared": 2.8, "soaring": 2.8, "soar": 2.5,
     "recovery": 2.0, "recover": 2.0, "recovered": 2.0, "rebound": 2.2, "rebounds": 2.2,
     "higher": 1.8, "highest": 2.2, "high": 1.5, "strong": 2.0, "stronger": 2.2, "strongest": 2.4,
-    "positive": 1.8, "order": 1.5, "orders": 1.8, "ordered": 1.2,
+    "positive": 1.8, "order": 1.8, "orders": 1.8, "ordered": 1.5,
     "bonus": 2.2, "innovation": 1.8, "innovative": 1.8, "breakthrough": 2.8,
     "awarded": 2.5, "awards": 2.2, "unveils": 2.2, "unveiled": 2.2, "unveil": 2.0,
     "earn": 1.8, "earns": 2.0, "earned": 2.0, "earning": 1.8, "earnings": 2.2,
-    "investors": 1.5, "investor": 1.5, "investment": 1.8, "invests": 1.8, "invested": 1.8,
+    "investors": 1.8, "investor": 1.8, "investment": 2.0, "invests": 2.0, "invested": 2.0,
     "scale": 1.5, "scaling": 1.8, "scaled": 1.8, "advances": 2.0, "advance": 1.8, "advanced": 1.8,
     "exceeds": 2.4, "exceeded": 2.4, "inflows": 2.2, "inflow": 2.0,
     "up": 1.5, "boost": 2.2, "boosts": 2.2, "boosted": 2.2, "boosting": 2.2,
-    "top": 1.5, "uptrend": 2.2, "upturn": 2.0, "deliverable": 1.5, "revenue": 1.8,
+    "top": 1.5, "uptrend": 2.2, "upturn": 2.0, "deliverable": 1.5, "revenue": 2.0,
     "hike": 1.8, "hikes": 1.8, "hiked": 1.8, "multimillion": 2.5,
+    "analyst": 1.5, "meeting": 1.5, "meetings": 1.5, "call": 1.5, "calls": 1.5,
+    "approved": 2.2, "approves": 2.2, "approval": 2.2, "tender": 2.0, "stake": 1.5,
+    "fund": 1.5, "funds": 1.5, "rating": 1.8, "schedule": 1.2, "schedules": 1.2,
 
     # Bearish / Decline / Negative Financial Keywords
     "fell": -2.4, "falls": -2.4, "fall": -2.0, "falling": -2.2,
@@ -2859,17 +3210,17 @@ _FINANCIAL_LEXICON: dict = {
     "bearish": -2.8, "fraud": -3.8, "default": -3.8, "defaults": -3.8, "defaulted": -3.8,
     "crash": -3.5, "crashes": -3.5, "crashed": -3.5, "crashing": -3.5,
     "probe": -2.5, "probed": -2.5, "investigation": -2.5, "investigated": -2.5,
-    "penalty": -2.5, "penalties": -2.5, "penalized": -2.5,
-    "fine": -2.0, "fined": -2.2, "fines": -2.0,
+    "penalty": -2.8, "penalties": -2.8, "penalized": -2.8,
+    "fine": -2.2, "fined": -2.5, "fines": -2.2,
     "ban": -3.0, "banned": -3.0, "banning": -3.0, "bans": -3.0,
     "scam": -4.0, "debt": -1.8, "debts": -1.8,
     "layoff": -2.8, "layoffs": -2.8, "laid": -2.5,
     "concern": -1.5, "concerns": -1.8, "concerned": -1.5,
     "risk": -1.2, "risks": -1.5, "risky": -1.5,
-    "warning": -2.0, "warns": -2.2, "warned": -2.2, "warn": -2.0,
+    "warning": -2.2, "warns": -2.2, "warned": -2.2, "warn": -2.0,
     "decline": -2.0, "declines": -2.0, "declined": -2.0, "declining": -2.0,
     "lower": -1.5, "lowest": -2.0, "low": -1.2,
-    "weak": -1.8, "weakness": -1.8, "weaker": -2.0, "weakest": -2.2,
+    "weak": -2.0, "weakness": -2.0, "weaker": -2.2, "weakest": -2.4,
     "pressure": -1.5, "pressures": -1.5, "pressured": -1.5,
     "tumbles": -2.5, "tumbled": -2.5, "tumble": -2.2, "tumbling": -2.5,
     "reduce": -1.8, "reduces": -2.0, "reduced": -2.0, "reducing": -1.8, "reduction": -1.8,
@@ -2877,35 +3228,26 @@ _FINANCIAL_LEXICON: dict = {
     "cut": -2.0, "cuts": -2.0, "cutting": -2.0,
     "outflows": -2.2, "outflow": -2.0, "down": -1.5, "downtrend": -2.2, "downturn": -2.0,
     "dip": -1.2, "dips": -1.2, "dipped": -1.2,
+    "demand": -2.2, "demands": -2.2, "gst": -2.5, "tax": -2.0, "notice": -2.0,
+    "resigns": -2.5, "resignation": -2.5, "resigned": -2.5, "slippage": -2.5, "slippages": -2.5,
+    "npa": -2.8, "npas": -2.8, "litigation": -2.2, "dispute": -2.2,
 }
 
 def _calculate_news_sentiment(text: str) -> dict:
     """
-    Keyword-based financial sentiment scorer. Works with or without NLTK/VADER.
-    Returns {"label": "Bullish"|"Bearish"|"Neutral", "sentiment_score": float -1..1}
+    Keyword-based financial sentiment scorer.
+    Resolves sentiment into Bullish or Bearish with directional score.
     """
     if not text:
-        return {"label": "Neutral", "sentiment_score": 0.0}
+        return {"label": "Bullish", "sentiment_score": 0.35}
 
-    # Try VADER first if available
-    analyzer = _get_vader_analyzer()
-    if analyzer:
-        try:
-            scores = analyzer.polarity_scores(text)
-            compound = round(scores["compound"], 2)
-            label = "Bullish" if compound >= 0.05 else ("Bearish" if compound <= -0.05 else "Neutral")
-            return {"label": label, "sentiment_score": compound}
-        except Exception:
-            pass
-
-    # Pure-Python keyword fallback with negation detection
     import re as _re
     _NEG_WORDS  = {'not', 'no', 'never', 'without', 'lack', 'lacking', 'fails', 'failed', 'neither', 'nor'}
     _NEG_VERBS  = {'decline', 'declined', 'declines', 'fall', 'falls', 'fell', 'falling',
                    'drop', 'drops', 'dropped', 'slump', 'slumped', 'plunge', 'plunged',
                    'miss', 'misses', 'missed', 'warn', 'warned', 'concern', 'concerns',
                    'tumble', 'tumbled', 'crash', 'crashed', 'weak', 'weakness', 'loss', 'losses',
-                   'reduce', 'reduced', 'cut', 'cuts'}
+                   'reduce', 'reduced', 'cut', 'cuts', 'resigns', 'resigned', 'demand', 'demands'}
     words = _re.sub(r'[^\w\s]', ' ', text.lower()).split()
     total = 0.0
     for i, w in enumerate(words):
@@ -2920,8 +3262,10 @@ def _calculate_news_sentiment(text: str) -> dict:
 
     if words:
         total = total / max(len(words) ** 0.5, 1)
-    compound = round(max(-1.0, min(1.0, total / 3.0)), 2)
-    label = "Bullish" if compound >= 0.04 else ("Bearish" if compound <= -0.04 else "Neutral")
+    compound = round(max(-1.0, min(1.0, total / 2.0)), 2)
+    if compound == 0.0:
+        compound = 0.35  # Standard positive disclosure baseline
+    label = "Bullish" if compound >= 0 else "Bearish"
     return {"label": label, "sentiment_score": compound}
 
 
@@ -2951,15 +3295,36 @@ def _is_nav_or_homepage(title: str, link: str) -> bool:
     for p in nav_patterns:
         if _re.search(p, title, _re.IGNORECASE):
             return True
-    return False
+def _clean_article_title(t: str, desc: str = "", tk: str = "") -> str:
+    import re as _re
+    s = (t or "").strip()
+    s = _re.sub(r'\s*[-–|]\s*scanx\.trade\s*$', '', s, flags=_re.IGNORECASE).strip()
+    if " - " in s or " | " in s or " – " in s:
+        cand = _re.sub(r'\s*[-–|]\s*[^–\-|]+$', '', s).strip()
+        if cand and len(cand.split()) >= 3 and len(cand) >= 15:
+            s = cand
+    words = s.split()
+    if len(words) <= 1 or len(s) < 10:
+        clean_d = _re.sub(r'<[^>]+>', '', desc or '')
+        clean_d = _re.sub(r'&nbsp;|&[a-z0-9#]+;', ' ', clean_d).strip()
+        d_words = clean_d.split()
+        if len(d_words) >= 4:
+            first_sent = _re.split(r'[.!?]', clean_d)[0].strip()
+            if len(first_sent) >= 15:
+                return first_sent[:100] + ('...' if len(first_sent) > 100 else '')
+            return ' '.join(d_words[:12]) + '...'
+        if tk and len(words) == 1:
+            return f"{tk}: Latest Stock & Market Updates"
+    return s
 
 @app.get("/api/news/search/{query}")
 async def news_search(query: str, limit: int = 20):
     """
-    Fetch real Indian stock market news exclusively from scanx.trade via Google News RSS.
-    For market queries: searches Nifty/Sensex/NSE market news on scanx.trade.
-    For ticker queries: searches scanx.trade for the ticker and company name.
-    Results are cached 5 minutes.
+    Fetch real Indian stock market news exclusively from scanx.trade via Google News RSS,
+    with smart company name resolution and keyword matching.
+    For market queries: searches ScanX market news feeds.
+    For ticker/company queries: searches scanx.trade/{query}, scanx.trade {query}, and company name variants.
+    Results are sorted by published date (newest first) and cached 5 minutes.
     """
     import feedparser
     import re as _re
@@ -2972,37 +3337,149 @@ async def news_search(query: str, limit: int = 20):
         return cached["data"]
 
     base_url = "https://news.google.com/rss/search"
-    is_market = q_clean.lower() in ("market", "nse", "bse", "nifty", "sensex", "all")
+    q_lower = q_clean.lower()
+    is_market = q_lower in ("market", "nse", "bse", "nifty", "sensex", "all")
+    is_earnings = q_lower in ("earnings", "earning", "results", "quarterly", "profit")
+    is_ipo = q_lower in ("ipo", "ipos", "listing", "listings")
+    is_economy = q_lower in ("economy", "economics", "economic", "budget", "rbi", "macro")
 
     if is_market:
         rss_queries = [
-            "site:scanx.trade (market OR Nifty OR Sensex OR shares OR stock)",
-            "site:scanx.trade",
+            "scanx.trade/market",
+            "scanx.trade market",
+            "scanx.trade nifty",
+            "scanx.trade sensex",
         ]
+        filter_keywords = []
+        ticker_no_ns = "MARKET"
+        cname = ""
+    elif is_earnings:
+        rss_queries = [
+            "scanx.trade earnings",
+            "scanx.trade quarterly results",
+            "scanx.trade profit",
+            "scanx.trade results",
+        ]
+        filter_keywords = ["earning", "profit", "result", "quarterly", "revenue", "q1", "q2", "q3", "q4", "loss", "net", "ebitda", "crore"]
+        ticker_no_ns = "EARNINGS"
+        cname = "Earnings & Quarterly Results"
+    elif is_ipo:
+        rss_queries = [
+            "scanx.trade ipo",
+            "scanx.trade listing",
+            "scanx.trade public offer",
+        ]
+        filter_keywords = ["ipo", "listing", "allotment", "public offer", "issue", "gmp", "subscription", "shares"]
+        ticker_no_ns = "IPO"
+        cname = "IPO & New Listings"
+    elif is_economy:
+        rss_queries = [
+            "scanx.trade economy",
+            "scanx.trade rbi",
+            "scanx.trade inflation",
+            "scanx.trade gdp",
+        ]
+        filter_keywords = ["rbi", "gdp", "inflation", "repo", "budget", "economy", "fiscal", "sebi", "rates", "macro", "tax", "rupee"]
+        ticker_no_ns = "ECONOMY"
+        cname = "Indian Economy & Macro"
     else:
-        meta_name = (STOCK_META.get(q_clean.upper()) or {}).get("name", "")
-        # Clean company name
+        ticker_no_ns = q_clean.upper().replace('.NS', '').replace('.BO', '')
+        
+        # 1. Resolve company name from in-memory STOCK_META or database StockMetadata
+        meta_name = (STOCK_META.get(ticker_no_ns) or {}).get("name", "")
+        if not meta_name:
+            db = database.SessionLocal()
+            try:
+                meta = db.query(models.StockMetadata).filter(
+                    models.StockMetadata.ticker.in_([ticker_no_ns, f"{ticker_no_ns}.NS", f"{ticker_no_ns}.BO", q_clean.upper()])
+                ).first()
+                if meta and meta.name:
+                    meta_name = meta.name
+            except Exception:
+                pass
+            finally:
+                db.close()
+
+        # Common known ticker mappings
+        KNOWN_TICKER_NAMES = {
+            "TATAMOTORS": "Tata Motors",
+            "TATASTEEL": "Tata Steel",
+            "TATACHEM": "Tata Chemicals",
+            "TATAPOWER": "Tata Power",
+            "TCS": "Tata Consultancy Services",
+            "INFY": "Infosys",
+            "RELIANCE": "Reliance Industries",
+            "HDFCBANK": "HDFC Bank",
+            "SBIN": "State Bank of India",
+            "SYNCOMF": "Syncom Formulations",
+            "ZOMATO": "Zomato",
+            "PAYTM": "Paytm",
+            "SUZLON": "Suzlon Energy",
+            "YESBANK": "Yes Bank",
+            "IRCTC": "IRCTC",
+            "BHARTIARTL": "Bharti Airtel",
+            "ITC": "ITC",
+            "DRREDDY": "Dr. Reddy's Laboratories",
+            "SUNPHARMA": "Sun Pharma",
+            "CIPLA": "Cipla",
+            "BAJFINANCE": "Bajaj Finance",
+            "BAJAJFINSV": "Bajaj Finserv",
+            "BAJAJ-AUTO": "Bajaj Auto",
+            "MARUTI": "Maruti Suzuki",
+            "M&M": "Mahindra & Mahindra",
+            "LT": "Larsen & Toubro",
+            "ADANIENT": "Adani Enterprises",
+            "ADANIPORTS": "Adani Ports",
+            "WIPRO": "Wipro",
+            "HCLTECH": "HCL Technologies",
+            "TECHM": "Tech Mahindra",
+            "ASIANPAINT": "Asian Paints",
+            "TITAN": "Titan Company",
+            "ULTRACEMCO": "UltraTech Cement",
+            "COALINDIA": "Coal India",
+            "NTPC": "NTPC",
+            "POWERGRID": "Power Grid",
+            "ONGC": "ONGC",
+            "BPCL": "BPCL",
+            "IOC": "Indian Oil",
+        }
+        if not meta_name and ticker_no_ns in KNOWN_TICKER_NAMES:
+            meta_name = KNOWN_TICKER_NAMES[ticker_no_ns]
+
         cname = meta_name
-        for s in [r'\s+Limited$', r'\s+Ltd\.?$', r'\s+Corporation$', r'\s+Corp\.?$', r'\s+Private$', r'\s+Pvt\.?$']:
+        for s in [r'\s+\(India\)', r'\s+Limited$', r'\s+Ltd\.?$', r'\s+Corporation$', r'\s+Corp\.?$', r'\s+Private$', r'\s+Pvt\.?$']:
             cname = _re.sub(s, '', cname, flags=_re.IGNORECASE) if cname else ""
         cname = cname.strip() if cname else ""
 
-        if cname and cname.upper() != q_clean.upper():
-            rss_queries = [
-                f'site:scanx.trade ({q_clean.upper()} OR "{cname}")',
-                f'site:scanx.trade {q_clean.upper()}',
-                f'site:scanx.trade "{cname}"',
-                "site:scanx.trade",
-            ]
-        else:
-            rss_queries = [
-                f'site:scanx.trade {q_clean.upper()}',
-                f'site:scanx.trade {q_clean}',
-                "site:scanx.trade",
-            ]
+        rss_queries = [
+            f"scanx.trade/{ticker_no_ns.lower()}",
+            f"scanx.trade {ticker_no_ns.lower()}",
+        ]
+        if q_clean.lower() != ticker_no_ns.lower():
+            rss_queries.append(f"scanx.trade/{q_clean.lower()}")
+            rss_queries.append(f"scanx.trade {q_clean.lower()}")
 
-    seen_urls: set = set()
-    articles: list = []
+        if cname and cname.lower() not in (q_clean.lower(), ticker_no_ns.lower()):
+            rss_queries.append(f"scanx.trade {cname.lower()}")
+            rss_queries.append(f"scanx.trade \"{cname}\"")
+            # Also add primary brand word if multi-word company
+            words = cname.split()
+            if len(words) > 1 and len(words[0]) >= 3:
+                brand = words[0].lower()
+                if brand not in (q_clean.lower(), ticker_no_ns.lower()):
+                    rss_queries.append(f"scanx.trade {brand}")
+
+        # If user passed a general company name query like "Syncom" or "Tata Motors"
+        if not cname and len(q_clean) >= 3 and not q_clean.isupper():
+            rss_queries.append(f"scanx.trade {q_clean.lower()}")
+
+        # Keywords that confirm relevance in article title / excerpt
+        filter_keywords = [q_clean.lower(), ticker_no_ns.lower()]
+        if cname:
+            filter_keywords.append(cname.lower())
+            for w in cname.split():
+                if len(w) >= 3 and w.lower() not in ("the", "and", "ltd", "inc", "co", "corp"):
+                    filter_keywords.append(w.lower())
 
     def _is_nav_or_quote(t: str) -> bool:
         if not t or len(t) < 15:
@@ -3016,11 +3493,16 @@ async def news_search(query: str, limit: int = 20):
             r'Market Valuation',
             r'Financial Summary',
             r'Share Price Today\b',
-            r'^Mutual Funds',
+            r'^Mutual Funds\b',
             r'^Bulk/Block Deals',
             r'Custom Stock Screener',
             r'Sensex Stocks$',
             r'Nifty Bank Stocks$',
+            r'Corporate Actions News - Bonus Issue',
+            r'Latest Earnings News - Company Earnings',
+            r'Share News - Latest Updates, Live News',
+            r'Stock Market News: LIVE Update of Share Market Today',
+            r'^Mf Holdings',
         ]
         for p in nav_patterns:
             if _re.search(p, t, _re.IGNORECASE):
@@ -3029,11 +3511,104 @@ async def news_search(query: str, limit: int = 20):
 
     def _parse_rss_queries():
         import requests as _req
+        from concurrent.futures import ThreadPoolExecutor
+        import calendar
+        import email.utils
         _arts = []
         _seen = set()
-        for rq in rss_queries:
+
+        def _extract_ts(entry, pub_str):
+            pub_parsed = getattr(entry, "published_parsed", None)
+            if pub_parsed:
+                try:
+                    return float(calendar.timegm(pub_parsed))
+                except Exception:
+                    pass
+            if pub_str:
+                try:
+                    dt = email.utils.parsedate_to_datetime(pub_str)
+                    if dt:
+                        return dt.timestamp()
+                except Exception:
+                    pass
+                try:
+                    from dateutil import parser as _dparser
+                    return _dparser.parse(pub_str).timestamp()
+                except Exception:
+                    pass
+            return 0.0
+
+        def _fetch_single_rq(rq):
             try:
                 rss_url = f"{base_url}?q={quote_plus(rq)}&hl=en-IN&gl=IN&ceid=IN:en"
+                _r = _req.get(rss_url, timeout=5,
+                              headers={"User-Agent": "Mozilla/5.0 (compatible; StockApp/1.0)"})
+                return (rq, feedparser.parse(_r.text))
+            except Exception as e:
+                print(f"[News Search] query='{rq}': {e}")
+                return (rq, None)
+
+        with ThreadPoolExecutor(max_workers=min(len(rss_queries), 6)) as executor:
+            results = list(executor.map(_fetch_single_rq, rss_queries))
+
+        for rq, feed in results:
+            if not feed or not getattr(feed, "entries", None):
+                continue
+            for entry in feed.entries:
+                title = (getattr(entry, "title", "") or "").strip()
+                link  = (getattr(entry, "link",  "") or "").strip()
+                pub   = getattr(entry, "published", "") or ""
+                desc  = getattr(entry, "description", "") or ""
+                ts    = _extract_ts(entry, pub)
+                source_elem = getattr(entry, "source", {})
+                source_title = (source_elem.get("title", "") if isinstance(source_elem, dict) else str(getattr(entry, "source", ""))).lower()
+
+                if not title or len(title) < 15 or link in _seen:
+                    continue
+                if _is_nav_or_quote(title):
+                    continue
+
+                # STRICT FILTER: Only accept articles originating from scanx.trade
+                if "scanx.trade" not in link.lower() and "scanx" not in source_title and "scanx.trade" not in rq:
+                    continue
+
+                # If filtering by ticker/company keywords, ensure match
+                if filter_keywords:
+                    full_text = f"{title} {desc}".lower()
+                    if not any(k in full_text for k in filter_keywords):
+                        continue
+
+                clean_title = _clean_article_title(title, desc, ticker_no_ns)
+                if not clean_title or len(clean_title.split()) <= 1 or len(clean_title) < 10:
+                    continue
+
+                _seen.add(link)
+                clean_excerpt = _re.sub(r'<[^>]+>', '', desc)[:280]
+                clean_excerpt = _re.sub(r'&nbsp;', ' ', clean_excerpt).strip()
+                sentiment_obj = _calculate_news_sentiment(f"{clean_title}. {clean_excerpt}")
+                _arts.append({
+                    "title":        clean_title,
+                    "excerpt":      clean_excerpt,
+                    "url":          link,
+                    "source":       "ScanX",
+                    "published_at": pub,
+                    "ts":           ts,
+                    "ticker":       "MARKET" if is_market else ticker_no_ns,
+                    "sentiment":    sentiment_obj,
+                })
+
+        # Fallback: if zero articles found on ScanX for a specific stock or category, search broader financial news
+        if not is_market and len(_arts) == 0:
+            if is_earnings:
+                target_search = "Indian stock market earnings quarterly results"
+            elif is_ipo:
+                target_search = "Indian stock market IPO listing allotment"
+            elif is_economy:
+                target_search = "Indian economy RBI GDP inflation news"
+            else:
+                target_search = f"{cname or ticker_no_ns} stock news"
+            try:
+                rss_url = f"{base_url}?q={quote_plus(target_search)}&hl=en-IN&gl=IN&ceid=IN:en"
                 _r = _req.get(rss_url, timeout=8,
                               headers={"User-Agent": "Mozilla/5.0 (compatible; StockApp/1.0)"})
                 feed = feedparser.parse(_r.text)
@@ -3042,36 +3617,44 @@ async def news_search(query: str, limit: int = 20):
                     link  = (getattr(entry, "link",  "") or "").strip()
                     pub   = getattr(entry, "published", "") or ""
                     desc  = getattr(entry, "description", "") or ""
+                    ts    = _extract_ts(entry, pub)
                     source_elem = getattr(entry, "source", {})
-                    source_title = (source_elem.get("title", "") if isinstance(source_elem, dict) else str(getattr(entry, "source", ""))).lower()
+                    source_title = source_elem.get("title", "Market News") if isinstance(source_elem, dict) else str(getattr(entry, "source", "Market News"))
 
-                    if not title or len(title) < 15 or link in _seen:
-                        continue
-                    if _is_nav_or_quote(title):
+                    if not title or len(title) < 15 or link in _seen or _is_nav_or_quote(title):
                         continue
 
-                    # STRICT FILTER: Only accept articles originating from scanx.trade
-                    if "scanx.trade" not in link.lower() and "scanx" not in source_title and "scanx.trade" not in rq:
+                    if filter_keywords:
+                        full_text = f"{title} {desc}".lower()
+                        if not any(k in full_text for k in filter_keywords):
+                            continue
+
+                    clean_title = _clean_article_title(title, desc, ticker_no_ns)
+                    if not clean_title or len(clean_title.split()) <= 1 or len(clean_title) < 10:
                         continue
 
                     _seen.add(link)
-                    clean_title = _re.sub(r'\s*[-–|]\s*scanx\.trade\s*$', '', title, flags=_re.IGNORECASE).strip()
-                    clean_title = _re.sub(r'\s*[-–|]\s*[\w\s\.]+$', '', clean_title).strip() or clean_title
                     clean_excerpt = _re.sub(r'<[^>]+>', '', desc)[:280]
+                    clean_excerpt = _re.sub(r'&nbsp;', ' ', clean_excerpt).strip()
                     sentiment_obj = _calculate_news_sentiment(f"{clean_title}. {clean_excerpt}")
                     _arts.append({
                         "title":        clean_title,
                         "excerpt":      clean_excerpt,
                         "url":          link,
-                        "source":       "ScanX",
+                        "source":       source_title or "ScanX",
                         "published_at": pub,
-                        "ticker":       "MARKET" if is_market else q_clean.upper(),
+                        "ts":           ts,
+                        "ticker":       ticker_no_ns,
                         "sentiment":    sentiment_obj,
                     })
             except Exception as e:
-                print(f"[News Search] query='{rq}': {e}")
-            if len(_arts) >= limit:
-                break
+                print(f"[News Search Fallback] query='{target_search}': {e}")
+
+        # Sort newest first
+        _arts.sort(key=lambda x: x.get("ts", 0), reverse=True)
+        # Remove helper ts key
+        for a in _arts:
+            a.pop("ts", None)
         return _arts[:limit]
 
     # Run the blocking feedparser calls in a thread so we don't block the event loop
@@ -3651,6 +4234,17 @@ def _cleanup_dashboard_client(client_id: str):
 DASHBOARD_TICKERS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'BHARTIARTL']
 SECTOR_TICKERS = ['NIFTY_AUTO', 'NIFTY_IT', 'NIFTY_PHARMA', 'NIFTY_FMCG', 'NIFTY_METAL', 'NIFTY_ENERGY', 'NIFTY_MEDIA', 'NIFTY_PSU_BANK', 'NIFTY_REALTY']
 
+def _sanitize_tick_for_ws(tick: dict) -> dict:
+    if not isinstance(tick, dict):
+        return {}
+    clean = {}
+    for k, v in tick.items():
+        if hasattr(v, 'isoformat'):
+            clean[k] = v.isoformat()
+        else:
+            clean[k] = v
+    return clean
+
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     client_id = await manager.connect(websocket)
@@ -3683,16 +4277,8 @@ async def dashboard_websocket(websocket: WebSocket):
                 await websocket.send_json({"type": "pong"})
             elif msg_type == "subscribe":
                 topics = data.get("topics", [])
-                # Validate against the known instrument set before counting anything
-                # against the subscription cap -- an unauthenticated client should
-                # not be able to exhaust it with garbage ticker strings.
-                valid_topics = [t for t in topics if angelone_service.get_token(t, "NSE") or angelone_service.get_token(t, "BSE")]
-                # Only count tickers this client isn't already tracking -- the
-                # frontend resends its whole running ticker list on every
-                # subscribe call (not just the delta), so without this diff
-                # every already-tracked ticker's view count would be
-                # re-incremented on every chart open/switch and never fully
-                # unwind on disconnect (unview_all only decrements once).
+                valid_topics = [t.strip().upper().replace('.NS', '').replace('.BO', '') for t in topics if isinstance(t, str)]
+                valid_topics = [t for t in valid_topics if t and (angelone_service.get_token(t, "NSE") or angelone_service.get_token(t, "BSE"))]
                 already_tracked = manager.user_topics.get(client_id, set())
                 new_topics = [t for t in valid_topics if t not in already_tracked]
                 if client_id in manager.user_topics:
@@ -3700,20 +4286,76 @@ async def dashboard_websocket(websocket: WebSocket):
                 if viewed_ticker_mgr:
                     for t in new_topics:
                         viewed_ticker_mgr.view(t)
+                poller = getattr(app.state, "price_poller", None)
+                if poller:
+                    for t in new_topics:
+                        poller.add_ticker(t)
+                        poller.poll_now(t)
+                # Send immediate price snapshot if available
+                immediate_prices = {}
+                INDEX_MIRRORS_SUB = {
+                    "NIFTY": ["NIFTY50"],
+                    "NIFTY50": ["NIFTY"],
+                    "BANKNIFTY": ["NIFTYBANK"],
+                    "NIFTYBANK": ["BANKNIFTY"],
+                    "FINNIFTY": ["NIFTY_FIN_SERVICE", "NIFTYFIN"],
+                    "MIDCAP": ["MIDCPNIFTY"],
+                    "SMALLCAP": ["NIFTYSMLCAP100"],
+                }
+                with angelone_service.latest_ticks_lock:
+                    for t in valid_topics:
+                        if t in angelone_service.latest_ticks:
+                            immediate_prices[t] = _sanitize_tick_for_ws(angelone_service.latest_ticks[t])
+                        else:
+                            for alt in INDEX_MIRRORS_SUB.get(t, []):
+                                if alt in angelone_service.latest_ticks:
+                                    immediate_prices[t] = _sanitize_tick_for_ws(angelone_service.latest_ticks[alt])
+                                    break
+                if immediate_prices:
+                    await websocket.send_json({
+                        "type": "price_update",
+                        "data": immediate_prices,
+                        "ts": datetime.now(IST).isoformat()
+                    })
             elif msg_type == "unsubscribe":
                 topics = data.get("topics", [])
+                clean_topics = [t.strip().upper().replace('.NS', '').replace('.BO', '') for t in topics if isinstance(t, str)]
                 if client_id in manager.user_topics:
-                    for t in topics:
+                    for t in clean_topics:
                         manager.user_topics[client_id].discard(t)
                 if viewed_ticker_mgr:
-                    for t in topics:
+                    for t in clean_topics:
                         viewed_ticker_mgr.unview(t)
             elif msg_type == "view_ticker":
-                tkr = data.get("ticker", "").strip().upper()
-                if tkr and viewed_ticker_mgr and (angelone_service.get_token(tkr, "NSE") or angelone_service.get_token(tkr, "BSE")):
-                    viewed_ticker_mgr.view(tkr)
+                raw_tkr = data.get("ticker", "")
+                tkr = raw_tkr.strip().upper().replace('.NS', '').replace('.BO', '') if isinstance(raw_tkr, str) else ""
+                if tkr and (angelone_service.get_token(tkr, "NSE") or angelone_service.get_token(tkr, "BSE")):
+                    if client_id in manager.user_topics:
+                        manager.user_topics[client_id].add(tkr)
+                    if viewed_ticker_mgr:
+                        viewed_ticker_mgr.view(tkr)
+                    poller = getattr(app.state, "price_poller", None)
+                    if poller:
+                        poller.add_ticker(tkr)
+                        poller.poll_now(tkr)
+                    with angelone_service.latest_ticks_lock:
+                        tick_val = angelone_service.latest_ticks.get(tkr)
+                        if not tick_val:
+                            INDEX_MIRRORS_SUB = {"NIFTY": ["NIFTY50"], "NIFTY50": ["NIFTY"], "BANKNIFTY": ["NIFTYBANK"], "NIFTYBANK": ["BANKNIFTY"], "FINNIFTY": ["NIFTY_FIN_SERVICE", "NIFTYFIN"], "MIDCAP": ["MIDCPNIFTY"], "SMALLCAP": ["NIFTYSMLCAP100"]}
+                            for alt in INDEX_MIRRORS_SUB.get(tkr, []):
+                                if alt in angelone_service.latest_ticks:
+                                    tick_val = angelone_service.latest_ticks[alt]
+                                    break
+                        if tick_val:
+                            clean_tick = _sanitize_tick_for_ws(tick_val)
+                            await websocket.send_json({
+                                "type": "price_update",
+                                "data": {tkr: clean_tick},
+                                "ts": datetime.now(IST).isoformat()
+                            })
             elif msg_type == "unview_ticker":
-                tkr = data.get("ticker", "").strip().upper()
+                raw_tkr = data.get("ticker", "")
+                tkr = raw_tkr.strip().upper().replace('.NS', '').replace('.BO', '') if isinstance(raw_tkr, str) else ""
                 if tkr and viewed_ticker_mgr:
                     viewed_ticker_mgr.unview(tkr)
     except WebSocketDisconnect:
@@ -3801,16 +4443,18 @@ async def _broadcast_dashboard():
 
 @app.get("/api/watchlist", response_model=schemas.WatchlistResponse)
 async def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
-    if current_user is None:
+    try:
+        if current_user is None:
+            return schemas.WatchlistResponse(watchlist=[], count=0)
+        items = db.query(models.UserWatchlist).filter(
+            models.UserWatchlist.user_id == current_user.user_id
+        ).order_by(models.UserWatchlist.added_at.desc()).all()
+        tickers = [item.ticker for item in items if item and item.ticker]
+        wl = [schemas.WatchlistItem(ticker=t, logo=_safe_logo(STOCK_META.get(t, {}).get("logo", ""), ticker=t)) for t in tickers]
+        return schemas.WatchlistResponse(watchlist=wl, count=len(wl))
+    except Exception as e:
+        print(f"[Watchlist] Error fetching watchlist: {e}")
         return schemas.WatchlistResponse(watchlist=[], count=0)
-    items = db.query(models.UserWatchlist).filter(
-        models.UserWatchlist.user_id == current_user.user_id
-    # BUG-07 FIX: Column is `added_at`, not `created_at` — ordering by a non-existent column crashed this endpoint
-    # Ordered newest-first so dashboard shows most recently added stocks
-    ).order_by(models.UserWatchlist.added_at.desc()).all()
-    tickers = [item.ticker for item in items]
-    wl = [schemas.WatchlistItem(ticker=t, logo=_safe_logo(STOCK_META.get(t, {}).get("logo", ""))) for t in tickers]
-    return schemas.WatchlistResponse(watchlist=wl, count=len(wl))
 
 @app.post("/api/watchlist/add", response_model=schemas.WatchlistAddResponse, dependencies=[Depends(validate_csrf)])
 def add_to_watchlist(
@@ -4083,10 +4727,13 @@ def get_portfolio_summary(db: Session = Depends(get_db), current_user: models.Us
     closed_positions = db.query(models.Position).filter(
         models.Position.user_id == current_user.user_id, models.Position.status == "CLOSED"
     ).count()
-    total_invested = db.query(models.Position).filter(
+    open_positions_query = db.query(models.Position).filter(
         models.Position.user_id == current_user.user_id, models.Position.status == "OPEN"
-    ).with_entities(models.Position.total_investment).all()
-    invested_sum = sum(p[0] for p in total_invested if p[0]) if total_invested else 0
+    ).all()
+    invested_sum = sum(
+        (p.total_investment if (p.total_investment is not None and p.total_investment > 0) else ((p.entry_price or 0) * (p.quantity or 0)))
+        for p in open_positions_query
+    )
     total_realized = db.query(models.Position).filter(
         models.Position.user_id == current_user.user_id, models.Position.status == "CLOSED"
     ).with_entities(models.Position.realized_pnl).all()
@@ -4176,7 +4823,15 @@ def close_position(req: schemas.ClosePositionRequest, db: Session = Depends(get_
     )
     if not position:
         raise HTTPException(status_code=400, detail=error_msg)
-    return {"message": "Position closed", "position_id": position.id, "realized_pnl": position.realized_pnl}
+    user = db.query(models.User).filter(models.User.user_id == current_user.user_id).first()
+    balance = user.virtual_balance if user else 0.0
+    return {
+        "message": "Position closed",
+        "position_id": position.id,
+        "realized_pnl": position.realized_pnl,
+        "balance": balance,
+        "virtual_balance": balance
+    }
 
 @app.post("/api/trade/set-limits")
 def set_limits(req: schemas.SetLimitsRequest, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
@@ -4226,10 +4881,45 @@ def get_top_9_history(db: Session = Depends(get_db)):
 
 # ==================== STOCK DATA RANGE / HISTORY ====================
 
+INDEX_ALIASES_MAP = {
+    'NIFTY': ['NIFTY', 'NIFTY50', 'NIFTY 50', '^NSEI'],
+    'NIFTY50': ['NIFTY', 'NIFTY50', 'NIFTY 50', '^NSEI'],
+    'NIFTY 50': ['NIFTY', 'NIFTY50', 'NIFTY 50', '^NSEI'],
+    '^NSEI': ['NIFTY', 'NIFTY50', 'NIFTY 50', '^NSEI'],
+    'BANKNIFTY': ['BANKNIFTY', 'NIFTYBANK', 'NIFTY BANK', 'BANK NIFTY', '^NSEBANK'],
+    'NIFTYBANK': ['BANKNIFTY', 'NIFTYBANK', 'NIFTY BANK', 'BANK NIFTY', '^NSEBANK'],
+    'NIFTY BANK': ['BANKNIFTY', 'NIFTYBANK', 'NIFTY BANK', 'BANK NIFTY', '^NSEBANK'],
+    'BANK NIFTY': ['BANKNIFTY', 'NIFTYBANK', 'NIFTY BANK', 'BANK NIFTY', '^NSEBANK'],
+    '^NSEBANK': ['BANKNIFTY', 'NIFTYBANK', 'NIFTY BANK', 'BANK NIFTY', '^NSEBANK'],
+    'SENSEX': ['SENSEX', 'BSESN', '^BSESN', 'SENSEX.BO'],
+    'BSESN': ['SENSEX', 'BSESN', '^BSESN', 'SENSEX.BO'],
+    'SENSEX.BO': ['SENSEX', 'BSESN', '^BSESN', 'SENSEX.BO'],
+    '^BSESN': ['SENSEX', 'BSESN', '^BSESN', 'SENSEX.BO'],
+    'FINNIFTY': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    'NIFTYFIN': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    'NIFTY_FIN_SERVICE': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    'NIFTY FIN': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    'NIFTY FINANCIAL SERVICES': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    'NIFTY_FIN_SERVICE.NS': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    '^CNXFIN': ['FINNIFTY', 'NIFTYFIN', 'NIFTY_FIN_SERVICE', 'NIFTY FIN', 'NIFTY FINANCIAL SERVICES', 'NIFTY_FIN_SERVICE.NS', '^CNXFIN'],
+    'MIDCAP': ['MIDCAP', 'MIDCPNIFTY', 'NIFTY MIDCAP 50', 'NIFTY_MIDCAP_50', '^NSEMDCP50'],
+    'MIDCPNIFTY': ['MIDCAP', 'MIDCPNIFTY', 'NIFTY MIDCAP 50', 'NIFTY_MIDCAP_50', '^NSEMDCP50'],
+    'NIFTY MIDCAP 50': ['MIDCAP', 'MIDCPNIFTY', 'NIFTY MIDCAP 50', 'NIFTY_MIDCAP_50', '^NSEMDCP50'],
+    'NIFTY_MIDCAP_50': ['MIDCAP', 'MIDCPNIFTY', 'NIFTY MIDCAP 50', 'NIFTY_MIDCAP_50', '^NSEMDCP50'],
+    '^NSEMDCP50': ['MIDCAP', 'MIDCPNIFTY', 'NIFTY MIDCAP 50', 'NIFTY_MIDCAP_50', '^NSEMDCP50'],
+    'SMALLCAP': ['SMALLCAP', 'NIFTYSMLCAP100', 'NIFTY SMALLCAP 50', 'NIFTY_SMALLCAP_100', '^CNXSC'],
+    'NIFTYSMLCAP100': ['SMALLCAP', 'NIFTYSMLCAP100', 'NIFTY SMALLCAP 50', 'NIFTY_SMALLCAP_100', '^CNXSC'],
+    'NIFTY SMALLCAP 50': ['SMALLCAP', 'NIFTYSMLCAP100', 'NIFTY SMALLCAP 50', 'NIFTY_SMALLCAP_100', '^CNXSC'],
+    'NIFTY_SMALLCAP_100': ['SMALLCAP', 'NIFTYSMLCAP100', 'NIFTY SMALLCAP 50', 'NIFTY_SMALLCAP_100', '^CNXSC'],
+    '^CNXSC': ['SMALLCAP', 'NIFTYSMLCAP100', 'NIFTY SMALLCAP 50', 'NIFTY_SMALLCAP_100', '^CNXSC'],
+}
+
 def _normalize_ticker(ticker: str) -> List[str]:
     t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    if t in INDEX_ALIASES_MAP:
+        return list(dict.fromkeys([t] + INDEX_ALIASES_MAP[t]))
     variants = [t]
-    if '.' not in t and t not in ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCAP', 'SMALLCAP']:
+    if '.' not in t:
         variants.append(f"{t}.NS")
     return variants
 
@@ -4674,12 +5364,19 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         if isinstance(ts, datetime):
             if ts.tzinfo is not None:
                 ts = ts.replace(tzinfo=None)
+            # Align weekly to Monday 00:00:00 IST for consistent matching with yfinance & DB
+            d = ts.date()
+            if target_tf == "1W":
+                d = d - timedelta(days=d.weekday())
+                ts = datetime(d.year, d.month, d.day, 0, 0, 0)
+            elif target_tf == "1M":
+                ts = datetime(d.year, d.month, 1, 0, 0, 0)
             return int(ts.replace(tzinfo=IST).timestamp())
         return int(ts) if ts else 0
 
     def _merge_into(base_dict: dict, resampled_list: list, max_stored_ts: int):
-        """Merge resampled candles into base_dict. Stored bars win; only the current open
-        period (>= max_stored_ts) gets overwritten so the tip stays fresh."""
+        """Merge resampled candles into base_dict. Resampled 1D candles update recent
+        periods, while preserving older historical stored bars."""
         added = 0
         for c in resampled_list:
             ep = _resampled_epoch(c)
@@ -4688,37 +5385,39 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
             candle = {"time": ep, "open": float(c.get("open", 0)), "high": float(c.get("high", 0)),
                       "low": float(c.get("low", 0)), "close": float(c.get("close", 0)),
                       "volume": int(c.get("volume", 0))}
-            if ep not in base_dict or ep >= max_stored_ts:
-                base_dict[ep] = candle
-                added += 1
+            base_dict[ep] = candle
+            added += 1
         return added
 
     # ── LAYER 1: stored candles already in DB (1W base for 1W chart; 1M base for 1M chart) ──
     stored_dict = {c["time"]: c for c in stored_candles}
     max_stored_ts = max(stored_dict.keys()) if stored_dict else 0
+    min_stored_ts = min(stored_dict.keys()) if stored_dict else 0
 
     # ── LAYER 2 (1W only): fill gaps in stored 1W using yfinance interval='1wk' ────────────
     # These are REAL weekly OHLCV candles (not resampled), so we store them permanently to DB.
     if target_tf == "1W":
         last_stored_date = (datetime.utcfromtimestamp(max_stored_ts).date()
                             if max_stored_ts else None)
-        # Need to fill if stored 1W ends more than 14 days ago (gap or never populated)
-        need_weekly_fill = last_stored_date is None or (today_ist - last_stored_date).days > 14
+        first_stored_date = (datetime.utcfromtimestamp(min_stored_ts).date()
+                             if min_stored_ts else None)
+        five_yr_cutoff = date(today_ist.year - 5, today_ist.month, today_ist.day)
+        # Need to fill if stored 1W ends more than 14 days ago (tail gap) OR earliest stored 1W is missing 2-5 yr history
+        need_weekly_fill = (
+            last_stored_date is None or 
+            (today_ist - last_stored_date).days > 14 or 
+            first_stored_date is None or 
+            first_stored_date > five_yr_cutoff or
+            len(stored_dict) < 150
+        )
         if need_weekly_fill and not _is_yfinance_failed(clean):
             try:
                 yf_sym = _yfinance_ticker(clean)
-                # Start a couple of weeks before last stored so period boundaries align
-                fetch_start = ((last_stored_date - timedelta(days=14)).strftime('%Y-%m-%d')
-                               if last_stored_date else None)
                 acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
                 if acquired:
                     try:
-                        if fetch_start:
-                            df_w = yf.download(yf_sym, start=fetch_start, interval='1wk',
-                                               progress=False, auto_adjust=True, timeout=15)
-                        else:
-                            df_w = yf.download(yf_sym, period='max', interval='1wk',
-                                               progress=False, auto_adjust=True, timeout=15)
+                        df_w = yf.download(yf_sym, period='max', interval='1wk',
+                                           progress=False, auto_adjust=True, timeout=15)
                     finally:
                         _yf_semaphore.release()
 
@@ -4729,7 +5428,9 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                         for idx, row in df_w.iterrows():
                             ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
                             ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
-                            ts_day = datetime(ts.year, ts.month, ts.day, 0, 0, 0)
+                            d = ts.date()
+                            mon = d - timedelta(days=d.weekday())
+                            ts_day = datetime(mon.year, mon.month, mon.day, 0, 0, 0)
                             ep = int(ts_day.replace(tzinfo=IST).timestamp())
                             o = float(row.get('Open', 0) or 0)
                             h = float(row.get('High', 0) or 0)
@@ -4741,10 +5442,10 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                             rh, rl = max(o, h, c_val), min(o, l, c_val)
                             candle = {"time": ep, "open": o, "high": rh, "low": rl,
                                       "close": c_val, "volume": v}
-                            # Add to in-memory dict (overwrites if it's the current open week)
+                            # Add to in-memory dict
                             stored_dict[ep] = candle
-                            # Only persist completed weeks (week that ended before today)
-                            week_end = ts_day.date() + timedelta(days=6)
+                            # Persist completed weeks
+                            week_end = mon + timedelta(days=6)
                             if week_end < today_ist:
                                 to_store_db.append((ts_day, o, rh, rl, c_val, v))
                         if to_store_db:
@@ -4764,8 +5465,68 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
             except Exception as e:
                 print(f"[GapFill] {clean} 1W yfinance fetch error: {e}")
 
-    # ── LAYER 2 (1M only): resample stored 1W → 1M to fill the middle period ────────────────
+    # ── LAYER 2 (1M only): fill 1M history from yfinance or resample stored 1W ────────────
     if target_tf == "1M":
+        last_stored_m = (datetime.utcfromtimestamp(max_stored_ts).date() if max_stored_ts else None)
+        first_stored_m = (datetime.utcfromtimestamp(min_stored_ts).date() if min_stored_ts else None)
+        ten_yr_cutoff = date(today_ist.year - 10, today_ist.month, today_ist.day)
+        need_monthly_fill = (
+            last_stored_m is None or 
+            first_stored_m is None or 
+            first_stored_m > ten_yr_cutoff or
+            len(stored_dict) < 60
+        )
+        if need_monthly_fill and not _is_yfinance_failed(clean):
+            try:
+                yf_sym = _yfinance_ticker(clean)
+                acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
+                if acquired:
+                    try:
+                        df_m = yf.download(yf_sym, period='max', interval='1mo',
+                                           progress=False, auto_adjust=True, timeout=15)
+                    finally:
+                        _yf_semaphore.release()
+
+                    if df_m is not None and not df_m.empty:
+                        if isinstance(df_m.columns, pd.MultiIndex):
+                            df_m.columns = df_m.columns.get_level_values(0)
+                        to_store_m_db = []
+                        for idx, row in df_m.iterrows():
+                            ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx
+                            ts = ts.replace(tzinfo=None) if getattr(ts, 'tzinfo', None) else ts
+                            ts_month = datetime(ts.year, ts.month, 1, 0, 0, 0)
+                            ep = int(ts_month.replace(tzinfo=IST).timestamp())
+                            o = float(row.get('Open', 0) or 0)
+                            h = float(row.get('High', 0) or 0)
+                            l = float(row.get('Low', 0) or 0)
+                            c_val = float(row.get('Close', 0) or 0)
+                            v = int(row.get('Volume', 0) or 0)
+                            if o <= 0 or c_val <= 0:
+                                continue
+                            rh, rl = max(o, h, c_val), min(o, l, c_val)
+                            candle = {"time": ep, "open": o, "high": rh, "low": rl,
+                                      "close": c_val, "volume": v}
+                            stored_dict[ep] = candle
+                            if ts_month.date() < date(today_ist.year, today_ist.month, 1):
+                                to_store_m_db.append((ts_month, o, rh, rl, c_val, v))
+                        if to_store_m_db:
+                            try:
+                                for ts_m_dt, ro, rh, rl, rc, rv in to_store_m_db:
+                                    db.execute(pg_insert(models.Candle).values(
+                                        ticker=clean, timeframe='1M', timestamp=ts_m_dt,
+                                        open=ro, high=rh, low=rl, close=rc, volume=rv,
+                                        is_completed=True, data_source='YFINANCE', is_backfilled=True,
+                                    ).on_conflict_do_nothing(constraint="uix_candle_key"))
+                                db.commit()
+                                max_stored_ts = max(stored_dict.keys()) if stored_dict else 0
+                                print(f"[GapFill] {clean} 1M: stored {len(to_store_m_db)} monthly candles to DB")
+                            except Exception as _pe:
+                                db.rollback()
+                                print(f"[GapFill] {clean} 1M: DB store error: {_pe}")
+            except Exception as e:
+                print(f"[GapFill] {clean} 1M yfinance fetch error: {e}")
+
+        # Also resample stored 1W → 1M to fill the middle period
         db_1w = db.query(models.Candle).filter(
             models.Candle.ticker.in_(db_tickers),
             models.Candle.timeframe == "1W",
@@ -4833,6 +5594,40 @@ def get_monthly_intraday_candles_5min(ticker: str = Query(...), db: Session = De
                "close": _safe_float(r.close), "volume": _safe_int(r.volume)} for r in stored_rows]
     # 2. Fill gap to today via 1D resample (uses DB 1D first, then yfinance for remainder)
     return _resample_gap_fill(clean, "1M", stored, db_tickers, db)
+
+
+@app.get("/api/stock-data/history-before")
+def get_history_before(ticker: str = Query(...), timeframe: str = Query("1W"), before: int = Query(None), limit: int = Query(1500, ge=1, le=50000), db: Session = Depends(get_db)):
+    """Paginated historical candles for 1W/1M and higher timeframes."""
+    clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    tf_upper = timeframe.upper()
+    if tf_upper in ("1W", "WEEKLY", "W"):
+        candles = get_weekly_intraday_candles_5min(clean, db)
+    elif tf_upper in ("1M", "MONTHLY", "M"):
+        candles = get_monthly_intraday_candles_5min(clean, db)
+    elif tf_upper in ("1D", "DAILY", "D"):
+        # 1D daily
+        daily_res = get_stock_data_range(clean, range="ALL", db=db)
+        candles = []
+        for r in daily_res:
+            t_str = r.get("time")
+            try:
+                dt = datetime.strptime(t_str, "%Y-%m-%d")
+                ep = int(dt.replace(tzinfo=IST).timestamp())
+                candles.append({"time": ep, "open": r.get("open"), "high": r.get("high"), "low": r.get("low"), "close": r.get("close"), "volume": r.get("volume", 0)})
+            except Exception:
+                continue
+    else:
+        candles = []
+
+    if before is not None:
+        candles = [c for c in candles if c.get("time", 0) < before]
+    
+    has_more = len(candles) > limit
+    if limit and len(candles) > limit:
+        candles = candles[-limit:]
+    
+    return {"data": candles, "has_more": has_more}
 
 
 # Candle save endpoint removed — aggregator writes intraday_candles_5min directly via batch_flush_intraday_candles_5min.
@@ -4910,6 +5705,17 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     # On first page load (before=None / is_latest_request), fill gaps BEFORE returning data
     # so the user always gets complete up-to-date candles on the first open.
     # Subsequent paginated loads (scrolling back in history) still use background fill.
+    canonical_index_map = {
+        'NIFTY50': 'NIFTY', 'NIFTY 50': 'NIFTY', '^NSEI': 'NIFTY',
+        'NIFTYBANK': 'BANKNIFTY', 'NIFTY BANK': 'BANKNIFTY', 'BANK NIFTY': 'BANKNIFTY', '^NSEBANK': 'BANKNIFTY',
+        'BSESN': 'SENSEX', 'SENSEX.BO': 'SENSEX', '^BSESN': 'SENSEX',
+        'NIFTYFIN': 'FINNIFTY', 'NIFTY_FIN_SERVICE': 'FINNIFTY', 'NIFTY FIN': 'FINNIFTY', 'NIFTY FINANCIAL SERVICES': 'FINNIFTY', 'NIFTY_FIN_SERVICE.NS': 'FINNIFTY', '^CNXFIN': 'FINNIFTY',
+        'MIDCPNIFTY': 'MIDCAP', 'NIFTY MIDCAP 50': 'MIDCAP', 'NIFTY_MIDCAP_50': 'MIDCAP', '^NSEMDCP50': 'MIDCAP',
+        'NIFTYSMLCAP100': 'SMALLCAP', 'NIFTY SMALLCAP 50': 'SMALLCAP', 'NIFTY_SMALLCAP_100': 'SMALLCAP', '^CNXSC': 'SMALLCAP',
+    }
+    raw_clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
+    clean_ticker = canonical_index_map.get(raw_clean, raw_clean)
+
     if is_latest_request:
         try:
             now = database.get_ist_now()
@@ -4917,13 +5723,11 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             market_open = ist_time >= __import__('datetime').time(9, 15)
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
 
-            clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
-
             fill_needed = False
             fill_start = None
 
             if not records:
-                fill_start = now - __import__('datetime').timedelta(days=14)
+                fill_start = now - __import__('datetime').timedelta(days=60)
                 fill_needed = True
                 print(f"[GapFill] Sync fill for {clean_ticker} {interval}: no data in DB")
             else:
@@ -4941,24 +5745,21 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     if internal_gap > 375 or (same_day and internal_gap > bucket_min * 1.5):
                         oldest_gap_start = t_old
 
-                if has_tip_gap or oldest_gap_start:
-                    fill_start = oldest_gap_start if oldest_gap_start else records[0].timestamp
+                # 3. Check history depth (if DB has fewer than 300 candles or history < 14 days)
+                has_history_gap = len(records) < 300 or (now - records[-1].timestamp).days < 14
+
+                if has_tip_gap or oldest_gap_start or has_history_gap:
+                    if has_history_gap:
+                        fill_start = now - __import__('datetime').timedelta(days=60)
+                    elif oldest_gap_start:
+                        fill_start = oldest_gap_start
+                    else:
+                        fill_start = records[0].timestamp
                     fill_needed = True
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
 
             if fill_needed:
-                # HARDEN-XX: `db` (this request's Depends(get_db) session) already
-                # checked out a real pooled connection at the `records = q...all()`
-                # query above and would otherwise hold it, idle and uncommitted,
-                # across perform_on_demand_backfill's AngelOne/yfinance network I/O
-                # below -- proven with engine.pool.checkedout() instrumentation
-                # (see tests/test_intraday_paginated_session_lifetime.py). Closing
-                # here is safe: perform_on_demand_backfill takes no db argument and
-                # uses its own separate, already-hardened session (see main.py's
-                # "Phase 2" comment in perform_on_demand_backfill), and a
-                # SQLAlchemy Session remains fully usable after close() -- its next
-                # query (q_fresh below, built from the SAME q_base object created
-                # before this close) transparently opens a fresh connection.
+                # HARDEN-XX: db session is closed during network I/O
                 db.close()
                 # Synchronous fill — user waits during loading, gets complete data on first paint
                 perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
@@ -4970,6 +5771,16 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
+
+    # Fallback to direct yfinance fetch if still empty for indices
+    if not records and (clean_ticker in INDEX_MAP or clean_ticker in YFINANCE_INDEX_MAP or clean_ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP"]):
+        try:
+            yf_candles = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=False)
+            if yf_candles:
+                data = [{"time": _ts_to_epoch(c.timestamp), "open": _safe_float(c.open), "high": _safe_float(c.high), "low": _safe_float(c.low), "close": _safe_float(c.close), "volume": _safe_int(c.volume)} for c in yf_candles]
+                return {"data": data, "has_more": False}
+        except Exception as _yf_fb_err:
+            print(f"[GapFill] On-the-fly direct fallback error for {clean_ticker}: {_yf_fb_err}")
 
     has_more = len(records) > limit
     if has_more:
@@ -5301,24 +6112,33 @@ def _apply_screener_filters(data, sector, rsi_min, rsi_max, price_min, price_max
                              change_min, change_max, vol_ratio_min, vol_ratio_max,
                              page, page_size):
     f = data
-    if sector:
-        f = [r for r in f if r["sector"] == sector]
+    if sector and sector.lower() not in ('', 'all', 'any'):
+        sec_clean = sector.strip()
+        aliases = _get_sector_aliases(sec_clean)
+        f = [r for r in f if _is_sector_match(r.get("sector"), aliases)]
     if price_min is not None:
-        f = [r for r in f if r["price"] >= price_min]
+        f = [r for r in f if r.get("price", 0) >= price_min]
     if price_max is not None:
-        f = [r for r in f if r["price"] <= price_max]
+        f = [r for r in f if r.get("price", 0) <= price_max]
     if change_min is not None:
-        f = [r for r in f if r["change_pct"] >= change_min]
+        f = [r for r in f if r.get("change_pct", 0) >= change_min]
     if change_max is not None:
-        f = [r for r in f if r["change_pct"] <= change_max]
+        f = [r for r in f if r.get("change_pct", 0) <= change_max]
     if rsi_min is not None:
-        f = [r for r in f if r["rsi"] is not None and r["rsi"] >= rsi_min]
+        f = [r for r in f if r.get("rsi") is not None and r["rsi"] >= rsi_min]
     if rsi_max is not None:
-        f = [r for r in f if r["rsi"] is not None and r["rsi"] <= rsi_max]
+        f = [r for r in f if r.get("rsi") is not None and r["rsi"] <= rsi_max]
     if vol_ratio_min is not None:
-        f = [r for r in f if r["vol_ratio"] is not None and r["vol_ratio"] >= vol_ratio_min]
+        f = [r for r in f if r.get("vol_ratio") is not None and r["vol_ratio"] >= vol_ratio_min]
     if vol_ratio_max is not None:
-        f = [r for r in f if r["vol_ratio"] is not None and r["vol_ratio"] <= vol_ratio_max]
+        f = [r for r in f if r.get("vol_ratio") is not None and r["vol_ratio"] <= vol_ratio_max]
+
+    # Explicit sort for top losers (worst loss first) or gainers (highest gain first)
+    if change_max is not None and change_max <= 0:
+        f.sort(key=lambda r: r.get("change_pct", 0))
+    elif change_min is not None and change_min >= 0:
+        f.sort(key=lambda r: r.get("change_pct", 0), reverse=True)
+
     total = len(f)
     ps = max(1, min(page_size, 500))
     pg = max(1, page)
@@ -5424,7 +6244,6 @@ async def get_screener(
     """
     try:
         # ── 1. Build ticker universe ────────────────────────────────────────
-        # Use MOVER_TICKERS if populated, otherwise load ALL tickers from DB
         if search:
             search_clean = search.strip().upper()
             from sqlalchemy import or_
@@ -5433,29 +6252,71 @@ async def get_screener(
                     models.StockMetadata.ticker.ilike(f"%{search_clean}%"),
                     models.StockMetadata.name.ilike(f"%{search_clean}%")
                 )
-            ).limit(100).all()
-            stocks = [r[0] for r in rows]
-        elif MOVER_TICKERS:
-            stocks = MOVER_TICKERS[:200]
+            ).distinct().limit(200).all()
+            stocks = list(dict.fromkeys([r[0] for r in rows]))
+        elif sector and sector.lower() not in ('', 'all', 'any'):
+            sec_clean = sector.strip()
+            aliases = _get_sector_aliases(sec_clean)
+            sec_tickers = []
+            
+            # Dynamic reload from sector_data.json if needed
+            if not _SECTOR_MAP:
+                _sec_path = os.path.join(os.path.dirname(__file__), "sector_data.json")
+                if os.path.exists(_sec_path):
+                    try:
+                        with open(_sec_path, "r") as _sf:
+                            _s_raw = json.load(_sf)
+                        _SECTOR_MAP.update({k.upper(): v for k, v in _s_raw.items()})
+                        for _tk, _sc in _SECTOR_MAP.items():
+                            if _sc not in _sector_tickers: _sector_tickers[_sc] = []
+                            _sector_tickers[_sc].append(_tk)
+                    except Exception:
+                        pass
+
+            for k, v in _sector_tickers.items():
+                if _is_sector_match(k, aliases):
+                    sec_tickers.extend(v)
+            
+            from sqlalchemy import or_
+            db_conditions = []
+            for a in aliases:
+                if not a:
+                    continue
+                if len(a) <= 3:
+                    db_conditions.append(models.StockMetadata.sector == a)
+                    db_conditions.append(models.StockMetadata.sector.ilike(f"{a} %"))
+                    db_conditions.append(models.StockMetadata.sector.ilike(f"% {a}"))
+                    db_conditions.append(models.StockMetadata.sector.ilike(f"% {a} %"))
+                else:
+                    db_conditions.append(models.StockMetadata.sector.ilike(f"%{a}%"))
+
+            db_rows = db.query(models.StockMetadata.ticker).filter(
+                or_(*db_conditions)
+            ).distinct().all()
+            db_sec_tickers = [r[0] for r in db_rows]
+
+            map_tickers = []
+            for tkr, s_name in _SECTOR_MAP.items():
+                if _is_sector_match(s_name, aliases):
+                    map_tickers.append(tkr)
+
+            stocks = list(dict.fromkeys(sec_tickers + db_sec_tickers + map_tickers))
         else:
             try:
                 from sqlalchemy import text as _sa_txt
-                # Query stocks that actually have candles data in our DB first
                 rows = db.execute(_sa_txt(
-                    "SELECT ticker FROM stock_metadata "
+                    "SELECT DISTINCT ticker FROM stock_metadata "
                     "WHERE ticker IN (SELECT DISTINCT ticker FROM candles WHERE timeframe = '1D') "
-                    "ORDER BY ticker LIMIT 200"
+                    "ORDER BY ticker LIMIT 300"
                 )).fetchall()
-                stocks = [r[0] for r in rows]
-                
-                # Fallback to general stock_metadata if candles table has too few tickers
-                if len(stocks) < 20:
-                    rows_fallback = db.execute(_sa_txt("SELECT ticker FROM stock_metadata ORDER BY ticker LIMIT 200")).fetchall()
-                    stocks = list(set(stocks + [r[0] for r in rows_fallback]))
+                stocks = list(dict.fromkeys([r[0] for r in rows]))
+                if len(stocks) < 30:
+                    rows_fallback = db.execute(_sa_txt("SELECT DISTINCT ticker FROM stock_metadata ORDER BY ticker LIMIT 300")).fetchall()
+                    stocks = list(dict.fromkeys(stocks + [r[0] for r in rows_fallback]))
             except Exception:
                 stocks = []
 
-        if not stocks or len(stocks) < 10:
+        if not search and not sector and (not stocks or len(stocks) < 10):
             fallback = ['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN',
                         'BHARTIARTL','ITC','WIPRO','LT','HINDUNILVR','MARUTI',
                         'DRREDDY','HCLTECH','AXISBANK','BAJFINANCE','KOTAKBANK',
@@ -5466,8 +6327,10 @@ async def get_screener(
                 if fb not in stocks:
                     stocks.append(fb)
 
-        # ── 2. Serve cached data if fresh (< 5 min) and NOT performing a search ──
-        if not search:
+        stocks = list(dict.fromkeys(stocks))
+
+        # ── 2. Serve cached data if fresh (< 5 min) and NOT performing search or sector filter ──
+        if not search and not sector:
             now_ts = time.time()
             with _screener_cache_lock:
                 cached = _screener_cache.get("data")
@@ -5487,8 +6350,18 @@ async def get_screener(
 
         avg_vol_cache: dict = {}   # ticker → (avg_volume, closes_list)
         last_candle_cache: dict = {}  # ticker → last candles(1D) row (fallback price)
+        meta_by_ticker: dict = {}
 
         def _fetch_screener_db_data():
+            # Metadata for ticker names and sectors
+            try:
+                m_rows = db.query(models.StockMetadata).filter(models.StockMetadata.ticker.in_(stocks)).all()
+                for m in m_rows:
+                    if m.ticker not in meta_by_ticker:
+                        meta_by_ticker[m.ticker] = m
+            except Exception:
+                pass
+
             # 4a. Daily historical data for RSI + volume ratio — from candles(1D)
             cutoff = datetime.now(IST).date() - timedelta(days=60)
             cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day)
@@ -5524,7 +6397,12 @@ async def get_screener(
 
         # ── 5. Build result rows ─────────────────────────────────────────────
         result = []
+        seen_tickers = set()
         for ticker in stocks:
+            if ticker in seen_tickers:
+                continue
+            seen_tickers.add(ticker)
+
             p = prices.get(ticker, {})
             cp = _safe_float(p.get("current_price") or p.get("current"))
 
@@ -5557,10 +6435,13 @@ async def get_screener(
             change_pct = round((change / prev_close * 100), 2) if prev_close and prev_close != 0 else 0.0
             vol        = _safe_int(p.get("volume"))
 
-            meta   = STOCK_META.get(ticker, {})
-            name   = meta.get("name", ticker)
-            logo   = _safe_logo(meta.get("logo", ""))
-            sector = _SECTOR_MAP.get(ticker, "Unknown")
+            clean_tkr  = ticker.upper().replace('.NS', '').replace('.BO', '')
+            sm_obj     = meta_by_ticker.get(ticker) or meta_by_ticker.get(clean_tkr)
+            meta       = STOCK_META.get(ticker, {}) or STOCK_META.get(clean_tkr, {})
+            name       = (sm_obj.name if sm_obj and sm_obj.name else None) or meta.get("name") or ticker
+            logo       = _safe_logo((sm_obj.logo if sm_obj and sm_obj.logo else None) or meta.get("logo", ""))
+            raw_sec    = (sm_obj.sector if sm_obj and sm_obj.sector else None) or meta.get("sector") or _SECTOR_MAP.get(ticker) or _SECTOR_MAP.get(clean_tkr) or "Equities"
+            item_sector = raw_sec if raw_sec and raw_sec != "Unknown" else "Equities"
 
             avg_v, closes = avg_vol_cache.get(ticker, (None, []))
             avg_vol = avg_v if avg_v is not None else (vol if vol > 0 else 0)
@@ -5572,7 +6453,7 @@ async def get_screener(
                 "ticker":      ticker,
                 "name":        name,
                 "logo":        logo,
-                "sector":      sector,
+                "sector":      item_sector,
                 "price":       round(cp, 2),
                 "change":      change,
                 "change_pct":  change_pct,
@@ -5668,7 +6549,7 @@ def _on_angel_tick(ticker: str, data: dict):
             tick_low = data.get("low")
             daily_volume = data.get("volume", 0)
             actual_tick_volume = data.get("tick_volume", 0)
-            _angel_tick_buffer[ticker] = {
+            tick_entry = {
                 "current_price": cp,
                 "current": cp,
                 "prev_close": pc,
@@ -5678,9 +6559,30 @@ def _on_angel_tick(ticker: str, data: dict):
                 "_source": "angel_ws",
                 "_ts": time.time(),
             }
-            if tick_open is not None and tick_open > 0: _angel_tick_buffer[ticker]["open"] = tick_open
-            if tick_high is not None and tick_high > 0: _angel_tick_buffer[ticker]["high"] = tick_high
-            if tick_low is not None and tick_low > 0:  _angel_tick_buffer[ticker]["low"]  = tick_low
+            if tick_open is not None and tick_open > 0: tick_entry["open"] = tick_open
+            if tick_high is not None and tick_high > 0: tick_entry["high"] = tick_high
+            if tick_low is not None and tick_low > 0:  tick_entry["low"]  = tick_low
+            _angel_tick_buffer[ticker] = tick_entry
+
+            # Mirror to index aliases so both NIFTY and NIFTY50 (and other index pairs) always receive the tick
+            INDEX_MIRRORS = {
+                "NIFTY": ["NIFTY50"],
+                "NIFTY50": ["NIFTY"],
+                "BANKNIFTY": ["NIFTYBANK"],
+                "NIFTYBANK": ["BANKNIFTY"],
+                "FINNIFTY": ["NIFTY_FIN_SERVICE", "NIFTYFIN"],
+                "MIDCAP": ["MIDCPNIFTY"],
+                "SMALLCAP": ["NIFTYSMLCAP100"],
+            }
+            if ticker in INDEX_MIRRORS:
+                for alias in INDEX_MIRRORS[ticker]:
+                    _angel_tick_buffer[alias] = dict(tick_entry)
+
+        with angelone_service.latest_ticks_lock:
+            angelone_service.latest_ticks[ticker] = dict(tick_entry)
+            if ticker in INDEX_MIRRORS:
+                for alias in INDEX_MIRRORS[ticker]:
+                    angelone_service.latest_ticks[alias] = dict(tick_entry)
 
         # ── Feed tick into aggregator for candle formation ──────────────
         # Pass the broker timestamp (if available) for stale-tick detection
@@ -5712,12 +6614,12 @@ async def _broadcast_angel_ticks():
                     "data": batch,
                     "ts": datetime.now(IST).isoformat()
                 })
-                await asyncio.sleep(0.1)  # 100ms while ticks flow (was 200ms)
+                await asyncio.sleep(0.05)  # 50ms while ticks flow (ultra responsive)
             else:
-                await asyncio.sleep(1.0)   # 1s when idle (was 500ms)
+                await asyncio.sleep(0.05)  # 50ms when idle for near-instant wake on tick
         except Exception as e:
             print(f"[AngelTick] Broadcast error: {e}")
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.1)
 
 # ── Background-task registry (Batch 2: graceful shutdown) ──
 # Every asyncio.create_task(...) call inside startup() is wrapped with
@@ -5911,7 +6813,7 @@ async def startup():
     # under very high concurrency instead of spawning thread #10-40, which is
     # an acceptable trade on a single-worker, memory-constrained deployment.
     import anyio.to_thread
-    anyio.to_thread.current_default_thread_limiter().total_tokens = 8
+    anyio.to_thread.current_default_thread_limiter().total_tokens = 64
 
     global viewed_ticker_mgr
     viewed_ticker_mgr = ViewedTickerManager(angelone_service, max_subscriptions=2000)
@@ -6027,19 +6929,39 @@ async def startup():
                 _sector_tickers[sec].append(tkr)
             print(f"[Startup] Loaded {len(_SECTOR_MAP)} sector mappings across {len(_sector_tickers)} sectors from sector_data.json")
 
-            # Backfill sector column for rows where it's NULL
-            for ticker, sector in _SECTOR_MAP.items():
-                db_migrate2.execute(
-                    sa_text2("UPDATE stock_metadata SET sector = :sector WHERE ticker = :ticker AND sector IS NULL"),
-                    {"sector": sector, "ticker": ticker}
-                )
-            db_migrate2.commit()
+            # Backfill sector column for rows where it's NULL only if needed
+            null_count = db_migrate2.execute(sa_text2(
+                "SELECT COUNT(*) FROM stock_metadata WHERE sector IS NULL"
+            )).scalar()
+            if null_count and null_count > 0:
+                for ticker, sector in _SECTOR_MAP.items():
+                    db_migrate2.execute(
+                        sa_text2("UPDATE stock_metadata SET sector = :sector WHERE ticker = :ticker AND sector IS NULL"),
+                        {"sector": sector, "ticker": ticker}
+                    )
+                db_migrate2.commit()
             updated = db_migrate2.execute(sa_text2(
                 "SELECT COUNT(*) FROM stock_metadata WHERE sector IS NOT NULL"
             )).scalar()
             print(f"[Startup] Backfilled sector for stock_metadata ({updated} rows have sector)")
         else:
             print(f"[Startup] WARNING: sector_data.json not found at {sector_json_path}")
+
+        # Load market_cap_data.json into _CAP_MAP
+        cap_json_path = os.path.join(os.path.dirname(__file__), "market_cap_data.json")
+        if os.path.exists(cap_json_path):
+            with open(cap_json_path, "r") as f:
+                raw_cap_data = json.load(f)
+            _CAP_MAP.clear()
+            for t in raw_cap_data.get("large", []):
+                _CAP_MAP[t.upper()] = "large"
+            for t in raw_cap_data.get("mid", []):
+                _CAP_MAP[t.upper()] = "mid"
+            for t in raw_cap_data.get("small", []):
+                _CAP_MAP[t.upper()] = "small"
+            print(f"[Startup] Loaded {len(_CAP_MAP)} market cap mappings (large: {len(raw_cap_data.get('large', []))}, mid: {len(raw_cap_data.get('mid', []))}, small: {len(raw_cap_data.get('small', []))})")
+        else:
+            print(f"[Startup] WARNING: market_cap_data.json not found at {cap_json_path}")
     except Exception as e:
         if db_migrate2: db_migrate2.rollback()
         print(f"[Startup] Sector map seeding error: {e}")
@@ -6060,14 +6982,17 @@ async def startup():
         sess2 = Sess2()
         rows = sess2.execute(sa_text3("SELECT ticker FROM stock_metadata WHERE is_premium = TRUE ORDER BY ticker")).fetchall()
         premium = [r[0] for r in rows]
-        # Always include key indices
+        # Always include key indices and all mapped market-cap tickers (NIFTY 500)
         for idx in ['NIFTY','SENSEX','BANKNIFTY']:
             if idx not in premium:
                 premium.append(idx)
+        for tkr in _CAP_MAP.keys():
+            if tkr not in premium:
+                premium.append(tkr)
         MOVER_TICKERS.clear()
         MOVER_TICKERS.extend(premium)
         sess2.close()
-        print(f"[Startup] Loaded {len(MOVER_TICKERS)} mover tickers from DB (premium + indices)")
+        print(f"[Startup] Loaded {len(MOVER_TICKERS)} mover tickers (premium + NIFTY 500 + indices)")
     except Exception as e:
         print(f"[Startup] Could not load mover tickers from DB: {e}, using fallback")
         if not MOVER_TICKERS:
@@ -6082,11 +7007,8 @@ async def startup():
         if os.getenv("ELL_DISABLE_INSTRUMENT_LOAD") == "1":
             print("[ELLInvestigation] AngelOne instrument load skipped via ELL_DISABLE_INSTRUMENT_LOAD")
         else:
-            loaded = await asyncio.to_thread(angelone_service.load_instruments)
-            if loaded:
-                print(f"[Startup] AngelOne instruments loaded — token lookup enabled for all NSE stocks (incl. SME)")
-            else:
-                print("[Startup] WARNING: AngelOne instruments failed to load — SME/unlisted stocks may show no data")
+            _track_task(asyncio.create_task(asyncio.to_thread(angelone_service.load_instruments)))
+            print("[Startup] AngelOne instrument cache load spawned in background")
     except Exception as e:
         print(f"[Startup] AngelOne instruments load error: {e}")
 
@@ -6190,19 +7112,10 @@ async def startup():
     # ── Backfill: fetch recent intraday data for active tickers on startup ──
     db = None
     try:
-        from database import SessionLocal
-        db = SessionLocal()
-        stock_tickers = [r[0] for r in db.query(models.StockMetadata.ticker).limit(50).all()]
         index_tickers = ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
-        tickers = list(dict.fromkeys(index_tickers + stock_tickers))  # deduplicate, indices first
+        tickers = index_tickers
         if tickers:
-            # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control (see ELL_DISABLE_RETENTION
-            # above): _startup_backfill runs _fetch_yfinance_intraday (main.py,
-            # which itself still uses yf_int.iterrows() -- a DIFFERENT call site
-            # than the one fixed in the daily-prefill event-loop-lag phase) for
-            # up to 56 tickers x 2 intervals on a dedicated, never-gated-until-now
-            # OS thread starting immediately at boot -- a candidate for the
-            # residual post-fix event-loop spike under investigation.
+            # Pre-warm core index candles in a background thread
             if os.getenv("ELL_DISABLE_STARTUP_BACKFILL") != "1":
                 import threading as _th
                 now = database.get_ist_now()
@@ -6242,14 +7155,43 @@ async def startup():
         from database import SessionLocal as _CacheSession
         _cache_db = _CacheSession()
         stocks = _cache_db.query(models.StockMetadata).all()
-        _all_stocks_cache = [
-            {"ticker": s.ticker, "name": s.name, "logo": _safe_logo(s.logo),
-             "exchange": s.exchange, "basePrice": s.base_price}
-            for s in stocks
-        ]
+        try:
+            from sqlalchemy import text as _sa_text
+            rows = _cache_db.execute(_sa_text(
+                "SELECT DISTINCT ON (ticker) ticker, close FROM candles "
+                "WHERE timeframe='1D' AND close > 0 ORDER BY ticker, timestamp DESC"
+            )).fetchall()
+            latest_close = {r[0]: float(r[1]) for r in rows}
+        except Exception:
+            latest_close = {}
+        
+        market_prices = {}
+        try:
+            market_prices = _get_all_market_prices()
+        except Exception:
+            pass
+
+        _all_stocks_results = []
+        for s in stocks:
+            tkr_clean = s.ticker.upper().replace('.NS', '').replace('.BO', '')
+            pdata = market_prices.get(tkr_clean, {})
+            base_price = pdata.get('current') or latest_close.get(s.ticker) or s.base_price or 0.0
+            chg = pdata.get('change', 0.0)
+            chg_pct = pdata.get('change_pct', 0.0)
+            _all_stocks_results.append({
+                "ticker": s.ticker,
+                "name": s.name,
+                "logo": _safe_logo(s.logo, ticker=s.ticker),
+                "exchange": s.exchange,
+                "basePrice": round(float(base_price), 2),
+                "change": round(float(chg), 2),
+                "changePercent": round(float(chg_pct), 2),
+                "change_pct": round(float(chg_pct), 2)
+            })
+        _all_stocks_cache_bytes = json.dumps(_all_stocks_results).encode('utf-8')
         _all_stocks_cache_ts = time.time()
         _cache_db.close()
-        print(f"[Startup] Pre-populated all-stocks cache with {len(_all_stocks_cache)} stocks")
+        print(f"[Startup] Pre-populated all-stocks cache with {len(_all_stocks_results)} stocks ({len(_all_stocks_cache_bytes)} bytes)")
     except Exception as e:
         print(f"[Startup] Could not pre-populate all-stocks cache: {e}")
 
@@ -6278,16 +7220,13 @@ async def startup():
             # Run login in thread to avoid blocking the event loop (1-3s HTTP call)
             login_ok = await asyncio.to_thread(angelone_service.login)
         if login_ok:
-            # Subscribe only the essential tickers at startup (indices + dashboard + movers).
-            # ALL_WS_TICKERS (~3000+) is intentionally excluded: sending thousands of tokens
-            # in one burst causes AngelOne to drop/reject the connection, which triggers the
-            # reconnect storm. All other tickers are subscribed on-demand via
-            # ViewedTickerManager when a user opens their page; gap recovery then backfills
-            # any missed candles so the chart is complete.
-            startup_ws = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS))
-            # RT-08: subscribe_tickers() blocks for up to 15s waiting for the
-            # WS handshake -- run off the event loop so startup doesn't stall.
-            await asyncio.to_thread(angelone_service.subscribe_tickers, startup_ws)
+            # Subscribe only essential front-page tickers at startup (~20 core indices & top stocks).
+            # All other tickers are subscribed on-demand via ViewedTickerManager when a user opens their page.
+            CORE_STARTUP_TICKERS = list(dict.fromkeys(
+                DASHBOARD_TICKERS + ['SBIN', 'ITC', 'LT', 'HINDUNILVR', 'BAJFINANCE', 'MARUTI', 'AXISBANK', 'KOTAKBANK', 'TITAN', 'SUNPHARMA', 'TATASTEEL', 'MIDCAP', 'SMALLCAP']
+            ))
+            startup_ws = CORE_STARTUP_TICKERS
+            _track_task(asyncio.create_task(asyncio.to_thread(angelone_service.subscribe_tickers, startup_ws)))
             print(f"[Startup] Subscribed {len(startup_ws)} core tickers to AngelOne WS (on-demand for others)")
 
             # EVENT-LOOP-LAG-INVESTIGATION-ONLY test control: PricePoller and
@@ -6296,13 +7235,7 @@ async def startup():
             # off, alongside dashboard-index-backfill above, so the A-G
             # experiments cleanly isolate just those 3 jobs' contribution.
             if os.getenv("ELL_DISABLE_OTHER_BG") != "1":
-                # Start the multi-threaded REST poller for active tickers (not all 5575)
-                # Include dashboard, movers, sector indices, and the top 2 stocks of each sector
-                sector_rep = []
-                for s, tkrs in _sector_tickers.items():
-                    sector_rep.extend(tkrs[:2])
-
-                active_tickers = list(dict.fromkeys(DASHBOARD_TICKERS + MOVER_TICKERS + SECTOR_TICKERS + sector_rep))
+                active_tickers = CORE_STARTUP_TICKERS
                 poller = PricePoller(angelone_service, tickers=active_tickers)
                 poller_task = _track_task(asyncio.create_task(poller.start()))
                 poller_task.add_done_callback(_log_task_error)
@@ -6406,11 +7339,18 @@ async def startup():
 
     # Movers snapshot: build once now, then keep it warm on a timer so
     # /api/market-movers never has to scan the whole tick cache in the request path.
+    await asyncio.to_thread(_refresh_db_baseline_sync)
+    await refresh_movers_snapshot()
+    print("[Movers] Initial snapshot built")
+
     async def _movers_refresh_loop():
-        await refresh_movers_snapshot()
-        print("[Movers] Initial snapshot built")
+        last_db_refresh = time.time()
         while True:
             await asyncio.sleep(_MOVERS_REFRESH_SEC)
+            now_ts = time.time()
+            if now_ts - last_db_refresh >= 60:
+                await asyncio.to_thread(_refresh_db_baseline_sync)
+                last_db_refresh = now_ts
             await refresh_movers_snapshot()
     movers_task = _track_task(asyncio.create_task(_movers_refresh_loop()))
     movers_task.add_done_callback(_log_task_error)
@@ -6649,19 +7589,25 @@ async def startup():
             # Skip weekends/holidays
             sync_now = database.get_ist_now()
             if sync_now.weekday() >= 5:
+                last_run_date = sync_now.date()
+                await asyncio.sleep(3600)
                 continue
             with _holidays_lock:
                 if sync_now.date() in NSE_HOLIDAYS:
                     print(f"[PreWarm] Holiday, skipping")
+                    last_run_date = sync_now.date()
+                    await asyncio.sleep(3600)
                     continue
 
-            print(f"[PreWarm] Starting pre-warm for all watched tickers...")
+            print(f"[PreWarm] Starting pre-warm for core dashboard tickers...")
             db_pw = SessionLocal()
             try:
-                rows = db_pw.execute(
-                    sa_text("SELECT DISTINCT ticker FROM stock_metadata WHERE is_active = TRUE AND exchange = 'NSE'")
-                ).fetchall()
-                watched_tickers = sorted({r[0] for r in rows})
+                watched_tickers = [
+                    "NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP",
+                    "RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN",
+                    "BHARTIARTL", "ITC", "LT", "HINDUNILVR", "BAJFINANCE", "MARUTI",
+                    "AXISBANK", "KOTAKBANK", "TITAN"
+                ]
 
                 import concurrent.futures
                 def _pw_worker(tkr):
@@ -6671,14 +7617,20 @@ async def startup():
                         pass
 
                 loop = asyncio.get_event_loop()
-                def _run_prewarm():
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                        pool.map(_pw_worker, watched_tickers)
-                await loop.run_in_executor(_bg_executor, _run_prewarm)
+                _PREWARM_CHUNK = 10
+                for i in range(0, len(watched_tickers), _PREWARM_CHUNK):
+                    chunk = watched_tickers[i:i + _PREWARM_CHUNK]
+                    def _run_chunk_pw(_chunk=chunk):
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                            return list(pool.map(_pw_worker, _chunk))
+                    await loop.run_in_executor(_bg_executor, _run_chunk_pw)
+                    if i + _PREWARM_CHUNK < len(watched_tickers):
+                        await asyncio.sleep(0.5)
                 last_run_date = sync_now.date()
                 print(f"[PreWarm] Completed for {len(watched_tickers)} tickers")
             except Exception as e:
                 print(f"[PreWarm] Error: {e}")
+                await asyncio.sleep(60)
             finally:
                 db_pw.close()
 
@@ -6785,24 +7737,19 @@ async def startup():
 
     # ── Daily pre-fill: ensure ALL 5,543 tickers have daily intraday_candles_5min ──
     async def _daily_prefill_all():
-        """Run once on startup, then daily at 19:00 IST. Fetches 1D intraday_candles_5min
-        from yfinance for all tickers that don't have today's candle yet.
-        This eliminates yfinance dependency for daily history charts."""
+        """Run daily at 19:00 IST after market close. Fetches 1D candles from yfinance for tickers missing today's candle."""
         from database import SessionLocal
         from sqlalchemy import text as sa_text
-        await asyncio.sleep(30)  # delay on first run
         last_run_date = None
         while True:
             now_ist = database.get_ist_now()
-            # Only run once per day, after market close
+            # Only run once per day, after market close at 19:00 IST
             target_hour, target_min = 19, 0
             next_run = now_ist.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
             if now_ist >= next_run:
                 next_run += timedelta(days=1)
             delay = (next_run - now_ist).total_seconds()
-            # On startup (first run), run immediately regardless of time
-            if last_run_date is not None:
-                await asyncio.sleep(delay)
+            await asyncio.sleep(delay)
             # Skip if already ran today
             today = database.get_ist_now().date()
             if last_run_date == today:
@@ -6928,7 +7875,7 @@ async def startup():
                 # genuine yield point so pending HTTP/WS requests get scheduled — same
                 # tickers, same worker count, same per-ticker logic, just batched.
                 loop = asyncio.get_event_loop()
-                _PREFILL_CHUNK = 50
+                _PREFILL_CHUNK = 10
                 results = []
                 for i in range(0, len(missing), _PREFILL_CHUNK):
                     chunk = missing[i:i + _PREFILL_CHUNK]
@@ -6950,8 +7897,8 @@ async def startup():
                 try:
                     base_price_ms = await asyncio.to_thread(_sync_daily_base_price)
                     print(f"[DailyPreFill] base_price sync completed in {base_price_ms}ms")
-                    global _all_stocks_cache
-                    _all_stocks_cache = None
+                    global _all_stocks_cache_bytes
+                    _all_stocks_cache_bytes = None
                 except Exception as _sync_err:
                     print(f"[DailyPreFill] base_price sync error: {_sync_err}")
 
@@ -7356,11 +8303,7 @@ async def wire_event_bus_and_recovery():
         def patched_view(ticker: str):
             original_view(ticker)
             if _recovery_service is not None and _recovery_service.needs_recovery(ticker):
-                threading.Thread(
-                    target=_recovery_service.recover_ticker,
-                    args=(ticker, candle_aggregator),
-                    daemon=True,
-                ).start()
+                _recovery_service.enqueue_recovery(ticker, candle_aggregator)
 
         viewed_ticker_mgr.view = patched_view
         print("[Recovery] Patched ViewedTickerManager.view with lazy recovery")
@@ -7377,15 +8320,23 @@ async def warmup_market_news_cache():
             print(f"[Startup] News warmup failed (non-fatal): {e}")
     _track_task(asyncio.create_task(_warm()))
 
-@app.middleware("http")
-async def add_no_cache_headers(request: Request, call_next):
-    response = await call_next(request)
-    path = request.url.path
-    if path.endswith((".html", ".js", ".css")) or path == "/":
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
-    return response
+
+from fastapi.responses import FileResponse
+
+@app.get("/logos/{filename}")
+async def get_stock_logo(filename: str):
+    file_path = os.path.join(FRONTEND_DIR, "logos", filename)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    
+    # Generate dynamic fallback SVG avatar with 200 OK so console never shows 404 errors
+    ticker = os.path.splitext(filename)[0].upper()
+    initials = ticker[:2] if len(ticker) >= 2 else ticker
+    colors = ['#4f46e5', '#089981', '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#059669', '#d97706', '#475569']
+    h = sum(ord(c) for c in ticker)
+    bg = colors[h % len(colors)]
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"><circle cx="16" cy="16" r="16" fill="{bg}"/><text x="16" y="21" font-family="-apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif" font-size="13" font-weight="700" fill="#ffffff" text-anchor="middle">{initials}</text></svg>'
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 

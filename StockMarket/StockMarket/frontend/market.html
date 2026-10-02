@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -7,10 +7,10 @@
   <title>Market - LEVERAGE</title>
   <script src="lightweight-charts.js"></script>
   <link rel="stylesheet" href="tokens.css?v=2">
-  <link rel="stylesheet" href="index.css?v=82">
-  <link rel="stylesheet" href="nav.css?v=12">
+  <link rel="stylesheet" href="index.css?v=84">
+  <link rel="stylesheet" href="nav.css?v=14">
   <link rel="stylesheet" href="loader.css?v=4">
-  <link rel="stylesheet" href="responsive.css?v=4">
+  <link rel="stylesheet" href="responsive.css?v=6">
   <style>
     /* Header layout &ndash; market.html previously had no flex/positioning rules for this at all
        (that logic only lived inside stock.html's own page-scoped styles), so header-controls
@@ -181,7 +181,7 @@
   <script src="loader.js"></script>
   <script src="news.js?v=6"></script>
   <script src="ws.js"></script>
-  <script src="nav.js?v=8"></script>
+  <script src="nav.js?v=9"></script>
   <script src="cache.js?v=1"></script>
   <script>
   (function(){
@@ -498,6 +498,24 @@
       }
     }
 
+    function getTickerColor(ticker) {
+      var colors = ['#1e88e5','#43a047','#e53935','#8e24aa','#fb8c00','#00acc1','#3949ab','#d81b60','#00897b','#5e35b1'];
+      var hash = 0;
+      for (var i = 0; i < (ticker||'').length; i++) hash = (hash * 31 + ticker.charCodeAt(i)) & 0xffffffff;
+      return colors[Math.abs(hash) % colors.length];
+    }
+
+    function renderTickerLogo(ticker, size) {
+      size = size || 24;
+      var clean = (ticker || '').toUpperCase().trim();
+      var initials = clean.slice(0, 2);
+      var bg = getTickerColor(clean);
+      var logoUrl = 'logos/' + encodeURIComponent(clean) + '.svg';
+      return '<div class="stock-logo-mini" style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:#ffffff;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,0.08);padding:1px;box-sizing:border-box;flex-shrink:0;">' +
+          '<img src="' + logoUrl + '" alt="' + clean + '" style="width:100%;height:100%;object-fit:contain;border-radius:50%;display:block;" onerror="this.onerror=null;this.parentElement.style.background=\'' + bg + '\';this.parentElement.style.color=\'#ffffff\';this.parentElement.innerHTML=\'<span style=\\\'font-size:' + Math.round(size*0.38) + 'px;font-weight:700;\\\'>' + initials + '</span>\';">' +
+          '</div>';
+    }
+
     function renderMoverColumn(containerId, list, metric){
       var el = document.getElementById(containerId);
       if (!el) return;
@@ -507,7 +525,8 @@
         var sn = x.chg>=0 ? '+' : '';
         var right = metric === 'vol' ? (x.volume_display || fmtL(x.volume||0)) : (sn+x.chg.toFixed(2)+'%');
         var rightAttr = metric === 'vol' ? '' : ' class="'+cls+'"';
-        return '<div class="mover-row-d"><span style="font-weight:500;color:#fff;">'+x.ticker+'</span><span'+rightAttr+'>'+right+'</span></div>';
+        var logo = renderTickerLogo(x.ticker, 22);
+        return '<div class="mover-row-d" style="cursor:pointer;" onclick="window.location.href=\'overview.html?ticker='+x.ticker+'\'"><div style="display:flex;align-items:center;gap:8px;">'+logo+'<span style="font-weight:500;color:#fff;">'+x.ticker+'</span></div><span'+rightAttr+'>'+right+'</span></div>';
       }).join('');
     }
 

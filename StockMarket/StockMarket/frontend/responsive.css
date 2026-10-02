@@ -1,26 +1,65 @@
 /* Mobile Responsive Overrides — safe !important-free overrides */
 @media (max-width: 768px) {
   /* ── Header / Nav ── */
+  .header-container { padding: 0.65rem 1rem !important; }
   .header-top-row { flex-wrap: wrap; gap: 8px; }
+  .page-subnav-container { padding: 6px 1rem !important; }
+  .page-subnav-bar .back-btn { padding: 4px 10px !important; font-size: 12px !important; height: 30px !important; }
   .header-container .logo-container .brand-image-wrapper { display: none; }
+  .header-container .logo-container .brand-logo-full { display: none !important; }
+  .header-container .logo-container .brand-logo-icon-only { display: block !important; height: 36px; width: 36px; }
   .search-panel {
     order: 10; flex: 1 1 100% !important; max-width: 100% !important;
     margin: 4px 0 0 0 !important;
   }
   .search-results { max-height: 60vh; }
-  .header-bottom-row { flex-wrap: wrap; gap: 8px; }
-  .nav-links {
-    gap: 12px; margin-left: 0; flex-wrap: wrap;
-    overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap;
-    padding-bottom: 4px;
+  .header-bottom-row {
+    flex-wrap: nowrap !important;
+    gap: 10px !important;
+    align-items: center !important;
+    justify-content: space-between !important;
   }
-  .nav-link { font-size: 0.85rem; white-space: nowrap; }
+  .nav-links {
+    gap: 14px !important;
+    margin-left: 0 !important;
+    flex-wrap: nowrap !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    white-space: nowrap !important;
+    padding-bottom: 2px !important;
+    scrollbar-width: none !important;
+  }
+  .nav-links::-webkit-scrollbar {
+    display: none !important;
+  }
+  .nav-dropdown,
+  .nav-link {
+    flex-shrink: 0 !important;
+    font-size: 0.85rem !important;
+    white-space: nowrap !important;
+  }
   .nav-actions { gap: 8px; }
   .nav-icon-btn { font-size: 1rem; }
   .user-info { gap: 8px !important; }
   .user-balance { font-size: 0.8rem; padding: 2px 6px; }
-  .market-status-indicator { font-size: 0.75rem; padding: 2px 8px; }
-  .status-text { font-size: 0.7rem; }
+  .mobile-market-status-slot {
+    display: flex !important;
+    justify-content: flex-end !important;
+    padding: 0 2px !important;
+    margin: 0 !important;
+    width: 100% !important;
+    min-height: auto !important;
+  }
+  .market-status-indicator {
+    flex-shrink: 0 !important;
+    font-size: 0.72rem !important;
+    padding: 2px 8px !important;
+    margin: 0 !important;
+    white-space: nowrap !important;
+  }
+  .status-text { font-size: 0.7rem; white-space: nowrap !important; }
 
   /* ── Dashboard Layout ── */
   .dashboard-hero {
@@ -31,9 +70,47 @@
     flex-direction: column !important; gap: 16px !important;
   }
   .movers-column { width: 100% !important; flex: none !important; }
-  .mover-row { padding: 10px 12px; }
+  .mover-row {
+    padding: 10px 12px !important;
+    min-width: 160px !important;
+    max-width: 160px !important;
+  }
+  .mv-change {
+    white-space: nowrap !important;
+    font-size: 0.82rem !important;
+  }
+  .mv-abs-change {
+    white-space: nowrap !important;
+    font-size: 0.78rem !important;
+  }
   .watchlist-section { overflow: hidden; }
   .watchlist-cards-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .custom-dropdown {
+    order: 2 !important;
+    flex-shrink: 0 !important;
+  }
+  .custom-dropdown-btn {
+    padding: 2px 7px !important;
+    font-size: 0.74rem !important;
+    height: 24px !important;
+    border-radius: 5px !important;
+    gap: 4px !important;
+  }
+  .dropdown-chevron {
+    width: 8px !important;
+    height: 8px !important;
+  }
+  .custom-dropdown-menu {
+    min-width: 105px !important;
+    top: calc(100% + 3px) !important;
+    border-radius: 5px !important;
+    padding: 2px 0 !important;
+  }
+  .custom-dropdown-item {
+    padding: 4px 8px !important;
+    font-size: 0.72rem !important;
+    line-height: 1.35 !important;
+  }
 
   /* ── Index/Landing page ── */
   .dashboard-main.index-main .hero-chart-grid {
@@ -46,34 +123,171 @@
 
   /* ── Ticker Strip ── */
   .index-strip-container { overflow-x: auto; }
-  .ticker-card { min-width: 140px !important; padding: 10px 12px !important; }
-  .ticker-card .ticker-name { font-size: 0.8rem; }
-  .ticker-card .ticker-price { font-size: 1rem; }
+  .ticker-card { 
+    min-width: 155px !important; 
+    min-height: 105px !important;
+    padding: 10px 12px !important; 
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    box-sizing: border-box !important;
+  }
+  .ticker-card h4 { font-size: 0.8rem; white-space: nowrap !important; }
+  .ticker-card .price, .ticker-card .ticker-price { font-size: 1.05rem !important; white-space: nowrap !important; }
+  .ticker-card .change, .ticker-card .ticker-change { font-size: 0.78rem !important; white-space: nowrap !important; }
 
   /* ── Sentiment Gauge ── */
   .ai-insights-panel { width: 100% !important; }
   .gauge-svg { max-width: 180px; }
 
   /* ── Stock page ── */
-  .sticky-header-container .header-controls { flex-wrap: wrap; gap: 6px; }
+  /* ── Mobile OHLC Floating Legend ── */
+  #ohlc-floating-legend,
+  .ohlc-floating-legend {
+    top: 8px !important;
+    left: 10px !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 3px !important;
+    max-width: calc(100% - 65px) !important;
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+  }
+
+  .legend-header-line {
+    display: flex !important;
+    align-items: baseline !important;
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .legend-ticker-name {
+    font-size: 16px !important;
+  }
+
+  .legend-ticker-price {
+    font-size: 16px !important;
+  }
+
+  .legend-ticker-change {
+    font-size: 12px !important;
+  }
+
+  .legend-divider {
+    display: none !important;
+  }
+
+  .legend-divider-sub {
+    display: none !important;
+  }
+
+  .legend-ohlc-group {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+  }
+
+  .legend-ohlc-row1 {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .legend-ohlc-row2 {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+
+  .ohlc-label {
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+  }
+
+  .ohlc-val {
+    font-size: 10.5px !important;
+    font-weight: 700 !important;
+  }
+
+  #active-indicators-bar,
+  .active-indicators-bar {
+    top: auto !important;
+    bottom: 42px !important;
+    left: 10px !important;
+    max-width: calc(100% - 65px) !important;
+    gap: 4px !important;
+  }
+
+  .sticky-header-container {
+    height: 42px !important;
+    padding: 0 8px !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none !important;
+  }
+  .sticky-header-container::-webkit-scrollbar {
+    display: none !important;
+    height: 0 !important;
+  }
+  .sticky-header-container .header-controls {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none !important;
+    gap: 8px !important;
+    align-items: center !important;
+    width: max-content !important;
+    min-width: 100% !important;
+    padding: 0 4px !important;
+  }
+  .sticky-header-container .header-controls::-webkit-scrollbar {
+    display: none !important;
+    height: 0 !important;
+  }
+  .header-controls .back-btn,
+  .header-controls .range-dropdown,
+  .header-controls .indicator-dropdown,
+  .header-controls .header-icon-btn {
+    display: inline-flex !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    margin: 0 !important;
+    font-size: 12px !important;
+    padding: 4px 8px !important;
+    height: 30px !important;
+    align-items: center !important;
+  }
   .ticker-branding { flex-wrap: wrap; gap: 6px; }
   #ticker-name { font-size: 18px; }
   .header-ohlc-display { flex-wrap: wrap; gap: 6px; font-size: 12px; }
   #header-price { font-size: 22px; }
-  .range-selector { flex-wrap: wrap; gap: 3px; }
-  .range-selector button { font-size: 11px; padding: 3px 8px; }
+  .range-selector {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none !important;
+    gap: 4px !important;
+  }
+  .range-selector::-webkit-scrollbar { display: none !important; }
+  .range-selector button {
+    flex-shrink: 0 !important;
+    font-size: 11px !important;
+    padding: 3px 8px !important;
+  }
   .sector-tag { font-size: 10px; padding: 2px 8px; }
   .trade-buttons { flex-wrap: wrap; gap: 6px; }
-  /* Chart header: collapse Indicators/Trade/Positions/News into one "more" menu, so the
-     header only ever shows 2 controls here (range dropdown + this) on a narrow screen. */
-  .indicator-dropdown { display: none !important; }
-  .header-icon-btn { display: none !important; }
-  .mobile-more-dropdown { display: block !important; }
+  /* Chart header buttons are all directly visible and horizontally scrollable */
+  .mobile-more-dropdown { display: none !important; }
   /* Tables — horizontal scroll instead of break */
   table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
   /* Drawing toolbar narrower */
-  .drawing-toolbar { width: 40px !important; left: 8px !important; top: 78px !important; }
-  body.drawing-active { padding-left: 56px !important; }
+  .drawing-toolbar { width: 44px !important; min-width: 44px !important; max-width: 44px !important; left: 0 !important; top: 0 !important; margin: 0 !important; }
+  .toolbar-item { width: 32px !important; height: 32px !important; }
   .drawing-submenu { min-width: 180px; }
   /* Market detail grid */
   .market-detail-grid { grid-template-columns: 1fr !important; }
@@ -99,13 +313,27 @@
 }
 
 @media (max-width: 480px) {
-  .tracker-grid { grid-template-columns: repeat(2, 1fr) !important; }
-  .ticker-card { min-width: 110px !important; padding: 8px 10px !important; }
-  .ticker-card .ticker-price { font-size: 0.9rem; }
-  .ticker-card .ticker-change { font-size: 0.75rem; }
+  .ticker-card { 
+    min-width: 148px !important; 
+    min-height: 102px !important;
+    padding: 8px 10px !important; 
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    box-sizing: border-box !important;
+  }
+  .ticker-card h4 { font-size: 0.75rem !important; white-space: nowrap !important; }
+  .ticker-card .price, .ticker-card .ticker-price { font-size: 0.95rem !important; white-space: nowrap !important; }
+  .ticker-card .change, .ticker-card .ticker-change { font-size: 0.72rem !important; white-space: nowrap !important; }
+  .expiry-badge { font-size: 0.58rem !important; padding: 1.5px 6px !important; }
   #niftyPrice { font-size: 1.5rem; }
   .sentiment-score-text { font-size: 2rem; }
-  .nav-link { font-size: 0.78rem; }
+  .header-container { padding: 0.5rem 0.85rem !important; }
+  .page-subnav-container { padding: 5px 0.85rem !important; }
+  .page-subnav-bar .back-btn { padding: 3px 8px !important; font-size: 11px !important; height: 28px !important; gap: 4px !important; }
+  .page-subnav-bar .back-btn svg { width: 13px !important; height: 13px !important; }
+  .nav-links { gap: 12px !important; }
+  .nav-link, .nav-dropdown > a { font-size: 0.78rem !important; }
 
   #ticker-name { font-size: 15px; }
   #ticker-symbol-small { font-size: 11px; }
@@ -113,16 +341,23 @@
   .header-ohlc-display { font-size: 10px; gap: 4px; }
   #ticker-badge, .ticker-badge, .stock-badge { font-size: 10px; padding: 2px 6px; }
   .trade-btn, .news-btn { font-size: 12px; padding: 6px 14px; }
-  .drawing-toolbar { width: 32px !important; left: 6px !important; top: 76px !important; }
-  body.drawing-active { padding-left: 44px !important; }
+  .drawing-toolbar { width: 36px !important; min-width: 36px !important; max-width: 36px !important; left: 0 !important; top: 0 !important; margin: 0 !important; }
   .drawing-submenu { min-width: 150px; }
-  /* Keep toolbar icons inside the narrowed 32px toolbar (was fixed at 34px, overflowing it) */
-  .toolbar-item { width: 26px !important; height: 26px !important; }
-  .toolbar-item svg { width: 16px !important; height: 16px !important; }
+  /* Keep toolbar icons inside the narrowed 36px toolbar */
+  .toolbar-item { width: 26px !important; height: 26px !important; min-height: 26px !important; }
+  .toolbar-item svg { width: 15px !important; height: 15px !important; }
   /* Submenu rows were a fixed 32px tall at every breakpoint — bump toward a tappable size on mobile only */
   .submenu-item { padding: 10px 14px !important; }
   /* Trade panel covered ~85% of a narrow screen with no margin at all */
   #tradePanelOverlay { width: 92vw !important; }
+  #ohlc-floating-legend, .ohlc-floating-legend {
+    top: 6px !important;
+    left: 8px !important;
+    max-width: calc(100% - 58px) !important;
+  }
+  .legend-ticker-name, .legend-ticker-price { font-size: 14px !important; }
+  .legend-ticker-change { font-size: 11px !important; }
+  .ohlc-label, .ohlc-val { font-size: 9.5px !important; }
 }
 
 /* ── Small phones ── */
@@ -131,8 +366,19 @@
   .tracker-card { padding: 8px; }
   .tracker-card h4 { font-size: 0.7rem; }
   .header-container { padding: 8px; }
-  .nav-links { gap: 8px; }
-  .nav-link { font-size: 0.72rem; }
+  .nav-links { gap: 10px !important; flex-wrap: nowrap !important; }
+  .nav-link, .nav-dropdown > a { font-size: 0.72rem !important; flex-shrink: 0 !important; }
   .dashboard-main { padding: 8px; }
   .section-header-flex { flex-direction: column; align-items: flex-start; gap: 6px; }
+  .drawing-toolbar { width: 32px !important; min-width: 32px !important; max-width: 32px !important; }
+  .toolbar-item { width: 24px !important; height: 24px !important; min-height: 24px !important; }
+  .toolbar-item svg { width: 13px !important; height: 13px !important; }
+  #ohlc-floating-legend, .ohlc-floating-legend {
+    top: 4px !important;
+    left: 6px !important;
+    max-width: calc(100% - 54px) !important;
+  }
+  .legend-ticker-name, .legend-ticker-price { font-size: 13px !important; }
+  .legend-ticker-change { font-size: 10px !important; }
+  .ohlc-label, .ohlc-val { font-size: 9px !important; }
 }

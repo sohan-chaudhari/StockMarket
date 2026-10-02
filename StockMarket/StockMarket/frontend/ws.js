@@ -26,6 +26,8 @@
   }
 
   var reconnectAttempt = 0;
+  var reconnectTimer   = null;
+  var isPageLeaving    = false;
   var pingTimer        = null;
   var pongTimeout      = null;
   var ws               = null;
@@ -67,6 +69,11 @@
           // Subscribe with required tickers
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'subscribe', topics: DASHBOARD_TICKERS }));
+            var currentTkr = (window.currentTicker || window._chartTicker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+            if (currentTkr) {
+              ws.send(JSON.stringify({ type: 'subscribe', topics: [currentTkr] }));
+              ws.send(JSON.stringify({ type: 'view_ticker', ticker: currentTkr }));
+            }
           }
           break;
 
@@ -120,19 +127,22 @@
   }
 
   function connect() {
-    if (!wsActive) return;
+    if (!wsActive || isPageLeaving) return;
     var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url      = protocol + '//' + window.location.host + '/ws/dashboard';
 
     var newWs;
     try { newWs = new WebSocket(url); ws = newWs; } catch (e) {
-      console.error('[DashWS] WebSocket creation failed:', e);
-      scheduleReconnect();
+      if (!isPageLeaving) {
+        console.warn('[DashWS] WebSocket creation failed:', e);
+        scheduleReconnect();
+      }
       return;
     }
 
     newWs.onopen = function () {
       console.log('[DashWS] Connected');
+      reconnectAttempt = 0;
       startPing();
       if (DASHBOARD_TICKERS.length > 0 && newWs.readyState === WebSocket.OPEN) {
         newWs.send(JSON.stringify({ type: 'subscribe', topics: DASHBOARD_TICKERS }));
@@ -145,27 +155,73 @@
     };
 
     newWs.onclose = function () {
-      console.log('[DashWS] Disconnected');
       stopPing();
+      if (isPageLeaving) return;
+      console.log('[DashWS] Disconnected');
       scheduleReconnect();
     };
 
     newWs.onerror = function (e) {
-      console.error('[DashWS] Error:', e);
+      // Suppress noisy error logging when navigating or entering Back-Forward Cache
+      if (isPageLeaving || document.hidden || (ws && (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED))) {
+        return;
+      }
+      console.warn('[DashWS] Connection interrupted');
     };
   }
 
   function scheduleReconnect() {
-    if (!wsActive) return;
+    if (!wsActive || isPageLeaving) return;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     var delay = getReconnectDelay(reconnectAttempt);
     console.log('[DashWS] Reconnect in ' + (delay / 1000).toFixed(1) + 's (attempt ' + (reconnectAttempt + 1) + ')');
     reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
-    setTimeout(connect, delay);
+    reconnectTimer = setTimeout(function () {
+      reconnectTimer = null;
+      connect();
+    }, delay);
   }
+
+  /* Cleanly close WS on navigation / bfcache to prevent browser abort errors */
+  window.addEventListener('pagehide', function () {
+    isPageLeaving = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    stopPing();
+    if (ws) {
+      try { ws.close(1000, 'Page hidden'); } catch (e) {}
+    }
+  });
+
+  window.addEventListener('beforeunload', function () {
+    isPageLeaving = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    stopPing();
+    if (ws) {
+      try { ws.close(1000, 'Page unload'); } catch (e) {}
+    }
+  });
+
+  /* Restore connection when returning from Back-Forward Cache */
+  window.addEventListener('pageshow', function (evt) {
+    isPageLeaving = false;
+    if (evt.persisted || (wsActive && (!ws || ws.readyState !== WebSocket.OPEN))) {
+      reconnectAttempt = 0;
+      connect();
+    }
+  });
 
   /* Reconnect when tab becomes visible (page hidden can throttle WS) */
   document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && wsActive && (!ws || ws.readyState !== WebSocket.OPEN)) {
+    if (!document.hidden && !isPageLeaving && wsActive && (!ws || ws.readyState !== WebSocket.OPEN)) {
       connect();
     }
   });
@@ -175,7 +231,8 @@
     start: function (extraTickers) {
       if (extraTickers) {
         extraTickers.forEach(function (t) {
-          if (DASHBOARD_TICKERS.indexOf(t) === -1) DASHBOARD_TICKERS.push(t);
+          var clean = t.toUpperCase().replace(/\.(NS|BO)$/i, '');
+          if (DASHBOARD_TICKERS.indexOf(clean) === -1) DASHBOARD_TICKERS.push(clean);
         });
       }
       if (!wsActive) {
@@ -183,6 +240,12 @@
         connect();
       } else if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
         connect();
+      } else if (ws && ws.readyState === WebSocket.OPEN && extraTickers && extraTickers.length) {
+        var cleanList = extraTickers.map(function(t) { return t.toUpperCase().replace(/\.(NS|BO)$/i, ''); });
+        ws.send(JSON.stringify({ type: 'subscribe', topics: cleanList }));
+        cleanList.forEach(function (t) {
+          ws.send(JSON.stringify({ type: 'view_ticker', ticker: t }));
+        });
       }
     },
     stop: function () {
@@ -192,11 +255,18 @@
     },
     /** Subscribe additional tickers after initial connection */
     addTickers: function (tickers) {
+      if (!tickers || !tickers.length) return;
+      var cleanList = [];
       tickers.forEach(function (t) {
-        if (DASHBOARD_TICKERS.indexOf(t) === -1) DASHBOARD_TICKERS.push(t);
+        var clean = t.toUpperCase().replace(/\.(NS|BO)$/i, '');
+        if (DASHBOARD_TICKERS.indexOf(clean) === -1) DASHBOARD_TICKERS.push(clean);
+        cleanList.push(clean);
       });
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'subscribe', topics: DASHBOARD_TICKERS }));
+        ws.send(JSON.stringify({ type: 'subscribe', topics: cleanList }));
+        cleanList.forEach(function (t) {
+          ws.send(JSON.stringify({ type: 'view_ticker', ticker: t }));
+        });
       }
     },
     /** Check if WebSocket is currently connected */

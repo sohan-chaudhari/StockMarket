@@ -9,79 +9,87 @@
     <script src="ws.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Roboto+Mono:wght@400;500;600&family=Noto+Sans+Mono:wght@400&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="tokens.css?v=2">
-    <link rel="stylesheet" href="index.css?v=82">
-    <link rel="stylesheet" href="nav.css?v=12">
+    <link rel="stylesheet" href="index.css?v=84">
+    <link rel="stylesheet" href="nav.css?v=14">
     <style>
-        /* align-items:start &ndash; grid items stretch to the row's tallest card by default, which
-           left short cards (Sector Leaders) with a large block of empty space inside them. */
-        .markets-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 2rem; align-items: start; }
-        /* min-width:0 &ndash; grid items default to a min-width equal to their content's natural
-           size, so the 6-column Sector Leaders mini-heatmap inside this cell was forcing the
-           whole card (and the page) wider than its 1fr share at ~900-1100px viewports. */
-        .markets-card { background: #111; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1.5rem; min-width: 0; }
+        .markets-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.5rem; align-items: start; }
+        .markets-card { 
+          background: rgba(18, 18, 22, 0.75); 
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border: 1px solid rgba(255,255,255,0.07); 
+          border-radius: 14px; 
+          padding: 1.25rem; 
+          min-width: 0; 
+          box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
         .markets-card.full { grid-column: 1 / -1; }
-        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; }
-        .card-header h3 { font-size: 1.1rem; font-weight: 600; color: #fff; }
-        .badge { font-size: 0.7rem; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
-        .badge-blue { background: rgba(74,144,226,0.15); color: #4A90E2; }
-        .badge-green { background: rgba(8, 153, 129,0.15); color: #089981; }
-        .badge-red { background: rgba(242, 54, 69,0.15); color: #f23645; }
-        .index-row { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .card-header h3 { font-size: 1.05rem; font-weight: 700; color: #fff; letter-spacing: -0.01em; }
+        .badge { font-size: 0.68rem; padding: 2.5px 8px; border-radius: 4px; font-weight: 700; letter-spacing: 0.02em; }
+        .badge-blue { background: rgba(37, 99, 235, 0.15); color: #60a5fa; border: 1px solid rgba(37, 99, 235, 0.3); }
+        .badge-green { background: rgba(8, 153, 129, 0.15); color: #26a69a; border: 1px solid rgba(8, 153, 129, 0.3); }
+        .badge-red { background: rgba(242, 54, 69, 0.15); color: #ff6b7a; border: 1px solid rgba(242, 54, 69, 0.3); }
+        .index-row { display: flex; align-items: center; justify-content: space-between; padding: 0.7rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
         .index-row:last-child { border-bottom: none; }
-        .index-name { font-weight: 500; color: #fff; font-size: 0.9rem; }
-        .index-price { font-family: 'Roboto Mono', monospace; font-weight: 600; font-size: 0.9rem; }
-        .index-change { font-family: 'Roboto Mono', monospace; font-size: 0.85rem; font-weight: 500; min-width: 110px; text-align: right; }
-        .text-green { color: #089981; } .text-red { color: #f23645; } .text-muted { color: #52525b; }
-        .tabs { display: flex; gap: 4px; background: #1a1a1a; border-radius: 8px; padding: 3px; margin-bottom: 1.25rem; flex-wrap: wrap; }
-        .tab { padding: 6px 16px; border-radius: 6px; font-size: 0.8rem; font-weight: 500; color: var(--text-secondary); cursor: pointer; border: none; background: none; transition: all 0.2s; font-family: var(--font-ui); }
-        .tab.active { background: #333; color: #fff; }
-        .tab:hover:not(.active) { color: #fff; }
-        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; }
-        .stat-item { text-align: center; padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px; }
-        .stat-label { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }
-        .stat-value { font-size: 1.3rem; font-weight: 700; font-family: 'Roboto Mono', monospace; }
-        .stat-sub { font-size: 0.75rem; font-weight: 500; margin-top: 2px; }
-        .sector-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .index-name { font-weight: 600; color: #fff; font-size: 0.88rem; }
+        .index-price { font-family: 'Space Grotesk', monospace; font-weight: 700; font-size: 0.9rem; }
+        .index-change { font-family: 'Space Grotesk', monospace; font-size: 0.82rem; font-weight: 600; min-width: 110px; text-align: right; }
+        .text-green { color: #26a69a; } .text-red { color: #ff6b7a; } .text-muted { color: #83838d; }
+        .tabs { display: flex; gap: 4px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; padding: 3px; margin-bottom: 1.25rem; flex-wrap: wrap; }
+        .tab { padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; border: none; background: none; transition: all 0.2s; font-family: var(--font-ui); }
+        .tab.active { background: #2563EB; color: #fff; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35); }
+        .tab:hover:not(.active) { color: #fff; background: rgba(255,255,255,0.05); }
+        .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; }
+        .stat-item { text-align: center; padding: 0.85rem 0.6rem; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.04); border-radius: 8px; }
+        .stat-label { font-size: 0.7rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; margin-bottom: 3px; }
+        .stat-value { font-size: 1.35rem; font-weight: 700; font-family: 'Space Grotesk', monospace; }
+        .stat-sub { font-size: 0.72rem; font-weight: 600; margin-top: 2px; }
+        .sector-row { display: flex; align-items: center; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
         .sector-row:last-child { border-bottom: none; }
-        .sector-name { font-size: 0.85rem; font-weight: 500; color: #fff; }
-        .sector-bar { flex: 1; height: 6px; background: #1a1a1a; border-radius: 3px; margin: 0 1rem; overflow: hidden; }
+        .sector-name { font-size: 0.85rem; font-weight: 600; color: #fff; }
+        .sector-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; margin: 0 0.85rem; overflow: hidden; }
         .sector-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
-        .sector-pct { font-family: 'Roboto Mono', monospace; font-size: 0.85rem; font-weight: 600; min-width: 50px; text-align: right; }
-        .page-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
-        /* Title and the market-status pill share one row, pill pushed to the right edge. */
+        .sector-pct { font-family: 'Space Grotesk', monospace; font-size: 0.82rem; font-weight: 700; min-width: 55px; text-align: right; }
+        .page-title { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.25rem; }
         .page-title-row { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
         .page-title-row .page-title { margin-bottom: 0; }
-        /* nav.css gives the slot margin:-12px 0, tuned for sitting between the header and
-           home.html's ticker strip. Inline with a heading that vertical pull is wrong. */
         @media (max-width: 768px) { #marketStatusSlot { margin: 0; padding: 0; } }
-        .page-subtitle { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 2rem; }
+        .page-subtitle { color: var(--text-secondary); font-size: 0.85rem; margin-bottom: 1.5rem; }
         /* Chart + list widgets */
-        .chart-caption { font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 0.5rem; }
-        .chart-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.5rem; }
+        .chart-caption { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.6rem; line-height: 1.4; }
+        .chart-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.72rem; color: var(--text-secondary); margin-top: 0.5rem; }
         .chart-legend span.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-        .ext-row { display: flex; align-items: center; gap: 8px; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.85rem; cursor: pointer; }
+        .ext-row { display: flex; align-items: center; gap: 8px; padding: 0.55rem 0.4rem; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.85rem; cursor: pointer; border-radius: 6px; transition: background 0.15s ease; }
         .ext-row:last-child { border-bottom: none; }
-        .ext-row:hover { background: rgba(255,255,255,0.03); }
-        .ext-tkr { font-weight: 600; color: #fff; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .ext-px { font-family: 'Roboto Mono', 'Noto Sans Mono', monospace; font-size: 0.8rem; color: #d1d4dc; white-space: nowrap; }
-        .ext-lvl { font-family: 'Roboto Mono', 'Noto Sans Mono', monospace; font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; }
-        .ext-chg { font-family: 'Roboto Mono', 'Noto Sans Mono', monospace; font-size: 0.78rem; min-width: 58px; text-align: right; white-space: nowrap; }
+        .ext-row:hover { background: rgba(255,255,255,0.04); }
+        .ext-tkr { font-weight: 700; color: #fff; flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ext-px { font-family: 'Space Grotesk', monospace; font-size: 0.82rem; color: #e4e4e7; white-space: nowrap; }
+        .ext-lvl { font-family: 'Space Grotesk', monospace; font-size: 0.72rem; color: var(--text-secondary); white-space: nowrap; }
+        .ext-chg { font-family: 'Space Grotesk', monospace; font-size: 0.8rem; font-weight: 700; min-width: 58px; text-align: right; white-space: nowrap; }
         @media (max-width: 420px) { .ext-lvl { display: none; } }
-        .global-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+        .global-row { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.2rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
         .global-row:last-child { border-bottom: none; }
-        .global-name { font-weight: 500; color: #fff; font-size: 0.85rem; }
+        .global-name { font-weight: 600; color: #fff; font-size: 0.85rem; }
         .global-flag { margin-right: 8px; }
-        .fii-row { display: flex; align-items: center; justify-content: space-between; padding: 0.55rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.85rem; }
+        .fii-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.85rem; }
         .fii-row:last-child { border-bottom: none; }
-        .fii-label { color: var(--text-secondary); }
-        .fii-value { font-family: 'Roboto Mono', monospace; font-weight: 600; }
+        .fii-label { color: var(--text-secondary); font-weight: 500; }
+        .fii-value { font-family: 'Space Grotesk', monospace; font-weight: 700; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-        .status-dot.open { background: #089981; box-shadow: 0 0 6px rgba(8, 153, 129,0.5); }
+        .status-dot.open { background: #089981; box-shadow: 0 0 8px rgba(8, 153, 129,0.6); }
         .status-dot.closed { background: #52525b; }
+        @media (max-width: 768px) { 
+          .markets-grid { grid-template-columns: 1fr; gap: 1rem; } 
+          .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
+          .markets-card { padding: 12px 14px; border-radius: 12px; }
+          .page-title { font-size: 1.35rem; }
+          .page-subtitle { font-size: 0.8rem; margin-bottom: 1rem; }
+        }
         /* #sectorLeadersContainer needs no width-based override &ndash; its auto-fill track definition
            above already adapts the column count to whatever width the card actually has. */
         @media (max-width: 768px) { .markets-grid { grid-template-columns: 1fr; } .stat-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -95,19 +103,27 @@
         .market-heatmap-grid {
           display: grid;
           grid-template-columns: repeat(8, 1fr);
-          grid-auto-rows: 64px;
+          grid-auto-rows: 68px;
           grid-auto-flow: dense;
           gap: 0.5rem;
           margin-top: 1rem;
           width: 100%;
         }
+        
+        /* By-Sector container overrides grid completely to prevent overlapping */
+        .market-heatmap-grid.by-sector {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 14px !important;
+        }
+
         .heatmap-box {
-          padding: 10px 8px;
+          padding: 8px 6px;
           border-radius: 8px;
           text-align: center;
           cursor: pointer;
-          border: 1px solid rgba(255,255,255,0.06);
-          transition: background 0.3s ease, border-color 0.15s ease, transform 0.15s ease;
+          border: 1px solid rgba(255,255,255,0.08);
+          transition: background 0.25s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
           position: relative;
           display: flex;
           flex-direction: column;
@@ -115,90 +131,162 @@
           justify-content: center;
           overflow: hidden;
           min-width: 0;
+          box-sizing: border-box;
         }
         .heatmap-box:hover {
           transform: translateY(-2px);
-          border-color: rgba(255,255,255,0.25);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-          z-index: 1;
+          border-color: rgba(255,255,255,0.3) !important;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+          z-index: 2;
         }
-        /* Size tiers, keyed to |% change| of the move (see JS _sizeTierFor) --
-           biggest movers get the biggest tiles, matching a treemap's size+color
-           convention using data this app actually has, instead of a uniform grid. */
-        .heatmap-box.hm-size-xl { grid-column: span 3; grid-row: span 2; }
-        .heatmap-box.hm-size-lg { grid-column: span 2; grid-row: span 2; }
-        .heatmap-box.hm-size-md { grid-column: span 2; grid-row: span 1; }
-        .heatmap-box.hm-size-sm { grid-column: span 1; grid-row: span 1; }
-        .heatmap-box.hm-size-xl .hm-sym { font-size: 1.15rem; }
-        .heatmap-box.hm-size-xl .hm-pct { font-size: 1.1rem; }
-        .heatmap-box.hm-size-lg .hm-sym { font-size: 1rem; }
+        .heatmap-box:active {
+          transform: scale(0.98);
+        }
+
+        /* Size tiers for Top Movers mode */
+        .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-xl { grid-column: span 3; grid-row: span 2; }
+        .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-lg { grid-column: span 2; grid-row: span 2; }
+        .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-md { grid-column: span 2; grid-row: span 1; }
+        .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-sm { grid-column: span 1; grid-row: span 1; }
+        
+        .heatmap-box.hm-size-xl .hm-sym { font-size: 1.1rem; }
+        .heatmap-box.hm-size-xl .hm-pct { font-size: 1.05rem; }
+        .heatmap-box.hm-size-lg .hm-sym { font-size: 0.95rem; }
         .heatmap-box.hm-size-sm .hm-price { display: none; }
+        
         .heatmap-box .hm-sym {
           font-size: 0.85rem;
           font-weight: 700;
           color: #fff;
-          margin-bottom: 4px;
+          margin-bottom: 2px;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
           max-width: 100%;
-        }
-        .heatmap-box .hm-price {
-          font-family: 'Roboto Mono', monospace;
-          font-size: 0.78rem;
-          color: #b2b5be;
-          margin-bottom: 3px;
+          letter-spacing: 0.02em;
         }
         .heatmap-box .hm-pct {
-          font-family: 'Roboto Mono', monospace;
+          font-family: 'Space Grotesk', monospace;
           font-size: 0.82rem;
           font-weight: 700;
+          white-space: nowrap;
         }
-        .heatmap-box .hm-sector-tag {
-          font-size: 0.6rem;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-          color: rgba(255,255,255,0.45);
-          margin-top: 2px;
-        }
-        /* Sector-grouped mode: each sector gets a full-width label row above its
-           cluster of tiles, so the heatmap and "click a sector for its stocks"
-           interaction (Sector Performance) read as one coherent system instead
-           of two disconnected widgets. */
-        .hm-sector-heading {
-          grid-column: 1 / -1;
+
+        /* Sector-grouped mode: isolated card block per sector */
+        .hm-sector-block {
+          width: 100%;
           display: flex;
-          align-items: baseline;
+          flex-direction: column;
           gap: 8px;
-          padding: 4px 2px;
-          margin-top: 4px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+          border-radius: 10px;
+          padding: 10px 12px;
+          box-sizing: border-box;
         }
-        .hm-sector-heading:first-child { margin-top: 0; }
-        .hm-sector-heading .hm-sector-title {
-          font-size: 0.78rem;
-          font-weight: 600;
+        .hm-sector-heading {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 2px 0 6px 0;
+          cursor: pointer;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .hm-sector-heading:hover .hm-sector-title { color: var(--accent-blue-hover, #3b82f6); }
+        .hm-sector-title-wrap {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .hm-sector-title {
+          font-size: 0.82rem;
+          font-weight: 700;
           color: #fff;
           text-transform: uppercase;
           letter-spacing: 0.04em;
+          transition: color 0.15s ease;
         }
-        .hm-sector-heading .hm-sector-avg {
-          font-family: 'Roboto Mono', monospace;
-          font-size: 0.75rem;
-          font-weight: 600;
+        .hm-sector-pill {
+          font-family: 'Space Grotesk', monospace;
+          font-size: 0.72rem;
+          font-weight: 700;
+          padding: 1.5px 7px;
+          border-radius: 4px;
         }
-        .hm-sector-heading::after {
-          content: '';
-          flex: 1;
-          height: 1px;
-          background: rgba(255,255,255,0.08);
+        .hm-sector-pill.text-green {
+          background: rgba(8, 153, 129, 0.14);
+          color: #26a69a;
+          border: 1px solid rgba(8, 153, 129, 0.28);
         }
+        .hm-sector-pill.text-red {
+          background: rgba(242, 54, 69, 0.14);
+          color: #ff6b7a;
+          border: 1px solid rgba(242, 54, 69, 0.28);
+        }
+        .hm-sector-more {
+          font-size: 0.72rem;
+          color: var(--text-secondary, #a1a1aa);
+          font-weight: 500;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .hm-sector-heading:hover .hm-sector-more {
+          color: #fff;
+        }
+        .hm-sector-tiles {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+          gap: 8px;
+        }
+        .hm-sector-tiles .heatmap-box {
+          min-height: 64px;
+          grid-column: auto !important;
+          grid-row: auto !important;
+        }
+
         @media(max-width:768px){
-          .market-heatmap-grid { grid-template-columns: repeat(4, 1fr); }
-          .heatmap-box.hm-size-xl { grid-column: span 2; }
+          .market-heatmap-grid:not(.by-sector) { grid-template-columns: repeat(4, 1fr); }
+          .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-xl { grid-column: span 2; }
+          .hm-sector-tiles {
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 6px;
+          }
         }
         @media(max-width:480px){
-          .market-heatmap-grid { grid-template-columns: repeat(2, 1fr); }
-          .heatmap-box.hm-size-xl, .heatmap-box.hm-size-lg, .heatmap-box.hm-size-md { grid-column: span 2; grid-row: span 1; }
+          .market-heatmap-grid:not(.by-sector) { 
+            grid-template-columns: repeat(3, 1fr) !important;
+            grid-auto-rows: 62px !important;
+            gap: 6px !important;
+          }
+          .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-xl,
+          .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-lg,
+          .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-md,
+          .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-sm { 
+            grid-column: span 1 !important; 
+            grid-row: span 1 !important; 
+          }
+          .hm-sector-block {
+            padding: 8px 10px !important;
+            border-radius: 8px !important;
+            gap: 6px !important;
+          }
+          .hm-sector-tiles {
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 6px !important;
+          }
+          .hm-sector-tiles .heatmap-box {
+            min-height: 56px !important;
+            padding: 6px 4px !important;
+          }
+          .hm-sector-tiles .heatmap-box .hm-sym {
+            font-size: 0.76rem !important;
+            font-weight: 700 !important;
+          }
+          .hm-sector-tiles .heatmap-box .hm-pct {
+            font-size: 0.72rem !important;
+            font-weight: 600 !important;
+          }
         }
         /* Sector Performance rows are now clickable (open that sector's stock
            breakdown) -- was plain, non-interactive text before. */
@@ -559,6 +647,9 @@
                     sectorPcts[s.name] = prev > 0 ? (diff / prev) * 100 : 0;
                 });
                 renderSectors();
+                if (heatmapMode === 'sector') {
+                    renderHeatmap();
+                }
             }
 
             // ---- WebSocket for real-time sector index updates ----
@@ -680,13 +771,47 @@
             // have no per-stock breakdown available -- handled explicitly below
             // rather than silently showing an empty/broken modal for them.
             function _sectorLeaderEntryFor(sectorName) {
-                if (!sectorLeadersCache) return null;
-                var needle = sectorName.trim().toLowerCase();
-                return sectorLeadersCache.find(function(s){ return (s.sector || '').trim().toLowerCase() === needle; }) || null;
+                if (!sectorLeadersCache || !Array.isArray(sectorLeadersCache)) return null;
+                var needle = (sectorName || '').trim().toLowerCase();
+                if (!needle) return null;
+
+                // 1. Exact match
+                var exact = sectorLeadersCache.find(function(s){ 
+                    return (s.sector || '').trim().toLowerCase() === needle; 
+                });
+                if (exact) return exact;
+
+                // 2. Fuzzy alias mappings
+                var aliases = {
+                    'banking': ['financial services', 'finance', 'banks'],
+                    'psu banks': ['banking', 'financial services'],
+                    'private banks': ['banking', 'financial services'],
+                    'auto': ['automobile', 'automotive'],
+                    'pharma': ['healthcare', 'pharmaceuticals'],
+                    'healthcare': ['pharma', 'pharmaceuticals'],
+                    'realty': ['real estate'],
+                    'consumer durables': ['consumer', 'fmcg'],
+                    'oil & gas': ['energy', 'oil and gas']
+                };
+
+                var aliasList = aliases[needle] || [];
+                for (var i = 0; i < aliasList.length; i++) {
+                    var match = sectorLeadersCache.find(function(s){ 
+                        return (s.sector || '').trim().toLowerCase() === aliasList[i]; 
+                    });
+                    if (match) return match;
+                }
+
+                // 3. Substring / includes match
+                return sectorLeadersCache.find(function(s){ 
+                    var sec = (s.sector || '').trim().toLowerCase();
+                    return sec && (sec.includes(needle) || needle.includes(sec)); 
+                }) || null;
             }
 
             function renderSectors(){
                 var container = document.getElementById('sectorsContainer');
+                if (!container) return;
                 container.innerHTML = SECTOR_INDICES.map(function(s){
                     var p = sectorPcts[s.name] || 0; var cls = p >= 0 ? 'text-green' : 'text-red';
                     var fillCls = p >= 0 ? '#089981' : '#f23645';
@@ -717,34 +842,51 @@
                 var sector = _sectorLeaderEntryFor(sectorName);
                 if (!sector || !sector.top5 || !sector.top5.length) {
                     var overlay0 = document.createElement('div');
-                    overlay0.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
-                    overlay0.onclick = function(e){ if (e.target === overlay0) document.body.removeChild(overlay0); };
-                    overlay0.innerHTML = '<div style="background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:1.5rem;min-width:260px;max-width:340px;text-align:center;"><h3 style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.5rem;">'+sectorName+'</h3><div style="color:var(--text-secondary);font-size:0.85rem;">No per-stock breakdown available for this index yet.</div></div>';
+                    overlay0.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+                    overlay0.onclick = function(e){ if (e.target === overlay0) overlay0.remove(); };
+                    overlay0.innerHTML = '<div style="background:#141416;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:1.5rem;min-width:280px;max-width:340px;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,0.6);"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.8rem;"><h3 style="font-size:1.05rem;font-weight:600;color:#fff;margin:0;">'+sectorName+'</h3><button style=\"background:none;border:none;color:#83838d;font-size:1.3rem;cursor:pointer;line-height:1;padding:0 4px;\" onclick=\"this.closest(\'div[style*=fixed]\').remove()\">&times;</button></div><div style="color:var(--text-secondary);font-size:0.85rem;">No per-stock breakdown available for this index yet.</div></div>';
                     document.body.appendChild(overlay0);
                     return;
                 }
                 var overlay = document.createElement('div');
-                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
-                overlay.onclick = function(e){ if (e.target === overlay) document.body.removeChild(overlay); };
+                overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+                overlay.onclick = function(e){ if (e.target === overlay) overlay.remove(); };
                 var modal = document.createElement('div');
-                modal.style.cssText = 'background:#111;border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:1.5rem;min-width:280px;max-width:360px;';
+                modal.style.cssText = 'background:#141416;border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:1.5rem;min-width:300px;max-width:380px;width:90%;box-shadow:0 12px 32px rgba(0,0,0,0.6);';
+                
+                var headerRow = document.createElement('div');
+                headerRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;padding-bottom:0.5rem;border-bottom:1px solid rgba(255,255,255,0.08);';
+                
                 var title = document.createElement('h3');
-                title.style.cssText = 'font-size:1.1rem;font-weight:600;color:#fff;margin-bottom:1rem;';
-                title.textContent = sectorName;
-                modal.appendChild(title);
+                title.style.cssText = 'font-size:1.1rem;font-weight:600;color:#fff;margin:0;';
+                title.textContent = sectorName + ' Top Stocks';
+                headerRow.appendChild(title);
+                
+                var closeBtn = document.createElement('button');
+                closeBtn.style.cssText = 'background:none;border:none;color:#83838d;font-size:1.4rem;cursor:pointer;line-height:1;padding:0 4px;';
+                closeBtn.innerHTML = '&times;';
+                closeBtn.onclick = function() { overlay.remove(); };
+                headerRow.appendChild(closeBtn);
+                modal.appendChild(headerRow);
+                
                 sector.top5.forEach(function(stock){
                     var cls = stock.change >= 0 ? '#089981' : '#f23645';
                     var sign = stock.change >= 0 ? '+' : '';
                     var row = document.createElement('div');
-                    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.85rem;';
-                    row.innerHTML = '<span style="color:#fff;font-weight:500;">'+stock.symbol+'</span><span style="color:'+cls+';font-family:\'Roboto Mono\',monospace;font-weight:600;">'+sign+stock.change.toFixed(2)+'%</span>';
+                    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:0.65rem 0.6rem;border-bottom:1px solid rgba(255,255,255,0.04);font-size:0.88rem;cursor:pointer;border-radius:6px;transition:background 0.15s ease;';
+                    row.onmouseenter = function() { row.style.background = 'rgba(255,255,255,0.06)'; };
+                    row.onmouseleave = function() { row.style.background = 'transparent'; };
+                    row.onclick = function() { window.location.href = 'overview.html?ticker=' + encodeURIComponent(stock.symbol); };
+                    row.innerHTML = '<span style="color:#fff;font-weight:500;">'+stock.symbol+'</span><span style="color:'+cls+';font-family:\'Space Grotesk\',monospace;font-weight:600;">'+sign+stock.change.toFixed(2)+'%</span>';
                     modal.appendChild(row);
                 });
                 overlay.appendChild(modal);
                 document.body.appendChild(overlay);
-                overlay.addEventListener('keydown', function(e){ if (e.key === 'Escape') document.body.removeChild(overlay); });
+                overlay.tabIndex = -1;
+                overlay.addEventListener('keydown', function(e){ if (e.key === 'Escape') overlay.remove(); });
                 overlay.focus();
             }
+            window.showSectorTop5 = showSectorTop5;
 
             // ---- Live Market Heatmap ----
             // Wider than the old /3 (which pinned to full color at just +-3%,
@@ -784,10 +926,11 @@
             function _heatmapBoxHtml(stock) {
                 var pct = stock.pct;
                 var bg = getHeatmapBgColor(pct);
+                var borderColor = pct >= 0 ? 'rgba(8, 153, 129, 0.22)' : 'rgba(242, 54, 69, 0.22)';
                 var cls = pct >= 0 ? 'text-green' : 'text-red';
                 var sign = pct >= 0 ? '+' : '';
                 var tier = _sizeTierFor(Math.abs(pct));
-                return '<div class="heatmap-box hm-size-' + tier + '" style="background:' + bg + ';" onclick="window.location.href=\'overview.html?ticker=' + stock.ticker + '\'">' +
+                return '<div class="heatmap-box hm-size-' + tier + '" style="background:' + bg + ';border-color:' + borderColor + ';" onclick="window.location.href=\'overview.html?ticker=' + encodeURIComponent(stock.ticker) + '\'">' +
                     '<div class="hm-sym">' + stock.ticker + '</div>' +
                     '<div class="hm-pct ' + cls + '">' + sign + pct.toFixed(2) + '%</div>' +
                     '</div>';
@@ -805,11 +948,50 @@
                 renderHeatmap();
             };
 
+            function _getSectorPct(sectorName, fallbackStocks) {
+                if (!sectorName) return 0;
+                var needle = sectorName.trim().toLowerCase();
+                for (var k in sectorPcts) {
+                    if (k.toLowerCase() === needle) return sectorPcts[k];
+                }
+                var aliases = {
+                    'banking': 'Banking',
+                    'auto': 'Auto',
+                    'automobile': 'Auto',
+                    'it': 'IT',
+                    'information technology': 'IT',
+                    'pharma': 'Pharma',
+                    'pharmaceuticals': 'Pharma',
+                    'healthcare': 'Pharma',
+                    'fmcg': 'FMCG',
+                    'metal': 'Metal',
+                    'metals': 'Metal',
+                    'energy': 'Energy',
+                    'power': 'Energy',
+                    'oil & gas': 'Energy',
+                    'media': 'Media',
+                    'realty': 'Realty',
+                    'real estate': 'Realty',
+                    'psu banks': 'PSU Banks',
+                    'financial services': 'Fin. Services',
+                    'technology': 'IT'
+                };
+                var matched = aliases[needle];
+                if (matched && sectorPcts[matched] !== undefined) {
+                    return sectorPcts[matched];
+                }
+                if (fallbackStocks && fallbackStocks.length) {
+                    return fallbackStocks.reduce(function(sum, s){ return sum + (s.pct || 0); }, 0) / fallbackStocks.length;
+                }
+                return 0;
+            }
+
             function renderHeatmap() {
                 var container = document.getElementById('heatmapGrid');
                 if (!container) return;
 
                 if (!sectorLeadersCache || sectorLeadersCache.length === 0) {
+                    container.className = 'market-heatmap-grid';
                     container.innerHTML = '<div style="color:var(--text-secondary);padding:1.5rem 0;text-align:center;grid-column:1/-1;">Loading heatmap data...</div>';
                     return;
                 }
@@ -818,31 +1000,36 @@
                 var isMobile = window.innerWidth <= 768;
 
                 if (heatmapMode === 'sector') {
-                    // Grouped: each sector's real leaders clustered under its own
-                    // heading -- the same interaction Sector Performance's rows
-                    // link into, so the heatmap and sector click-through read as
-                    // one system instead of two disconnected widgets.
+                    container.className = 'market-heatmap-grid by-sector';
                     if (toggleContainer) toggleContainer.style.display = 'none';
                     var sectors = sectorLeadersCache.slice().sort(function(a, b){ return a.sector.localeCompare(b.sector); });
                     var html = '';
                     sectors.forEach(function(entry) {
                         var stocks = (entry.top5 || []).map(function(s){ return { ticker: s.symbol, pct: s.change || 0, sector: entry.sector }; });
                         if (!stocks.length) return;
-                        var avg = stocks.reduce(function(sum, s){ return sum + s.pct; }, 0) / stocks.length;
-                        var avgCls = avg >= 0 ? 'text-green' : 'text-red';
-                        html += '<div class="hm-sector-heading"><span class="hm-sector-title">' + entry.sector + '</span><span class="hm-sector-avg ' + avgCls + '">' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + '% avg</span></div>';
-                        html += stocks.map(_heatmapBoxHtml).join('');
+                        var secPct = _getSectorPct(entry.sector, stocks);
+                        var avgCls = secPct >= 0 ? 'text-green' : 'text-red';
+                        html += '<div class="hm-sector-block">';
+                        html += '<div class="hm-sector-heading" onclick="showSectorTop5(\'' + entry.sector.replace(/'/g, "\\'") + '\')" title="Click for ' + entry.sector + ' top stocks">' +
+                                '<div class="hm-sector-title-wrap">' +
+                                  '<span class="hm-sector-title">' + entry.sector + '</span>' +
+                                  '<span class="hm-sector-pill ' + avgCls + '">' + (secPct >= 0 ? '+' : '') + secPct.toFixed(2) + '%</span>' +
+                                '</div>' +
+                                '<span class="hm-sector-more">Top Stocks ›</span>' +
+                                '</div>';
+                        html += '<div class="hm-sector-tiles">' + stocks.map(_heatmapBoxHtml).join('') + '</div>';
+                        html += '</div>';
                     });
-                    container.innerHTML = html || '<div style="color:var(--text-secondary);padding:1.5rem 0;text-align:center;grid-column:1/-1;">No sector data available</div>';
+                    container.innerHTML = html || '<div style="color:var(--text-secondary);padding:1.5rem 0;text-align:center;">No sector data available</div>';
                 } else {
-                    // Top Movers: every sector-leader stock, flattened, biggest
-                    // move first -- real backend data, not a hardcoded list.
-                    var flat = _flattenLeaderStocks().sort(function(a, b){ return Math.abs(b.pct) - Math.abs(a.pct); });
+                    container.className = 'market-heatmap-grid';
                     if (toggleContainer) {
-                        toggleContainer.style.display = (isMobile && flat.length > 8) ? 'block' : 'none';
+                        var flatCount = _flattenLeaderStocks().length;
+                        toggleContainer.style.display = (isMobile && flatCount > 8) ? 'block' : 'none';
                         var btn = document.getElementById('btnHeatmapToggle');
-                        if (btn) btn.textContent = heatmapExpanded ? 'Show Less' : 'Show All ' + flat.length + ' Stocks';
+                        if (btn) btn.textContent = heatmapExpanded ? 'Show Less' : 'Show All ' + flatCount + ' Stocks';
                     }
+                    var flat = _flattenLeaderStocks().sort(function(a, b){ return Math.abs(b.pct) - Math.abs(a.pct); });
                     if (isMobile && !heatmapExpanded) flat = flat.slice(0, 8);
                     container.innerHTML = flat.map(_heatmapBoxHtml).join('');
                 }
@@ -1204,7 +1391,7 @@
         })();
     </script>
     <script src="stocks.js"></script>
-    <script src="nav.js?v=8"></script>
+    <script src="nav.js?v=9"></script>
 </body>
 </html>
 

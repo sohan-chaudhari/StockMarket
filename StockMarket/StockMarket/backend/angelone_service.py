@@ -87,7 +87,7 @@ class AngelOneService:
         self.sws = None
         self.feed_token = None
         self.latest_ticks = {} # Format: { "TOKEN_ID": {"ltp": 1500.25, "time": timestamp, "ticker": "RELIANCE.NS"} }
-        self.latest_ticks_lock = threading.Lock()
+        self.latest_ticks_lock = threading.RLock()
         # Decision 3 (duplicate-tick volume dedup): Angel One's Mode-2/Quote WS
         # payload carries no unique per-trade ID (only token, ltp, exchange
         # timestamp, day OHLC, day volume, last-traded quantity) — confirmed by
@@ -496,20 +496,30 @@ class AngelOneService:
         new_tokens = []
         with self.token_lock:
             for t in tickers:
-                token_info = self.get_token(t)
+                clean_t = t.strip().upper().replace('.NS', '').replace('.BO', '')
+                token_info = self.get_token(clean_t) or self.get_token(t)
                 if token_info:
+                    tk = str(token_info['token'])  # FIX: was never assigned — caused NameError / stale value
                     exch = token_info.get('exchange', 'NSE')
                     exch_type = 1 if exch == 'NSE' else (3 if exch == 'BSE' else 1)
-                    tk = str(token_info['token'])
+                    CANONICAL_INDEX_TOKENS = {
+                        "99926000": "NIFTY",
+                        "99926009": "BANKNIFTY",
+                        "99926037": "FINNIFTY",
+                        "99926074": "MIDCAP",
+                        "99926032": "SMALLCAP",
+                        "99919000": "SENSEX",
+                    }
+                    if tk in CANONICAL_INDEX_TOKENS:
+                        clean_t = CANONICAL_INDEX_TOKENS[tk]
                     
-                    self.token_to_ticker_map[tk] = t
+                    self.token_to_ticker_map[tk] = clean_t
                     self.token_to_exch_type_map[tk] = exch_type
                     
                     if tk not in self.subscribed_tokens:
                         new_tokens.append(tk)
                         self.subscribed_tokens.add(tk)
-                        self.subscription_times[t] = time.time()
-            all_subscribed = list(self.subscribed_tokens)
+                        self.subscription_times[clean_t] = time.time()
                     
         if new_tokens and self.sws:
             # Wait for Handshake Pattern — allow up to 15s for WS to connect
@@ -521,7 +531,7 @@ class AngelOneService:
                 retry_count += 1
             
             if getattr(self, 'ws_connected', False):
-                self._send_subscription(all_subscribed)
+                self._send_subscription(new_tokens)
             else:
                 print("[!] [AngelOne WS] Handshake timeout. Subscription will occur on_open.")
     
@@ -675,13 +685,17 @@ class AngelOneService:
         
         # 1. Known index tokens (always available regardless of download)
         INDEX_TOKENS = {
-            "NIFTY":      {"token": "26000", "symbol": "NIFTY 50", "name": "NIFTY 50", "exchange": "NSE"},
-            "NIFTY50":    {"token": "26000", "symbol": "NIFTY 50", "name": "NIFTY 50", "exchange": "NSE"},
-            "BANKNIFTY":  {"token": "26009", "symbol": "NIFTY BANK", "name": "NIFTY BANK", "exchange": "NSE"},
-            "NIFTYBANK":  {"token": "26009", "symbol": "NIFTY BANK", "name": "NIFTY BANK", "exchange": "NSE"},
-            "FINNIFTY":   {"token": "26037", "symbol": "NIFTY FIN SERVICE", "name": "NIFTY FIN SERVICE", "exchange": "NSE"},
-            "MIDCAP":     {"token": "26074", "symbol": "NIFTY MIDCAP 50", "name": "NIFTY MIDCAP 50", "exchange": "NSE"},
-            "SENSEX":     {"token": "99919000", "symbol": "SENSEX", "name": "BSE SENSEX", "exchange": "BSE"},
+            "NIFTY":          {"token": "99926000", "symbol": "Nifty 50", "name": "NIFTY 50", "exchange": "NSE"},
+            "NIFTY50":        {"token": "99926000", "symbol": "Nifty 50", "name": "NIFTY 50", "exchange": "NSE"},
+            "BANKNIFTY":      {"token": "99926009", "symbol": "Nifty Bank", "name": "BANK NIFTY", "exchange": "NSE"},
+            "NIFTYBANK":      {"token": "99926009", "symbol": "Nifty Bank", "name": "BANK NIFTY", "exchange": "NSE"},
+            "FINNIFTY":       {"token": "99926037", "symbol": "Nifty Fin Service", "name": "NIFTY FIN", "exchange": "NSE"},
+            "MIDCAP":         {"token": "99926074", "symbol": "NIFTY MID SELECT", "name": "MIDCAP", "exchange": "NSE"},
+            "MIDCPNIFTY":     {"token": "99926074", "symbol": "NIFTY MID SELECT", "name": "MIDCAP", "exchange": "NSE"},
+            "SMALLCAP":       {"token": "99926032", "symbol": "NIFTY SMLCAP 100", "name": "SMALLCAP", "exchange": "NSE"},
+            "NIFTYSMLCAP100": {"token": "99926032", "symbol": "NIFTY SMLCAP 100", "name": "SMALLCAP", "exchange": "NSE"},
+            "NIFTYMIDCAP100": {"token": "99926011", "symbol": "NIFTY MIDCAP 100", "name": "NIFTY MIDCAP 100", "exchange": "NSE"},
+            "SENSEX":         {"token": "99919000", "symbol": "SENSEX", "name": "SENSEX", "exchange": "BSE"},
         }
         if ticker in INDEX_TOKENS:
             return dict(INDEX_TOKENS[ticker])

@@ -13,6 +13,8 @@ On first view after a crash:
 Never recovers all 5,243 tickers at startup. Only recovers what users view.
 """
 
+import queue
+import time
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
@@ -28,19 +30,44 @@ class RecoveryService:
         self._yf_downloader = yf_downloader
         self._lock = threading.Lock()
         self._recovered: Set[str] = set()
+        self._in_progress: Set[str] = set()
         self._recovery_errors: Dict[str, str] = {}
         self._total_recoveries = 0
         self._total_duration_ms = 0
+        self._queue = queue.Queue()
+        self._worker_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self._worker_thread.start()
+
+    def _process_queue(self):
+        while True:
+            try:
+                item = self._queue.get()
+                if item is None:
+                    break
+                ticker, live_5m_builder = item
+                self.recover_ticker(ticker, live_5m_builder)
+                time.sleep(0.35)  # Max ~2.8 req/sec to safely stay within AngelOne rate limits
+                self._queue.task_done()
+            except Exception as e:
+                print(f"[RecoveryQueue] Error: {e}")
+
+    def enqueue_recovery(self, ticker: str, live_5m_builder=None):
+        with self._lock:
+            if ticker in self._recovered or ticker in self._in_progress:
+                return
+            self._in_progress.add(ticker)
+        self._queue.put((ticker, live_5m_builder))
 
     def needs_recovery(self, ticker: str) -> bool:
         with self._lock:
-            if ticker in self._recovered:
+            if ticker in self._recovered or ticker in self._in_progress:
                 return False
         return True
 
     def mark_recovered(self, ticker: str):
         with self._lock:
             self._recovered.add(ticker)
+            self._in_progress.discard(ticker)
 
     def mark_needs_recovery(self, ticker: str):
         """Re-arms a ticker for recovery.
@@ -55,17 +82,21 @@ class RecoveryService:
         """
         with self._lock:
             self._recovered.discard(ticker)
+            self._in_progress.discard(ticker)
 
     def reset(self):
         with self._lock:
             self._recovered.clear()
+            self._in_progress.clear()
             self._recovery_errors.clear()
             self._total_recoveries = 0
             self._total_duration_ms = 0
 
     def recover_ticker(self, ticker: str, live_5m_builder) -> bool:
-        if not self.needs_recovery(ticker):
-            return True
+        with self._lock:
+            if ticker in self._recovered:
+                return True
+            self._in_progress.add(ticker)
 
         start = datetime.now()
         print(f"[Recovery] Starting recovery for {ticker}")
@@ -163,7 +194,7 @@ class RecoveryService:
                     'SENSEX': '^BSESN',
                     'FINNIFTY': 'NIFTY_FIN_SERVICE.NS',
                     'MIDCAP': '^NSEMDCP50',
-                    'SMALLCAP': '^NSESCP250',
+                    'SMALLCAP': '^CNXSC',
                 }
                 yf_ticker = YFINANCE_INDEX_MAP.get(ticker, f"{ticker}.NS")
                 df = self._yf_downloader.download_single(yf_ticker, period="5d", interval="5m")

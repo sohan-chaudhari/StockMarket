@@ -14,17 +14,46 @@
       flex-direction: column;
     }
     .main-terminal-area {
-      display: flex;
-      flex: 1;
+      display: flex !important;
+      flex-direction: row !important;
+      flex: 1 !important;
+      height: calc(100vh - 40px) !important;
+      height: calc(100dvh - 40px) !important;
+      min-height: 0 !important;
+      position: relative !important;
+      overflow: hidden !important;
+      background: #0A0A0B !important;
     }
     .main-terminal-area .container {
       overflow: hidden;
     }
     .drawing-toolbar {
       position: relative !important;
-      align-self: flex-start;
-      margin: 12px 0 12px 12px;
-      flex-shrink: 0;
+      top: 0 !important;
+      left: 0 !important;
+      bottom: 0 !important;
+      width: 52px !important;
+      min-width: 52px !important;
+      max-width: 52px !important;
+      height: 100% !important;
+      min-height: 100% !important;
+      align-self: stretch !important;
+      margin: 0 !important;
+      padding: 6px 0 10px !important;
+      background: #131722 !important;
+      border: none !important;
+      border-right: 1px solid #2a2e39 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      flex-shrink: 0 !important;
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      scrollbar-width: none !important;
+      box-sizing: border-box !important;
+      z-index: 100 !important;
+    }
+    .drawing-toolbar::-webkit-scrollbar {
+      display: none !important;
     }
     .container {
       max-width: none !important;
@@ -96,14 +125,7 @@
     .header-identity {
         display: none !important; /* Hide the bulky old header entirely! */
     }
-    .main-terminal-area {
-        background: #0A0A0B !important;
-    }
-    .drawing-toolbar {
-        background: #0A0A0B !important;
-        border-right: 1px solid #2a2e39 !important;
-        padding-top: 10px !important;
-    }
+
     #chart-container {
         border-radius: 0 !important;
         margin: 0 !important;
@@ -226,8 +248,197 @@
     }
     #openPositionsPanel {
         flex-shrink: 0 !important;
-        max-height: 35vh !important;
-        min-height: 160px !important;
+        max-height: 28vh !important;
+        min-height: 120px !important;
+        background: #0d111a;
+        border-top: 1px solid #2a2e39;
+    }
+    .panel-top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        gap: 6px;
+    }
+    .panel-tabs-group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .desktop-only-table {
+        display: table;
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+    .positions-mobile-list {
+        display: none;
+    }
+
+    @media (max-width: 768px) {
+        #openPositionsPanel {
+            max-height: 24vh !important;
+            min-height: 100px !important;
+        }
+        .desktop-only-table {
+            display: none !important;
+        }
+        .positions-mobile-list {
+            display: flex !important;
+            flex-direction: column;
+            gap: 5px;
+            padding-bottom: 4px;
+        }
+        .panel-top-bar {
+            flex-wrap: nowrap !important;
+            margin-bottom: 4px !important;
+            gap: 4px !important;
+        }
+        .pos-mobile-card {
+            background: #141824;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 5px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+        }
+        .pos-m-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .pos-m-stock {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            min-width: 0;
+        }
+        .pos-m-logo {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #1e1e1e;
+            object-fit: contain;
+            padding: 1px;
+            flex-shrink: 0;
+        }
+        .pos-m-ticker-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: nowrap;
+        }
+        .pos-m-ticker {
+            font-weight: 700;
+            color: #fff;
+            font-size: 0.82rem;
+            letter-spacing: 0.2px;
+        }
+        .pos-m-type {
+            font-size: 0.62rem;
+            font-weight: 700;
+            padding: 1px 5px;
+            border-radius: 3px;
+            letter-spacing: 0.3px;
+            white-space: nowrap;
+        }
+        .pos-m-name {
+            display: none;
+        }
+        .pos-m-pnl {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Roboto Mono', monospace;
+            font-weight: 700;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .pos-m-pnl-label {
+            display: none;
+        }
+        .pos-m-pnl-val {
+            font-family: 'Roboto Mono', monospace;
+            font-weight: 700;
+            font-size: 0.8rem;
+            white-space: nowrap;
+        }
+        .pos-m-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 4px;
+            background: rgba(255, 255, 255, 0.02);
+            padding: 3px 6px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            align-items: center;
+        }
+        .pos-m-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 1px;
+        }
+        .pos-m-stat-lbl {
+            font-size: 0.58rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.2px;
+            line-height: 1;
+        }
+        .pos-m-stat-val {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.72rem;
+            color: #e2e8f0;
+            font-weight: 600;
+            white-space: nowrap;
+            line-height: 1.1;
+        }
+        .pos-m-actions {
+            display: flex;
+            gap: 6px;
+            width: 100%;
+        }
+        .pos-m-btn-edit {
+            flex: 1;
+            background: rgba(74, 144, 226, 0.12);
+            border: 1px solid rgba(74, 144, 226, 0.3);
+            color: #4A90E2;
+            padding: 2px 6px;
+            height: 22px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            transition: all 0.2s;
+        }
+        .pos-m-btn-close {
+            flex: 1;
+            background: rgba(255, 82, 82, 0.12);
+            border: 1px solid rgba(255, 82, 82, 0.3);
+            color: #FF5252;
+            padding: 2px 6px;
+            height: 22px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            transition: all 0.2s;
+        }
     }
 
 @keyframes spin {
@@ -242,11 +453,11 @@
   <script>!function(){var t=(new URLSearchParams(location.search)).get('ticker')||'';document.title=t?t.replace('.NS','')+' - Live Price':'Stock Analysis - LEVERAGE'}();</script>
   <script src="lightweight-charts.js?v=2"></script>
   <link rel="stylesheet" href="tokens.css?v=2">
-  <link rel="stylesheet" href="index.css?v=82">
-  <link rel="stylesheet" href="nav.css?v=12">
+  <link rel="stylesheet" href="index.css?v=84">
+  <link rel="stylesheet" href="nav.css?v=14">
   <link rel="stylesheet" href="loader.css?v=4">
-  <link rel="stylesheet" href="drawings.css?v=22">
-  <link rel="stylesheet" href="responsive.css?v=4">
+  <link rel="stylesheet" href="drawings.css?v=24">
+  <link rel="stylesheet" href="responsive.css?v=6">
 
     <script src="page-cache.js"></script>
 </head>
@@ -335,19 +546,11 @@
           &#128202; Positions <span id="headerPositionsCount" style="background:#2962FF; color:#fff; font-size:0.7rem; padding:1px 6px; border-radius:10px; display:none;">0</span>
         </button>
 
-
-        <!-- Mobile-only: consolidates Indicators/Trade/Positions/News into one menu so the
-             header only ever shows 2 buttons (range + this) on a narrow screen. -->
-        <div class="mobile-more-dropdown" id="mobileMoreDropdown">
-          <button class="mobile-more-btn" onclick="toggleMobileMoreMenu(event)" aria-label="More actions" id="mobileMoreBtn">Ã¢â€¹Â¯</button>
-          <div class="mobile-more-menu" id="mobileMoreMenu">
-            <div class="mobile-more-item" onclick="toggleTradeModal(); closeMobileMoreMenu();">&#128177; Trade</div>
-            <div class="mobile-more-item" onclick="togglePositionsPanel(); closeMobileMoreMenu();">&#128202; Positions</div>
-            <div class="mobile-more-item" onclick="toggleIndicator('SMA_20', event); closeMobileMoreMenu();">SMA 20</div>
-            <div class="mobile-more-item" onclick="toggleIndicator('EMA_20', event); closeMobileMoreMenu();">EMA 20</div>
-            <div class="mobile-more-item" onclick="toggleIndicator('BB', event); closeMobileMoreMenu();">Bollinger Bands</div>
-          </div>
-        </div>
+        <!-- News Toggle Button -->
+        <button id="headerNewsBtn" class="header-icon-btn" onclick="toggleNewsModal()" style="background: transparent; border: 1px solid #333; color: #d1d4dc; padding: 4px 10px; border-radius: 4px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; margin-right: 8px; transition: all 0.2s;" onmouseover="this.style.borderColor='#4A90E2'; this.style.background='rgba(255,255,255,0.05)';" onmouseout="this.style.borderColor='#333'; this.style.background='transparent';">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>
+          News
+        </button>
 
       </div>
 
@@ -390,60 +593,62 @@
 
     </div> <!-- End Sticky Header -->
   <div class="main-terminal-area">
-  <!-- Drawing Toolbar -->
-  <!-- Drawing Toolbar -->
-  <!-- Drawing Toolbar -->
-  <!-- Drawing Toolbar -->
-  
-        <div class="drawing-toolbar" id="drawing-toolbar" style="position: relative !important;"></div>
-        <!-- CENTER AREA -->
+    <!-- Docked Left Drawing Toolbar -->
+    <div class="drawing-toolbar" id="drawing-toolbar"></div>
+    <!-- CENTER AREA -->
     <div class="center-area" style="flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative;">
       <!-- Chart -->
     <div id="chart-container" style="flex: 1; position: relative; min-height: 0;">
       <!-- Floating Legend -->
-      <div id="ohlc-floating-legend" style="position: absolute; top: 12px; left: 16px; z-index: 10; pointer-events: none; display: flex; align-items: center; gap: 15px; font-family: 'Roboto Mono', monospace; font-size: 13px; color: #b2b5be;">
-
-        <span id="chart-ticker-name" style="font-weight: 700; color: #fff; font-size: 24px;">--</span>
-        <span id="chart-ticker-price" style="font-weight: 700; font-size: 24px; margin-left: 8px;">--</span>
-        <span id="chart-change" style="font-size: 16px; font-weight: 600; margin-left: 6px;">--</span>
-        <span style="color: #555; margin: 0 8px; font-size: 24px;">|</span>
-    
-        <span><span style="font-weight: 700;">O:</span> <span id="ohlc-open" style="color: #d1d4dc; font-weight: 700;">--</span></span>
-        <span><span style="font-weight: 700;">H:</span> <span id="ohlc-high" style="color: #d1d4dc; font-weight: 700;">--</span></span>
-        <span><span style="font-weight: 700;">L:</span> <span id="ohlc-low" style="color: #d1d4dc; font-weight: 700;">--</span></span>
-        <span><span style="font-weight: 700;">C:</span> <span id="ohlc-close" style="color: #d1d4dc; font-weight: 700;">--</span></span>
-        <span style="color:#555;margin:0 8px;">|</span>
-        <span><span style="font-weight: 700;">Vol:</span> <span id="ohlc-volume" style="font-weight: 700;">--</span></span>
+      <div id="ohlc-floating-legend" class="ohlc-floating-legend" style="position: absolute; top: 12px; left: 16px; z-index: 10; pointer-events: none; display: flex; align-items: center; gap: 15px; font-family: 'Roboto Mono', monospace; font-size: 13px; color: #b2b5be;">
+        <div class="legend-header-line">
+          <span id="chart-ticker-name" class="legend-ticker-name" style="font-weight: 700; color: #fff; font-size: 24px;">--</span>
+          <span id="chart-ticker-price" class="legend-ticker-price" style="font-weight: 700; font-size: 24px; margin-left: 8px;">--</span>
+          <span id="chart-change" class="legend-ticker-change" style="font-size: 16px; font-weight: 600; margin-left: 6px;">--</span>
+        </div>
+        <span class="legend-divider" style="color: #555; margin: 0 8px; font-size: 24px;">|</span>
+        <div class="legend-ohlc-group">
+          <div class="legend-ohlc-row1">
+            <span><span class="ohlc-label" style="font-weight: 700;">O:</span> <span id="ohlc-open" class="ohlc-val" style="color: #d1d4dc; font-weight: 700;">--</span></span>
+            <span><span class="ohlc-label" style="font-weight: 700;">H:</span> <span id="ohlc-high" class="ohlc-val" style="color: #d1d4dc; font-weight: 700;">--</span></span>
+          </div>
+          <div class="legend-ohlc-row2">
+            <span><span class="ohlc-label" style="font-weight: 700;">L:</span> <span id="ohlc-low" class="ohlc-val" style="color: #d1d4dc; font-weight: 700;">--</span></span>
+            <span><span class="ohlc-label" style="font-weight: 700;">C:</span> <span id="ohlc-close" class="ohlc-val" style="color: #d1d4dc; font-weight: 700;">--</span></span>
+            <span class="legend-divider-sub" style="color:#555;margin:0 4px;">|</span>
+            <span><span class="ohlc-label" style="font-weight: 700;">Vol:</span> <span id="ohlc-volume" class="ohlc-val" style="font-weight: 700;">--</span></span>
+          </div>
+        </div>
       </div>
       <!-- Active indicators legend bar -->
-      <div id="active-indicators-bar" style="position:absolute;bottom:36px;left:12px;z-index:11;display:flex;flex-wrap:wrap;gap:4px;align-items:center;pointer-events:auto;"></div>
+      <div id="active-indicators-bar" class="active-indicators-bar" style="position:absolute;bottom:46px;top:auto;left:18px;z-index:25;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:auto;max-width:calc(100% - 160px);"></div>
       <div class="loading" id="loading">Loading...</div>
       <div class="error" id="error-msg"></div>
       <div id="chart"></div>
       <!-- Drawing Layer -->
-      <div id="drawing-canvas-container" style="position: absolute; top: 0; left: 0; pointer-events: none; width: 100%; height: 100%; z-index: 20;">
-        <canvas id="drawing-canvas" style="width: 100%; height: 100%;"></canvas>
+      <div id="drawing-canvas-container">
+        <canvas id="drawing-canvas"></canvas>
       </div>
     </div>
       <!-- Open Positions Section (below chart, toggleable) -->
-  <div id="openPositionsPanel" style="display:none; width:100%; max-height: 300px; min-height: 180px; flex-shrink: 0; overflow-y: auto; background: #0e1118; border-top: 2px solid #2a2e39; z-index: 15;">
-    <div style="padding:10px 15px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+  <div id="openPositionsPanel" style="display:none; width:100%; flex-shrink: 0; overflow-y: auto; background: #0d111a; border-top: 1px solid #2a2e39; z-index: 15;">
+    <div style="padding:6px 10px;">
+      <div class="panel-top-bar">
         <!-- Tabs for Open Positions vs Trade History -->
-        <div style="display:flex; align-items:center; gap:8px;">
-          <button id="tabPanelOpen" onclick="switchPositionsTab('open')" style="background:#4A90E2; color:#fff; border:none; padding:6px 14px; border-radius:6px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; gap:6px;">
-            <span>&#128202; Open Positions</span> <span id="openPositionsCount" style="background:rgba(255,255,255,0.2); padding:1px 6px; border-radius:10px; font-size:0.75rem;">(0)</span>
+        <div class="panel-tabs-group">
+          <button id="tabPanelOpen" onclick="switchPositionsTab('open')" style="background:#4A90E2; color:#fff; border:none; padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem; cursor:pointer; display:flex; align-items:center; gap:4px; height:24px;">
+            <span>&#128202; Positions</span> <span id="openPositionsCount" style="background:rgba(255,255,255,0.2); padding:0 5px; border-radius:8px; font-size:0.65rem;">(0)</span>
           </button>
-          <button id="tabPanelHistory" onclick="switchPositionsTab('history')" style="background:rgba(255,255,255,0.06); color:#a1a1aa; border:1px solid rgba(255,255,255,0.1); padding:6px 14px; border-radius:6px; font-weight:700; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; gap:6px;">
-            <span>&#128220; Trade History</span> <span id="closedPositionsCount" style="background:rgba(255,255,255,0.15); color:#a1a1aa; padding:1px 6px; border-radius:10px; font-size:0.75rem;">(0)</span>
+          <button id="tabPanelHistory" onclick="switchPositionsTab('history')" style="background:rgba(255,255,255,0.06); color:#a1a1aa; border:1px solid rgba(255,255,255,0.1); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem; cursor:pointer; display:flex; align-items:center; gap:4px; height:24px;">
+            <span>&#128220; History</span> <span id="closedPositionsCount" style="background:rgba(255,255,255,0.15); color:#a1a1aa; padding:0 5px; border-radius:8px; font-size:0.65rem;">(0)</span>
           </button>
         </div>
-        <button onclick="togglePositionsPanel()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#d1d4dc; padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; font-weight:600; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.15)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">&#10005; Close</button>
+        <button onclick="togglePositionsPanel()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#d1d4dc; padding:2px 8px; border-radius:4px; cursor:pointer; font-size:0.72rem; font-weight:600; height:24px; transition:all 0.2s; white-space:nowrap;" onmouseover="this.style.background='rgba(255,255,255,0.15)'" onmouseout="this.style.background='rgba(255,255,255,0.08)'">&#10005; Close</button>
       </div>
 
-      <!-- OPEN POSITIONS TABLE CONTAINER -->
+      <!-- OPEN POSITIONS CONTAINER -->
       <div id="openPositionsContainer" style="overflow-x:auto;">
-        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <table class="desktop-only-table">
           <thead>
             <tr style="border-bottom:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02);">
               <th style="text-align:left; padding:8px 12px; color:#a1a1aa; font-weight:600; font-size:0.75rem; text-transform:uppercase;">Stock</th>
@@ -458,11 +663,12 @@
           </thead>
           <tbody id="openPositionsBody"></tbody>
         </table>
+        <div id="openPositionsMobileList" class="positions-mobile-list"></div>
       </div>
 
-      <!-- CLOSED POSITIONS (TRADE HISTORY) TABLE CONTAINER -->
+      <!-- CLOSED POSITIONS (TRADE HISTORY) CONTAINER -->
       <div id="closedPositionsContainer" style="display:none; overflow-x:auto;">
-        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <table class="desktop-only-table">
           <thead>
             <tr style="border-bottom:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02);">
               <th style="text-align:left; padding:8px 12px; color:#a1a1aa; font-weight:600; font-size:0.75rem; text-transform:uppercase;">Stock</th>
@@ -477,6 +683,7 @@
           </thead>
           <tbody id="closedPositionsBody"></tbody>
         </table>
+        <div id="closedPositionsMobileList" class="positions-mobile-list"></div>
       </div>
     </div>
   </div>
@@ -685,6 +892,27 @@
     </div>
   </div>
   
+  <!-- ==================== NEWS MODAL ==================== -->
+  <div id="newsModal" class="modal">
+    <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+      <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; border-bottom: 1px solid #333; padding-bottom: 1rem;">
+        <h2 id="newsModalTitle" style="color: white; margin: 0; font-size: 1.25rem;">Stock News Sentiment</h2>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button id="downloadPdfBtn" style="display: none; background: #4A90E2; border: none; color: #fff; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;">Download PDF</button>
+          <button onclick="toggleNewsModal()" style="background: none; border: none; color: #999; font-size: 24px; cursor: pointer; line-height: 1;">&times;</button>
+        </div>
+      </div>
+      <div id="ticker-news-container" class="news-grid">
+        <div class="leverage-loader simple-glow-theme news-loader" style="padding: 2rem;">
+            <div class="loader-text-clean">
+                <span class="loader-dot-pulse"></span>
+                <span class="loader-message-text">Analyzing news sentiment for <span id="loading-ticker">ticker</span>...</span>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="logoutModal" class="modal">
      <div class="modal-content">
        <h2>Logout</h2>
@@ -694,191 +922,23 @@
      </div>
   </div>
 
-  <!-- ==================== EMOJI PICKER POPOVER ==================== -->
-  <div id="emoji-picker-popover" style="display: none; position: absolute; z-index: 3000; background: #1c2030; border: 1px solid #2a2e39; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.6); width: 280px; height: 320px; overflow-y: auto; padding: 10px; font-family: system-ui, -apple-system, sans-serif; user-select: none;">
-    <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 6px; border-bottom: 1px solid #2a2e39; margin-bottom: 8px;">
-      <span style="font-weight: 600; font-size: 13px; color: #d1d4dc;">Select Emoji</span>
-      <span onclick="document.getElementById('emoji-picker-popover').style.display='none'" style="cursor: pointer; color: #787b86; font-size: 16px; line-height: 1;">&times;</span>
-    </div>
-    <div id="emoji-picker-categories"></div>
-  </div>
 
-  <style>
-    .emoji-picker-cat-header {
-      font-size: 11px;
-      font-weight: 700;
-      color: #787b86;
-      text-transform: uppercase;
-      margin: 10px 0 6px 0;
-      letter-spacing: 0.5px;
-    }
-    .emoji-picker-cat-header:first-child {
-      margin-top: 0;
-    }
-    .emoji-picker-grid {
-      display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 4px;
-    }
-    .emoji-picker-item {
-      font-size: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      border-radius: 4px;
-      width: 32px;
-      height: 32px;
-      transition: background 0.1s;
-    }
-    .emoji-picker-item:hover {
-      background: rgba(255, 255, 255, 0.08);
-    }
-  </style>
 
-  <script>
-    (function() {
-      var emojis = {
-        "Trading & Finance": ["ðŸ‚", "ðŸ»", "ðŸ“ˆ", "ðŸ“‰", "ðŸš€", "ðŸ’Ž", "ðŸ’°", "ðŸ’µ", "ðŸª™", "ðŸ””", "ðŸŽ¯", "ðŸš©", "ðŸ“", "ðŸ“Œ", "âš ï¸", "ðŸ†—", "ðŸ†™", "ðŸ†’", "ðŸ†•"],
-        "Smileys": ["ðŸ˜€", "ðŸ˜‚", "ðŸ¤£", "ðŸ˜Š", "ðŸ˜‡", "ðŸ™‚", "ðŸ˜‰", "ðŸ˜", "ðŸ¥°", "ðŸ˜˜", "ðŸ˜‹", "ðŸ˜œ", "ðŸ˜Ž", "ðŸ¤¨", "ðŸ˜", "ðŸ˜‘", "ðŸ™„", "ðŸ˜”", "ðŸ˜¢", "ðŸ˜­", "ðŸ˜±", "ðŸ˜¡", "ðŸ¤¯"],
-        "Gestures": ["ðŸ‘", "ðŸ‘Ž", "ðŸ‘Œ", "âœŒï¸", "ðŸ¤ž", "ðŸ¤Ÿ", "ðŸ¤˜", "ðŸ‘ˆ", "ðŸ‘‰", "ðŸ‘†", "ðŸ‘‡", "â˜ï¸", "ðŸ¤", "ðŸ™", "ðŸ’ª"],
-        "Objects & Activities": ["ðŸ†", "ðŸ¥‡", "ðŸ¥ˆ", "ðŸ¥‰", "ðŸŽ«", "ðŸŽŸï¸", "ðŸŽ­", "ðŸŽ¨", "ðŸŽ¯", "ðŸŽ®", "ðŸ›¹", "â°", "âŒ›", "âš¡", "ðŸ”¥", "ðŸ’¥", "ðŸŒŸ", "â­", "âœ¨"],
-        "Flags": ["ðŸ‡®ðŸ‡³", "ðŸ‡ºðŸ‡¸", "ðŸ‡¬ðŸ‡§", "ðŸ‡ªðŸ‡º", "ðŸ‡¨ðŸ‡­", "ðŸ‡¯ðŸ‡µ", "ðŸ‡¸ðŸ‡¬"]
-      };
-
-      var container = document.getElementById('emoji-picker-categories');
-      if (container) {
-        for (var catName in emojis) {
-          var header = document.createElement('div');
-          header.className = 'emoji-picker-cat-header';
-          header.textContent = catName;
-          container.appendChild(header);
-
-          var grid = document.createElement('div');
-          grid.className = 'emoji-picker-grid';
-          emojis[catName].forEach(function(emoji) {
-            var item = document.createElement('div');
-            item.className = 'emoji-picker-item';
-            item.textContent = emoji;
-            item.onclick = function() {
-              handleEmojiSelection(emoji);
-            };
-            grid.appendChild(item);
-          });
-          container.appendChild(grid);
-        }
-      }
-
-      var currentPickerTarget = null;
-
-      window.showEmojiPickerForStylePanel = function(btn) {
-        currentPickerTarget = btn;
-        positionAndShowPicker(btn);
-      };
-
-      var originalActivateTool = window.activateTool;
-      window.activateTool = function(key, event) {
-        if (key === 'emoji' && event) {
-          currentPickerTarget = 'toolbar';
-          var targetEl = event.currentTarget || event.target.closest('.submenu-item') || event.target;
-          positionAndShowPicker(targetEl);
-          return;
-        }
-        if (originalActivateTool) {
-          originalActivateTool(key, event);
-        }
-      };
-
-      function positionAndShowPicker(targetEl) {
-        var popover = document.getElementById('emoji-picker-popover');
-        if (!popover) return;
-        
-        popover.style.display = 'block';
-        var rect = targetEl.getBoundingClientRect();
-        var top = rect.top + window.scrollY;
-        var left = rect.right + 8 + window.scrollX;
-        
-        if (left + 280 > window.innerWidth) {
-          left = rect.left - 288 + window.scrollX;
-        }
-        if (top + 320 > window.innerHeight) {
-          top = Math.max(10, window.innerHeight - 330 + window.scrollY);
-        }
-        
-        popover.style.top = top + 'px';
-        popover.style.left = left + 'px';
-      }
-
-      function handleEmojiSelection(emoji) {
-        var popover = document.getElementById('emoji-picker-popover');
-        if (popover) popover.style.display = 'none';
-
-        if (currentPickerTarget === 'toolbar') {
-          var TD = window.__ToolDefinitions;
-          if (TD && TD.emoji) {
-            if (!TD.emoji.options) TD.emoji.options = {};
-            TD.emoji.options.emoji = emoji;
-          }
-          if (originalActivateTool) {
-            originalActivateTool('emoji');
-          }
-          var emojiMenuItem = document.querySelector('.submenu-item[onclick*=\"emoji\"]');
-          if (emojiMenuItem) {
-            var textSvg = emojiMenuItem.querySelector('svg text');
-            if (textSvg) textSvg.textContent = emoji;
-          }
-        } else if (currentPickerTarget && typeof currentPickerTarget === 'object') {
-          currentPickerTarget.textContent = emoji;
-          if (window.toolManager && window.toolManager.selectedDrawing) {
-            var d = window.toolManager.selectedDrawing;
-            var engine = window.toolManager.engine;
-            var before = d.model ? d.model.toJSON() : null;
-            
-            if (!d.content) d.content = {};
-            d.content.plain = emoji;
-            
-            if (d.model) {
-              d.model.content = d.content;
-              if (d.syncToModel) d.syncToModel();
-            }
-            if (d.model && engine) {
-              engine.undoManager.pushCommand('restyle', before, d.model.toJSON());
-              engine.markDirty();
-            } else {
-              window.toolManager.saveDrawings();
-            }
-            d._invalidateCache();
-            window.toolManager.redraw();
-          }
-        }
-      }
-
-      document.addEventListener('pointerdown', function(e) {
-        var popover = document.getElementById('emoji-picker-popover');
-        if (popover && popover.style.display !== 'none') {
-          if (!popover.contains(e.target) && (!currentPickerTarget || currentPickerTarget === 'toolbar' || !currentPickerTarget.contains(e.target))) {
-            popover.style.display = 'none';
-          }
-        }
-      });
-    })();
-  </script>
-
-<script src="lightweight-charts.js?v=2"></script>
+  <script src="lightweight-charts.js?v=2"></script>
 <script src="stocks.js?v=20"></script>
 <script src="loader.js?v=2"></script>
-<script src="nav.js?v=8"></script>
+<script src="nav.js?v=9"></script>
 <script src="news.js?v=6"></script>
 <script src="ws.js"></script>
 <script src="cache.js?v=2"></script>
-  <script src="dashboard.js?v=1046"></script>
-<script src="drawing-core.js?v=27"></script>
-<script src="drawings.js?v=80"></script>
-<script src="toolbarConfig.js?v=4"></script>
-<script src="drawing-toolbar.js?v=5"></script>
+<script src="dashboard.js?v=1048"></script>
+<script src="drawing-core.js?v=30"></script>
+<script src="drawings.js?v=83"></script>
+<script src="toolbarConfig.js?v=5"></script>
+<script src="drawing-toolbar.js?v=8"></script>
 <script src="stock-logic.js?v=6"></script>
 <script src="stock-ui.js?v=9"></script>
-<script src="indicators.js?v=1"></script>
+<script src="indicators.js?v=2"></script>
 </body>
 </html>
 

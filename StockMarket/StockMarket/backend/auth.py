@@ -628,24 +628,29 @@ def get_current_user_optional(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
     db: Session = Depends(get_db)
 ) -> Optional[models.User]:
-    """Optional auth - returns None if not authenticated."""
-    if credentials is None:
+    """Optional auth - returns None if not authenticated or on any error."""
+    try:
+        if credentials is None or not credentials.credentials:
+            return None
+        
+        token = credentials.credentials
+        if not token or token in ("null", "undefined"):
+            return None
+        payload = decode_token(token)
+        
+        if payload is None:
+            return None
+        
+        # Check blacklist
+        jti = payload.get("jti")
+        if jti and is_token_blacklisted(db, jti):
+            return None
+        
+        user_id: int = payload.get("user_id")
+        if user_id is None:
+            return None
+        
+        user = db.query(models.User).filter(models.User.user_id == user_id).first()
+        return user if user and user.is_active else None
+    except Exception:
         return None
-    
-    token = credentials.credentials
-    payload = decode_token(token)
-    
-    if payload is None:
-        return None
-    
-    # Check blacklist
-    jti = payload.get("jti")
-    if jti and is_token_blacklisted(db, jti):
-        return None
-    
-    user_id: int = payload.get("user_id")
-    if user_id is None:
-        return None
-    
-    user = db.query(models.User).filter(models.User.user_id == user_id).first()
-    return user if user and user.is_active else None

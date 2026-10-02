@@ -1,0 +1,316 @@
+{
+  "report_title": "Exhaustive Bug Hunt — StockMarket Backend",
+  "generated_at": "2026-07-19",
+  "files_audited": 45,
+  "bugs_found": 34,
+  "bugs": {
+    "CRITICAL": [
+      {
+        "file": "aggregator.py",
+        "line": 430,
+        "severity": "CRITICAL",
+        "category": "AttributeError",
+        "description": "'Live5mBuilder' object has no attribute '_backpressure_events'. Referenced in get_stats() but never initialized in __init__.",
+        "fix": "Add `self._backpressure_events = 0` in __init__"
+      },
+      {
+        "file": "main.py",
+        "line": 2200,
+        "severity": "CRITICAL",
+        "category": "Async misuse / Race condition",
+        "description": "ConnectionManager.disconnect() is a sync method but calls `asyncio.create_task(ws.close())`. If called outside an async context (e.g., during shutdown or from a thread), raises `RuntimeError: no running event loop`.",
+        "fix": "Make disconnect async and `await ws.close()`, or use `asyncio.run_coroutine_threadsafe()` with the main loop reference"
+      }
+    ],
+    "HIGH": [
+      {
+        "file": "main.py",
+        "line": 544,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_all_stocks_cache is read/written from multiple concurrent API requests without any lock protection. Two requests can both see the cache as expired, both fetch from DB, and both write to the global.",
+        "fix": "Add a threading.Lock() around the cache check-and-set block"
+      },
+      {
+        "file": "main.py",
+        "line": 1417,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_live_prices_cache write at line 1417 happens without any lock. The eviction at line 1420 uses a separate mutex, but reads and writes of the dict are not synchronized with it. Dict iteration during eviction can race with concurrent writes.",
+        "fix": "Wrap both write and eviction in the same lock. Use the eviction mutex for writes too."
+      },
+      {
+        "file": "main.py",
+        "line": 3862,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_last_angel_tick_time is written in _on_angel_tick() (called from AngelOne WebSocket thread) and read in the async watchdog loop without any synchronization. _last_angel_ts_per_ticker has the same issue.",
+        "fix": "Use threading.Lock or atomic assignment. Since it's a float, consider using a lock or switching to `time.monotonic()` reads."
+      },
+      {
+        "file": "main.py",
+        "line": 2890,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_yf_intraday_cache dict is accessed from pre-warm threads, backfill threads, and API handler threads concurrently. Multiple calls to _fetch_yfinance_intraday() can race reading/writing this cache dict without any lock.",
+        "fix": "Add a threading.RLock or dict-level lock around all read/write accesses"
+      },
+      {
+        "file": "main.py",
+        "line": 2112,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_news_general_cache and _news_general_cache_ts are module-level globals assigned without lock from proxy_news_general(). Two concurrent requests can both read the cache as expired, both generate articles, and race to write.",
+        "fix": "Add a threading.Lock around the cache check-and-set block"
+      },
+      {
+        "file": "main.py",
+        "line": 2124,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_news_ticker_cache is a dict read/written from concurrent requests to proxy_news_ticker(). No lock protection.",
+        "fix": "Add a threading.Lock or use a thread-safe dict wrapper"
+      },
+      {
+        "file": "main.py",
+        "line": 3621,
+        "severity": "HIGH",
+        "category": "Thread safety",
+        "description": "_crypto_cache is read at line 3621 without any lock protection (outside the `with _crypto_cache_lock:` block). The write at line 3616 is inside the lock, but the final return reads without the lock, creating a TOCTOU race.",
+        "fix": "Move the final return `return _crypto_cache['data'] or []` inside the lock block, or use a local variable"
+      },
+      {
+        "file": "execution_engine.py",
+        "line": 95,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`today = date.today()` in check_pending_orders() returns the server's local date (likely UTC). Should be IST date (NSE market date) for correct order expiry checks.",
+        "fix": "Use `database.get_ist_now().date()` instead of `date.today()`"
+      },
+      {
+        "file": "main.py",
+        "line": 1849,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`today = date.today()` in google_news_rss() returns UTC date. The news RSS feed URL uses this date for query parameters. Should use IST date.",
+        "fix": "Use `database.get_ist_now().date()`"
+      },
+      {
+        "file": "main.py",
+        "line": 2595,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`today = date.today()` in search endpoint returns UTC date. Should use IST for Indian market context.",
+        "fix": "Use `database.get_ist_now().date()`"
+      },
+      {
+        "file": "main.py",
+        "line": 3445,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`end = date.today()` in validate_intraday_candles endpoint returns UTC date. Should use IST.",
+        "fix": "Use `database.get_ist_now().date()`"
+      },
+      {
+        "file": "main.py",
+        "line": 3513,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`today = date.today()` in refresh_sessions_from_nse endpoint returns UTC date. Should use IST.",
+        "fix": "Use `database.get_ist_now().date()`"
+      },
+      {
+        "file": "main.py",
+        "line": 3099,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "Weekly candle timestamp uses `datetime(monday.year, monday.month, monday.day, tzinfo=timezone.utc).timestamp()`. NSE weekly candles should use IST midnight, not UTC midnight. This creates a 5.5-hour offset in weekly candle epoch timestamps.",
+        "fix": "Use IST timezone for weekly candle epoch calculations, or use `monday.replace(tzinfo=IST).timestamp()`"
+      },
+      {
+        "file": "candle_cache.py",
+        "line": 116,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`now = datetime.now()` in _default_ttl() uses server local time (possibly UTC). Market-aware TTL calculation will be incorrect on UTC servers.",
+        "fix": "Use `database.get_ist_now()` or `datetime.now(IST).replace(tzinfo=None)`"
+      },
+      {
+        "file": "resample_service.py",
+        "line": 45,
+        "severity": "HIGH",
+        "category": "Date/time handling",
+        "description": "`offset = '15min' if target_tf.lower() in ['15m', '30m', '1h', '4h'] else None` applies 15min offset to 15m timeframe, but 09:15 IST is already a valid 15-minute boundary (555 % 15 = 0). Adding offset shifts 15m buckets to 09:30, misaligning all intraday candles.",
+        "fix": "Exclude '15m' from the offset list: `['30m', '1h', '4h']`. The resample_rules.py (line 69) has the correct logic that 15m doesn't need offset."
+      },
+      {
+        "file": "main.py",
+        "line": 4630,
+        "severity": "HIGH",
+        "category": "Dead code",
+        "description": "`continue` at line 4630 in _nightly_retention_cleanup() skips ~100 lines of legacy deletion code (lines 4632-4732). This appears intentional but the dead code should be removed to avoid confusion.",
+        "fix": "Remove the dead legacy code after the continue statement"
+      }
+    ],
+    "MEDIUM": [
+      {
+        "file": "main.py",
+        "line": 364,
+        "severity": "MEDIUM",
+        "category": "Code quality",
+        "description": "`_live_prices_cache_lock: dict = {}` is initialized as an empty dict on line 379 but never populated or used anywhere. Only `_live_prices_cache_lock_dict_mutex` is used. Dead variable.",
+        "fix": "Remove the unused `_live_prices_cache_lock` variable"
+      },
+      {
+        "file": "retention_service.py",
+        "line": 199,
+        "severity": "MEDIUM",
+        "category": "Data inconsistency",
+        "description": "`db.query(Candle).filter(...).delete(synchronize_session=False)` — after delete, the SQLAlchemy session's identity map still holds references to deleted objects. Future queries may return stale cached results.",
+        "fix": "Call `db.expire_all()` after the delete, or set `synchronize_session='fetch'`"
+      },
+      {
+        "file": "retention_service.py",
+        "line": 199,
+        "severity": "MEDIUM",
+        "category": "Data inconsistency",
+        "description": "Upsert and delete in same batch: source rows are deleted before verifying upsert succeeded. If delete succeeds but commit fails after, data is lost.",
+        "fix": "Move delete after the upsert commit, or use a single transaction with proper error handling"
+      },
+      {
+        "file": "aggregator.py",
+        "line": 603,
+        "severity": "MEDIUM",
+        "category": "Thread safety",
+        "description": "`batch_flush_candles._flush_counter` uses a function attribute as a counter accessed from multiple flush worker threads with no synchronization.",
+        "fix": "Use `itertools.count()` or an `itertools.counter` from a closed-over variable, or add a lock"
+      },
+      {
+        "file": "gap_recovery.py",
+        "line": 33,
+        "severity": "MEDIUM",
+        "category": "Date/time handling",
+        "description": "`last_dt = datetime.fromtimestamp(last_stored_ts)` creates a naive datetime using the server's local timezone. The AngelOne Historical API expects IST-naive datetimes. On a UTC server, the API would receive timestamps 5.5 hours off.",
+        "fix": "Use `datetime.fromtimestamp(last_stored_ts, tz=IST).replace(tzinfo=None)` or cast through IST"
+      },
+      {
+        "file": "main.py",
+        "line": 4494,
+        "severity": "MEDIUM",
+        "category": "Thread safety",
+        "description": "`_mark_yfinance_failed()` is called from within `_run_sync()` which runs in a thread pool. Multiple concurrent calls can race on shared dict.",
+        "fix": "Add a Lock to _yfinance_failed dict operations"
+      },
+      {
+        "file": "main.py",
+        "line": 465,
+        "severity": "MEDIUM",
+        "category": "Configuration",
+        "description": "`secure=os.getenv('CSRF_SECURE', 'false').lower() == 'true'` — if CSRF_SECURE=true but the app is served over HTTP, the Secure cookie is rejected by browsers. If false over HTTPS, the cookie is sent unencrypted.",
+        "fix": "Derive secure flag from request.is_secure() or the X-Forwarded-Proto header at runtime"
+      },
+      {
+        "file": "websocket_manager.py",
+        "line": 34,
+        "severity": "MEDIUM",
+        "category": "WebSocket handling",
+        "description": "`asyncio.wait_for(self.manager.send_personal_message(...), timeout=0.5)` timeout of 0.5s is very tight for market data broadcasts. Under load, this can cause WebSocket disconnections.",
+        "fix": "Increase timeout to match WS heartbeat interval (e.g., 5-10s), or remove wait_for and handle send coroutine directly"
+      },
+      {
+        "file": "main.py",
+        "line": 2222,
+        "severity": "MEDIUM",
+        "category": "WebSocket handling",
+        "description": "Same 0.5s timeout in broadcast method for dashboard/angel tick broadcasts. Under high tick volume, many clients may be disconnected.",
+        "fix": "Increase timeout to match WS heartbeat interval"
+      },
+      {
+        "file": "routers/auth_router.py",
+        "line": 104,
+        "severity": "MEDIUM",
+        "category": "Data inconsistency",
+        "description": "_otp_attempts dict manipulation: deletes empty IP key (line 106) then recreates it with setdefault (line 109). The rate limit check on line 107 correctly skips deleted keys, but the delete-and-recreate pattern is confusing and unnecessary.",
+        "fix": "Simplify: remove the `del _otp_attempts[ip]` and let the rate check handle empty lists, or use collections.defaultdict"
+      }
+    ],
+    "LOW": [
+      {
+        "file": "main.py",
+        "line": 220,
+        "severity": "LOW",
+        "category": "Code quality",
+        "description": "ViewedTickerManager uses `_pending_unsub` and `_subscribed` sets under `self._lock` but the LRU timestamps in `_lru` dict are not protected by the same lock.",
+        "fix": "Move `_lru` updates inside the `self._lock` block"
+      },
+      {
+        "file": "main.py",
+        "line": 2490,
+        "severity": "LOW",
+        "category": "Code quality",
+        "description": "`from database import get_ist_now` is inside the function body of `proxy_news_general()`. Should be a module-level import.",
+        "fix": "Move import to top of file"
+      },
+      {
+        "file": "resample_service.py",
+        "line": 47,
+        "severity": "LOW",
+        "category": "Code quality",
+        "description": "`ResampleService.resample()` does not validate OHLC integrity of input or output candles. If input has 'close' of None/NaN, the output will propagate invalid values.",
+        "fix": "Add pandas `df.dropna()` or validate required columns before resampling"
+      },
+      {
+        "file": "models_timescale.py",
+        "line": 30,
+        "severity": "LOW",
+        "category": "Code quality",
+        "description": "`created_at` and `updated_at` columns use `datetime.utcnow` as default but the application uses IST everywhere. This inconsistency could cause confusion.",
+        "fix": "Use IST-based default or make timezone-aware defaults"
+      },
+      {
+        "file": "candle_cache.py",
+        "line": 42,
+        "severity": "LOW",
+        "category": "Code quality",
+        "description": "`L1Cache` uses simple dict without eviction policy. Under heavy load, memory could grow unbounded if TTL isn't respected.",
+        "fix": "Add LRU eviction or size limit to L1 cache"
+      },
+      {
+        "file": "monitor.py",
+        "line": 41,
+        "severity": "LOW",
+        "category": "Exception handling",
+        "description": "`Monitor.get_health()` catches exceptions per-component, but `aggregator.get_stats()` called inside `get_aggregator_health()` may raise (e.g., due to the missing `_backpressure_events` attribute). Monitor should not crash when a component's health check fails.",
+        "fix": "Wrap health function calls in individual try/except blocks within the monitoring endpoint"
+      },
+      {
+        "file": "config/__init__.py",
+        "line": 6,
+        "severity": "LOW",
+        "category": "Thread safety",
+        "description": "_CONFIG_CACHE is a module-level dict with no lock protection. If multiple requests trigger `load_retention_policy()` during startup, the cache could be populated multiple times.",
+        "fix": "Add threading.Lock or use functools.lru_cache"
+      }
+    ]
+  },
+  "summary": {
+    "CRITICAL": 2,
+    "HIGH": 16,
+    "MEDIUM": 10,
+    "LOW": 6,
+    "total": 34,
+    "by_category": {
+      "Thread safety / Race condition": 11,
+      "Date/time handling (UTC vs IST)": 8,
+      "AttributeError / Missing initialization": 1,
+      "Async misuse": 1,
+      "Dead code": 1,
+      "Data inconsistency (ORM / retention)": 2,
+      "WebSocket handling": 2,
+      "Configuration": 1,
+      "Code quality": 5,
+      "Exception handling": 1,
+      "Data validation": 1
+    }
+  }
+}

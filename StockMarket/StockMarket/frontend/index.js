@@ -14,7 +14,7 @@
 
 // Helper to check for image logo
 function isImageLogo(logo) {
-  return logo && (logo.startsWith('http') || logo.startsWith('logos/'));
+  return logo && (logo.startsWith('http') || logo.startsWith('logos/')) && !logo.includes('gstatic.com') && !logo.includes('faviconV2');
 }
 
 // Stocks to display in the main grid (Curated list with base prices)
@@ -282,8 +282,8 @@ searchInput.addEventListener('input', (e) => {
   // Display results
   if (filtered.length > 0) {
     searchResults.innerHTML = filtered.map(stock => {
-      const price = currentPrices[stock.ticker] || stock.basePrice || 0;
-      const changeData = currentChanges[stock.ticker] || { value: 0, percent: 0 };
+      const price = currentPrices[stock.ticker] || currentPrices[stock.ticker.replace(/\.(NS|BO)$/i, '')] || stock.basePrice || 0;
+      const changeData = currentChanges[stock.ticker] || currentChanges[stock.ticker.replace(/\.(NS|BO)$/i, '')] || (stock.changePercent != null ? { value: stock.change || 0, percent: stock.changePercent } : (stock.change_pct != null ? { value: stock.change || 0, percent: stock.change_pct } : { value: 0, percent: 0 }));
       const isPositive = changeData.value >= 0;
       const color = isPositive ? '#00C853' : '#FF5252'; // Match mockup colors
       const sign = isPositive ? '+' : '';
@@ -298,7 +298,7 @@ searchInput.addEventListener('input', (e) => {
       else if (type === 'NSE' && !displayTicker.endsWith('.NS')) displayTicker += '.NS';
 
       return `
-      <div class="result-item">
+      <div class="result-item" onclick="openStockOverview('${stock.ticker.replace(/'/g, '')}')">
         <div class="result-logo">
         ${isImageLogo(stock.logo)
           ? `<img src="${stock.logo}" class="search-logo-img" alt="${stock.ticker}" onerror="this.style.display='none'">`
@@ -319,12 +319,17 @@ searchInput.addEventListener('input', (e) => {
                     ${arrow} ${sign}${Math.abs(changeData.percent).toFixed(2)}%
                 </div>
             </div>
-            <button class="search-launch-btn" onclick="launchChart('${stock.ticker.replace(/'/g, '')}', '${stock.exchange.replace(/'/g, '')}')">Launch Chart</button>
+            <button class="search-launch-btn" onclick="event.stopPropagation(); launchChart('${stock.ticker.replace(/'/g, '')}', '${stock.exchange.replace(/'/g, '')}')">Launch Chart</button>
         </div>
       </div>
     `}).join('');
     searchResults.classList.add('visible');
     document.body.style.overflow = 'hidden'; // Lock Scroll
+
+    // Fetch live quotes immediately for visible search results
+    if (typeof updatePrices === 'function') {
+      updatePrices();
+    }
   } else {
     searchResults.innerHTML = '<div class="no-results" style="padding: 1.5rem; text-align: center; color: #52525b;">No stocks found</div>';
     searchResults.classList.add('visible');
@@ -355,6 +360,12 @@ function getChartPage() {
   const path = window.location.pathname;
   return path.includes('home.html') || path.includes('stock.html') || path.includes('portfolio.html') ? 'stock.html' : 'stock.html';
 }
+
+function openStockOverview(ticker) {
+  const cleanTicker = (ticker || '').replace(/\.(NS|BO)$/i, '');
+  window.location.href = `overview.html?ticker=${encodeURIComponent(cleanTicker)}`;
+}
+window.openStockOverview = openStockOverview;
 
 function launchChart(ticker, exchange) {
   let tickerParam = ticker;
@@ -490,20 +501,36 @@ async function updatePrices() {
 
       // 2. Update Index Ticker Strip
       if (STRIP_TICKERS.includes(ticker)) {
-        const stripPriceEl = document.getElementById(`strip-price-${ticker}`);
-        const stripChangeEl = document.getElementById(`strip-change-${ticker}`);
-        if (stripPriceEl && stripChangeEl) {
-          const sign = change >= 0 ? '+' : '';
-          stripPriceEl.innerText = `₹${formatPrice(newPrice)}`;
-          stripChangeEl.innerText = `${sign}${change.toFixed(2)} (${sign}${Math.abs(pct).toFixed(2)}%)`;
-          stripChangeEl.className = 'change ' + (change >= 0 ? 'text-green' : 'text-red');
+        if (typeof window.updateTickerStrip === 'function') {
+          window.updateTickerStrip({ [ticker]: data });
+        } else {
+          const stripPriceEl = document.getElementById(`strip-price-${ticker}`);
+          const stripChangeEl = document.getElementById(`strip-change-${ticker}`);
+          if (stripPriceEl && stripChangeEl) {
+            window._lastTickPrices = window._lastTickPrices || {};
+            const lastT = window._lastTickPrices[ticker];
+            if (lastT != null && newPrice !== lastT) {
+              stripPriceEl.classList.remove('tick-up', 'tick-down');
+              void stripPriceEl.offsetWidth;
+              stripPriceEl.classList.add(newPrice > lastT ? 'tick-up' : 'tick-down');
+            }
+            window._lastTickPrices[ticker] = newPrice;
+            const sign = change >= 0 ? '▲ +' : '▼ ';
+            stripPriceEl.innerText = `₹${formatPrice(newPrice)}`;
+            stripChangeEl.innerText = `${sign}${change.toFixed(2)} (${Math.abs(pct).toFixed(2)}%)`;
+            stripChangeEl.className = 'change ' + (change >= 0 ? 'text-green' : 'text-red');
+          }
+          const activeTkr = (window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          if (ticker === activeTkr && typeof window.updateMinichartOHLC === 'function') {
+            window.updateMinichartOHLC(data);
+          }
         }
       }
 
 
       // 4. Update Search Result UI (if displayed)
-      const searchPriceEl = document.getElementById(`search-price-${ticker}`);
-      const searchChangeEl = document.getElementById(`search-change-${ticker}`);
+      const searchPriceEl = document.getElementById(`search-price-${ticker}`) || document.getElementById(`search-price-${plainTicker}.NS`) || document.getElementById(`search-price-${plainTicker}.BO`) || document.getElementById(`search-price-${plainTicker}`);
+      const searchChangeEl = document.getElementById(`search-change-${ticker}`) || document.getElementById(`search-change-${plainTicker}.NS`) || document.getElementById(`search-change-${plainTicker}.BO`) || document.getElementById(`search-change-${plainTicker}`);
 
       if (searchPriceEl && searchChangeEl) {
         searchPriceEl.innerText = `₹${formatPrice(newPrice)}`;
@@ -516,7 +543,6 @@ async function updatePrices() {
 
         searchChangeEl.innerHTML = `${arrow} ${sign}${Math.abs(pct).toFixed(2)}%`;
         searchChangeEl.style.color = colorHex;
-
       }
     });
 
@@ -1056,13 +1082,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Update index ticker strip
       if (STRIP_TICKERS.includes(ticker)) {
-        const sp = document.getElementById(`strip-price-${ticker}`);
-        const sc = document.getElementById(`strip-change-${ticker}`);
-        if (sp && sc) {
-          const sign = wsChange >= 0 ? '+' : '';
-          sp.innerText = `₹${formatPrice(d.current)}`;
-          sc.innerText = `${sign}${wsChange.toFixed(2)} (${sign}${Math.abs(wsPct).toFixed(2)}%)`;
-          sc.className = 'change ' + (wsChange >= 0 ? 'text-green' : 'text-red');
+        if (typeof window.updateTickerStrip === 'function') {
+          window.updateTickerStrip({ [ticker]: d });
+        } else {
+          const sp = document.getElementById(`strip-price-${ticker}`);
+          const sc = document.getElementById(`strip-change-${ticker}`);
+          if (sp && sc) {
+            window._lastTickPrices = window._lastTickPrices || {};
+            const lastT = window._lastTickPrices[ticker];
+            if (lastT != null && d.current !== lastT) {
+              sp.classList.remove('tick-up', 'tick-down');
+              void sp.offsetWidth;
+              sp.classList.add(d.current > lastT ? 'tick-up' : 'tick-down');
+            }
+            window._lastTickPrices[ticker] = d.current;
+            const sign = wsChange >= 0 ? '▲ +' : '▼ ';
+            sp.innerText = `₹${formatPrice(d.current)}`;
+            sc.innerText = `${sign}${wsChange.toFixed(2)} (${Math.abs(wsPct).toFixed(2)}%)`;
+            sc.className = 'change ' + (wsChange >= 0 ? 'text-green' : 'text-red');
+          }
+          const activeTkr = (window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
+          if (ticker === activeTkr && typeof window.updateMinichartOHLC === 'function') {
+            window.updateMinichartOHLC(d);
+          }
         }
       }
 

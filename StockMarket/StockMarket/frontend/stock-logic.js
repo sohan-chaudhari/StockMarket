@@ -11,7 +11,7 @@
     }
 
     // Handle Trade Button click — show sign-in prompt OR trade modal
-    function handleTradeClick() {
+    function handleTradeClick(defaultType) {
       const token = sessionStorage.getItem('token');
       if (!token) {
         // Set the redirect URL in the sign-in modal link
@@ -21,9 +21,10 @@
         var modal = document.getElementById('signInPromptModal');
         if (modal) modal.classList.add('visible');
       } else {
-        showTradeModal();
+        showTradeModal(defaultType);
       }
     }
+    window.handleTradeClick = handleTradeClick;
 
     // Logout Confirmation Logic
     function handleLogout() {
@@ -131,18 +132,24 @@
     }
 
     // Show Trade Modal
-    async function showTradeModal() {
+    async function showTradeModal(defaultType) {
       if (!_requireAuth()) return;
-      const ticker = window.currentTicker || '--';
+      const ticker = window.currentTicker || (new URLSearchParams(window.location.search).get('ticker') || '--');
       const price = parseFloat(document.getElementById('header-price')?.textContent?.replace(/[₹,]/g, '')) || 0;
       let user = JSON.parse(sessionStorage.getItem('user') || '{}');
 
-      document.getElementById('tradeModalTicker').textContent = ticker;
-      document.getElementById('tradeEntryPrice').value = price.toFixed(2);
-      document.getElementById('tradeQuantity').value = 1;
-      document.getElementById('tradeTakeProfit').value = '';
-      document.getElementById('tradeStopLoss').value = '';
-      document.getElementById('tradeMessage').innerHTML = '';
+      const tickerEl = document.getElementById('tradeModalTicker');
+      if (tickerEl) tickerEl.textContent = ticker;
+      const entryPriceEl = document.getElementById('tradeEntryPrice');
+      if (entryPriceEl && price > 0) entryPriceEl.value = price.toFixed(2);
+      const qtyEl = document.getElementById('tradeQuantity');
+      if (qtyEl && !qtyEl.value) qtyEl.value = 1;
+      const tpEl = document.getElementById('tradeTakeProfit');
+      if (tpEl) tpEl.value = '';
+      const slEl = document.getElementById('tradeStopLoss');
+      if (slEl) slEl.value = '';
+      const msgEl = document.getElementById('tradeMessage');
+      if (msgEl) msgEl.innerHTML = '';
 
       // Fetch fresh balance from API if not in session or is 0
       if (!user.virtual_balance) {
@@ -159,7 +166,8 @@
         } catch (e) { console.error('Failed to fetch balance:', e); }
       }
 
-      document.getElementById('tradeAvailableBalance').textContent = `₹${(user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+      const balEl = document.getElementById('tradeAvailableBalance');
+      if (balEl) balEl.textContent = `₹${(user.virtual_balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
 
       // Check Market Status (09:15 - 15:30 IST Mon-Fri)
       const now = new Date();
@@ -206,21 +214,32 @@
         }
       }
 
-      setPositionType('LONG');
+      let initialType = 'LONG';
+      if (typeof defaultType === 'string') {
+        const dUpper = defaultType.toUpperCase();
+        if (dUpper === 'SHORT' || dUpper === 'SELL') initialType = 'SHORT';
+        else initialType = 'LONG';
+      }
+      setPositionType(initialType);
       calculateTotal();
-      document.getElementById('tradePanelOverlay').classList.add('visible');
+      const overlay = document.getElementById('tradePanelOverlay');
+      if (overlay) overlay.classList.add('visible');
     }
 
     function hideTradeModal() {
-      document.getElementById('tradePanelOverlay').classList.remove('visible');
+      const overlay = document.getElementById('tradePanelOverlay');
+      if (overlay) overlay.classList.remove('visible');
     }
 
-    window.toggleTradeModal = function() {
+    window.showTradeModal = showTradeModal;
+    window.hideTradeModal = hideTradeModal;
+
+    window.toggleTradeModal = function(defaultType) {
       const panel = document.getElementById('tradePanelOverlay');
       if (panel && panel.classList.contains('visible')) {
         hideTradeModal();
       } else {
-        showTradeModal();
+        showTradeModal(defaultType);
       }
     };
 
@@ -230,23 +249,30 @@
       const btnShort = document.getElementById('btnShort');
 
       if (type === 'LONG') {
-        btnLong.style.background = 'rgba(74, 144, 226, 0.2)';
-        btnLong.style.borderColor = '#4A90E2';
-        btnLong.style.color = '#4A90E2';
-
-        btnShort.style.background = 'transparent';
-        btnShort.style.borderColor = '#333';
-        btnShort.style.color = '#888';
+        if (btnLong) {
+          btnLong.style.background = 'rgba(74, 144, 226, 0.2)';
+          btnLong.style.borderColor = '#4A90E2';
+          btnLong.style.color = '#4A90E2';
+        }
+        if (btnShort) {
+          btnShort.style.background = 'transparent';
+          btnShort.style.borderColor = '#333';
+          btnShort.style.color = '#888';
+        }
       } else {
-        btnLong.style.background = 'transparent';
-        btnLong.style.borderColor = '#333';
-        btnLong.style.color = '#888';
-
-        btnShort.style.background = 'rgba(74, 144, 226, 0.2)';
-        btnShort.style.borderColor = '#4A90E2';
-        btnShort.style.color = '#4A90E2';
+        if (btnLong) {
+          btnLong.style.background = 'transparent';
+          btnLong.style.borderColor = '#333';
+          btnLong.style.color = '#888';
+        }
+        if (btnShort) {
+          btnShort.style.background = 'rgba(74, 144, 226, 0.2)';
+          btnShort.style.borderColor = '#4A90E2';
+          btnShort.style.color = '#4A90E2';
+        }
       }
     }
+    window.setPositionType = setPositionType;
 
     function calculateTotal() {
       const price = parseFloat(document.getElementById('tradeEntryPrice').value) || 0;
@@ -257,13 +283,26 @@
 
     async function submitTrade() {
       const token = sessionStorage.getItem('token');
-      if (!token) return;
+      if (!token) {
+        if (typeof showAuthModal === 'function') showAuthModal('login');
+        return;
+      }
+
+      if (window._isSubmittingTrade) return;
+      window._isSubmittingTrade = true;
 
       const btn = document.getElementById('tradeSubmitBtn');
       const msg = document.getElementById('tradeMessage');
-      btn.disabled = true;
-      btn.textContent = 'Placing Order...';
-      msg.innerHTML = '';
+      if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.7';
+        btn.style.cursor = 'not-allowed';
+        btn.innerHTML = '<span style="display:inline-flex;align-items:center;justify-content:center;gap:8px;">'
+          + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" style="animation:spin 0.8s linear infinite;">'
+          + '<path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>'
+          + '</svg>Placing Order...</span>';
+      }
+      if (msg) msg.innerHTML = '';
 
       const payload = {
         ticker: document.getElementById('tradeModalTicker').textContent,
@@ -293,10 +332,13 @@
 
         if (res.ok) {
           // Update balance in header and session
-          const user = JSON.parse(sessionStorage.getItem('user') || '{}');
-          user.virtual_balance = data.balance;
-          sessionStorage.setItem('user', JSON.stringify(user));
-          var ub = document.getElementById('userBalance'); if (ub) ub.textContent = `₹${data.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+          if (data && data.balance != null) {
+            const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+            user.virtual_balance = data.balance;
+            sessionStorage.setItem('user', JSON.stringify(user));
+            var ub = document.getElementById('userBalance');
+            if (ub) ub.textContent = `₹${Number(data.balance).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+          }
 
           // Hide trade modal and show success animation
           hideTradeModal();
@@ -316,15 +358,20 @@
 
           loadOpenPositions();
         } else {
-          msg.innerHTML = '<span style="color: #ef5350">' + escapeHTML(data.detail || 'Failed to place order') + '</span>';
+          if (msg) msg.innerHTML = '<span style="color: #ef5350">' + escapeHTML(data.detail || 'Failed to place order') + '</span>';
         }
       } catch (e) {
         console.error(e);
-        msg.innerHTML = '<span style="color: #ef5350">Connection error</span>';
+        if (msg) msg.innerHTML = '<span style="color: #ef5350">Connection error</span>';
+      } finally {
+        window._isSubmittingTrade = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          btn.style.cursor = 'pointer';
+          btn.innerHTML = 'Place Order';
+        }
       }
-
-      btn.disabled = false;
-      btn.textContent = 'Place Order';
     }
 
     function showOrderSuccessModal(ticker, detail, title = 'Order Placed Successfully!') {
@@ -420,91 +467,169 @@
 
     function renderOpenPositions() {
       const tbody = document.getElementById('openPositionsBody');
+      const mobileList = document.getElementById('openPositionsMobileList');
       const countEl = document.getElementById('openPositionsCount');
       const headerCountEl = document.getElementById('headerPositionsCount');
-      const panel = document.getElementById('openPositionsPanel');
 
       const totalItems = openPositions.length;
-      if (countEl) countEl.textContent = `(${openPositions.length})`;
+      if (countEl) countEl.textContent = `(${totalItems})`;
       if (headerCountEl) {
         headerCountEl.textContent = totalItems;
         headerCountEl.style.display = totalItems > 0 ? 'inline-block' : 'none';
       }
 
-      if (openPositions.length === 0) {
+      if (totalItems === 0) {
+        const emptyMsg = '<div style="text-align:center; padding:24px 12px; color:#a1a1aa; font-size:0.88rem;">No active open positions.</div>';
         if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:#a1a1aa; font-size:0.9rem;">No active open positions.</td></tr>`;
+        if (mobileList) mobileList.innerHTML = emptyMsg;
         return;
       }
 
-      if (!tbody) return;
+      // Generate desktop table HTML
+      if (tbody) {
+        tbody.innerHTML = openPositions.map(pos => {
+          var live = _getLivePrice(pos.ticker);
+          let currentPrice = live > 0 ? live : (pos.current_price || pos.entry_price);
 
-      tbody.innerHTML = openPositions.map(pos => {
-        var live = _getLivePrice(pos.ticker);
-        let currentPrice = live > 0 ? live : (pos.current_price || pos.entry_price);
+          const pnl = pos.position_type === 'LONG'
+            ? (currentPrice - pos.entry_price) * pos.quantity
+            : (pos.entry_price - currentPrice) * pos.quantity;
 
-        const pnl = pos.position_type === 'LONG'
-          ? (currentPrice - pos.entry_price) * pos.quantity
-          : (pos.entry_price - currentPrice) * pos.quantity;
+          const pnlColor  = pnl >= 0 ? '#089981' : '#FF5252';
+          const pnlBg     = pnl >= 0 ? 'rgba(8, 153, 129,0.12)' : 'rgba(255,82,82,0.12)';
+          const pnlBorder = pnl >= 0 ? 'rgba(8, 153, 129,0.25)' : 'rgba(255,82,82,0.25)';
+          const pnlPrefix = pnl >= 0 ? '+' : '-';
+          const isLong    = pos.position_type === 'LONG';
+          const typeBg    = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
+          const typeColor = isLong ? '#089981' : '#FF5252';
+          const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
 
-        const pnlColor  = pnl >= 0 ? '#089981' : '#FF5252';
-        const pnlBg     = pnl >= 0 ? 'rgba(8, 153, 129,0.08)' : 'rgba(255,82,82,0.08)';
-        const pnlPrefix = pnl >= 0 ? '+' : '-';
-        const isLong    = pos.position_type === 'LONG';
-        const typeBg    = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
-        const typeColor = isLong ? '#089981' : '#FF5252';
-        const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
+          const tpStr = pos.take_profit != null ? `<span style="color:#089981; font-weight:600;">TP ₹${pos.take_profit.toFixed(2)}</span>` : '<span style="color:#555;">—</span>';
+          const slStr = pos.stop_loss  != null ? `<span style="color:#FF5252; font-weight:600;">SL ₹${pos.stop_loss.toFixed(2)}</span>`  : '<span style="color:#555;">—</span>';
 
-        const tpStr = pos.take_profit != null ? `<span style="color:#089981; font-weight:600;">TP ₹${pos.take_profit.toFixed(2)}</span>` : '<span style="color:#555;">—</span>';
-        const slStr = pos.stop_loss  != null ? `<span style="color:#FF5252; font-weight:600;">SL ₹${pos.stop_loss.toFixed(2)}</span>`  : '<span style="color:#555;">—</span>';
+          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const nameDisplay   = pos.stock_name || '';
+          const logoTicker = tickerDisplay.split('.')[0];
 
-        const tickerDisplay = pos.ticker || '—';
-        const nameDisplay   = pos.stock_name || '';
+          return `
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;" 
+              onmouseover="this.style.background='rgba(255,255,255,0.03)'" 
+              onmouseout="this.style.background='transparent'">
+            <td style="padding:12px;">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <img src="/logos/${logoTicker}.svg" style="width:28px;height:28px;border-radius:50%;background:#1e1e1e;object-fit:contain;padding:2px;" onerror="this.style.display='none'">
+                <div>
+                  <div style="font-weight:600; color:#fff; font-size:0.9rem;">${tickerDisplay}</div>
+                  ${nameDisplay ? `<div style="font-size:0.75rem; color:#666; margin-top:1px;">${nameDisplay}</div>` : ''}
+                </div>
+              </div>
+            </td>
+            <td style="padding:12px;">
+              <span style="background:${typeBg}; color:${typeColor}; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px; letter-spacing:0.5px; white-space:nowrap;">${typeLabel}</span>
+            </td>
+            <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; font-weight:600; color:#d1d4dc;">${pos.quantity}</td>
+            <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">₹${pos.entry_price.toFixed(2)}</td>
+            <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#fff; font-weight:600;">₹${currentPrice.toFixed(2)}</td>
+            <td style="padding:12px; text-align:right;">
+              <span style="background:${pnlBg}; border:1px solid ${pnlBorder}; color:${pnlColor}; font-family:'Roboto Mono',monospace; font-weight:700; font-size:0.85rem; padding:4px 10px; border-radius:6px; white-space:nowrap;">
+                ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
+              </span>
+            </td>
+            <td style="padding:12px; text-align:right;">
+              <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; font-size:0.78rem;">
+                ${tpStr}${slStr}
+              </div>
+            </td>
+            <td style="padding:12px; text-align:right;" onclick="event.stopPropagation()">
+              <div style="display:flex; gap:6px; justify-content:flex-end; align-items:center;">
+                <button onclick="showEditLimitsModal(${pos.id ?? ''}, ${pos.take_profit ?? 'null'}, ${pos.stop_loss ?? 'null'}, ${pos.tp_edit_count ?? 0}, ${pos.sl_edit_count ?? 0})"
+                  style="background:rgba(74,144,226,0.1); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:600; transition:all 0.2s; white-space:nowrap;"
+                  onmouseover="this.style.background='rgba(74,144,226,0.2)'" onmouseout="this.style.background='rgba(74,144,226,0.1)'">
+                  Edit
+                </button>
+                <button onclick="closePosition(${pos.id ?? ''})"
+                  style="background:rgba(255,23,68,0.1); border:1px solid rgba(255,23,68,0.3); color:#FF5252; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:600; transition:all 0.2s; white-space:nowrap;"
+                  onmouseover="this.style.background='rgba(255,23,68,0.2)'" onmouseout="this.style.background='rgba(255,23,68,0.1)'">
+                  Close
+                </button>
+              </div>
+            </td>
+          </tr>`;
+        }).join('');
+      }
 
-        return `
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;" 
-            onmouseover="this.style.background='rgba(255,255,255,0.03)'" 
-            onmouseout="this.style.background='transparent'">
-          <td style="padding:14px 12px;">
-            <div style="display:flex; align-items:center; gap:10px;">
-              ${tickerDisplay && tickerDisplay.trim() !== '--' && tickerDisplay.trim() !== '—' ? '<img src="logos/' + tickerDisplay.trim().split('.')[0] + '.svg" style="width:28px;height:28px;border-radius:50%;background:#1e1e1e;object-fit:contain;padding:3px;" onerror="this.style.display=\'none\'">' : ''}
-              <div>
-                <div style="font-weight:600; color:#fff; font-size:0.9rem;">${tickerDisplay}</div>
-                ${nameDisplay ? `<div style="font-size:0.75rem; color:#666; margin-top:1px;">${nameDisplay}</div>` : ''}
+      // Generate mobile cards HTML
+      if (mobileList) {
+        mobileList.innerHTML = openPositions.map(pos => {
+          var live = _getLivePrice(pos.ticker);
+          let currentPrice = live > 0 ? live : (pos.current_price || pos.entry_price);
+
+          const pnl = pos.position_type === 'LONG'
+            ? (currentPrice - pos.entry_price) * pos.quantity
+            : (pos.entry_price - currentPrice) * pos.quantity;
+
+          const pnlColor  = pnl >= 0 ? '#089981' : '#FF5252';
+          const pnlBg     = pnl >= 0 ? 'rgba(8, 153, 129,0.12)' : 'rgba(255,82,82,0.12)';
+          const pnlBorder = pnl >= 0 ? 'rgba(8, 153, 129,0.25)' : 'rgba(255,82,82,0.25)';
+          const pnlPrefix = pnl >= 0 ? '+' : '-';
+          const isLong    = pos.position_type === 'LONG';
+          const typeBg    = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
+          const typeColor = isLong ? '#089981' : '#FF5252';
+          const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
+
+          const tpSlText = (pos.take_profit || pos.stop_loss)
+            ? `${pos.take_profit ? 'TP ₹' + pos.take_profit.toFixed(1) : ''}${pos.take_profit && pos.stop_loss ? ' ' : ''}${pos.stop_loss ? 'SL ₹' + pos.stop_loss.toFixed(1) : ''}`
+            : '—';
+
+          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const logoTicker = tickerDisplay.split('.')[0];
+
+          return `
+          <div class="pos-mobile-card">
+            <!-- Header: Stock Info + Inline P&L -->
+            <div class="pos-m-head">
+              <div class="pos-m-stock">
+                <img src="/logos/${logoTicker}.svg" class="pos-m-logo" onerror="this.style.display='none'">
+                <span class="pos-m-ticker">${tickerDisplay}</span>
+                <span class="pos-m-type" style="background:${typeBg}; color:${typeColor};">${typeLabel}</span>
+              </div>
+              <div class="pos-m-pnl" style="background:${pnlBg}; border:1px solid ${pnlBorder}; color:${pnlColor};">
+                ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
               </div>
             </div>
-          </td>
-          <td style="padding:14px 12px;">
-            <span style="background:${typeBg}; color:${typeColor}; font-size:0.75rem; font-weight:700; padding:4px 10px; border-radius:6px; letter-spacing:0.5px; white-space:nowrap;">${typeLabel}</span>
-          </td>
-          <td style="padding:14px 12px; text-align:right; font-family:'Roboto Mono',monospace; font-weight:600; color:#d1d4dc;">${pos.quantity}</td>
-          <td style="padding:14px 12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">₹${pos.entry_price.toFixed(2)}</td>
-          <td style="padding:14px 12px; text-align:right; font-family:'Roboto Mono',monospace; color:#fff; font-weight:600;">₹${currentPrice.toFixed(2)}</td>
-          <td style="padding:14px 12px; text-align:right;">
-            <span style="background:${pnlBg}; color:${pnlColor}; font-family:'Roboto Mono',monospace; font-weight:700; font-size:0.9rem; padding:4px 10px; border-radius:6px; white-space:nowrap;">
-              ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
-            </span>
-          </td>
-          <td style="padding:14px 12px; text-align:right;">
-            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:2px; font-size:0.78rem;">
-              ${tpStr}${slStr}
+
+            <!-- Stats Strip: Qty, Entry, CMP, Limits -->
+            <div class="pos-m-grid">
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">Qty</span>
+                <span class="pos-m-stat-val">${pos.quantity}</span>
+              </div>
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">Entry</span>
+                <span class="pos-m-stat-val">₹${pos.entry_price.toFixed(1)}</span>
+              </div>
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">CMP</span>
+                <span class="pos-m-stat-val" style="color:#fff; font-weight:700;">₹${currentPrice.toFixed(1)}</span>
+              </div>
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">TP / SL</span>
+                <span class="pos-m-stat-val" style="color:${pos.take_profit ? '#089981' : (pos.stop_loss ? '#FF5252' : '#888')}; font-size:0.68rem;">${tpSlText}</span>
+              </div>
             </div>
-          </td>
-          <td style="padding:14px 12px; text-align:right;" onclick="event.stopPropagation()">
-            <div style="display:flex; gap:6px; justify-content:flex-end; align-items:center;">
-              <button onclick="showEditLimitsModal(${pos.id ?? ''}, ${pos.take_profit ?? 'null'}, ${pos.stop_loss ?? 'null'}, ${pos.tp_edit_count ?? 0}, ${pos.sl_edit_count ?? 0})"
-                style="background:rgba(74,144,226,0.1); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:600; transition:all 0.2s; white-space:nowrap;"
-                onmouseover="this.style.background='rgba(74,144,226,0.2)'" onmouseout="this.style.background='rgba(74,144,226,0.1)'">
-                Edit
+
+            <!-- Actions Bar -->
+            <div class="pos-m-actions" onclick="event.stopPropagation()">
+              <button class="pos-m-btn-edit" onclick="showEditLimitsModal(${pos.id ?? ''}, ${pos.take_profit ?? 'null'}, ${pos.stop_loss ?? 'null'}, ${pos.tp_edit_count ?? 0}, ${pos.sl_edit_count ?? 0})">
+                <span>&#9998;</span> Edit TP/SL
               </button>
-              <button onclick="closePosition(${pos.id ?? ''})"
-                style="background:rgba(255,23,68,0.1); border:1px solid rgba(255,23,68,0.3); color:#FF5252; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:0.78rem; font-weight:600; transition:all 0.2s; white-space:nowrap;"
-                onmouseover="this.style.background='rgba(255,23,68,0.2)'" onmouseout="this.style.background='rgba(255,23,68,0.1)'">
-                Close
+              <button class="pos-m-btn-close" onclick="closePosition(${pos.id ?? ''})">
+                <span>&#10005;</span> Close
               </button>
             </div>
-          </td>
-        </tr>`;
-      }).join('');
+          </div>`;
+        }).join('');
+      }
     }
 
     let closedPositions = [];
@@ -556,67 +681,137 @@
 
     function renderClosedPositions() {
       const tbody = document.getElementById('closedPositionsBody');
+      const mobileList = document.getElementById('closedPositionsMobileList');
       const countEl = document.getElementById('closedPositionsCount');
       if (countEl) countEl.textContent = `(${closedPositions.length})`;
 
-      if (!tbody) return;
-
       if (closedPositions.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:#a1a1aa; font-size:0.9rem;">No closed trades yet.</td></tr>`;
+        const emptyMsg = '<div style="text-align:center; padding:24px 12px; color:#a1a1aa; font-size:0.88rem;">No closed trades yet.</div>';
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:24px; color:#a1a1aa; font-size:0.9rem;">No closed trades yet.</td></tr>`;
+        if (mobileList) mobileList.innerHTML = emptyMsg;
         return;
       }
 
-      tbody.innerHTML = closedPositions.map(pos => {
-        const isLong = pos.position_type === 'LONG';
-        const typeBg = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
-        const typeColor = isLong ? '#089981' : '#FF5252';
-        const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
+      if (tbody) {
+        tbody.innerHTML = closedPositions.map(pos => {
+          const isLong = pos.position_type === 'LONG';
+          const typeBg = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
+          const typeColor = isLong ? '#089981' : '#FF5252';
+          const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
 
-        const pnl = pos.realized_pnl != null ? pos.realized_pnl : 0;
-        const pnlColor = pnl >= 0 ? '#089981' : '#FF5252';
-        const pnlBg = pnl >= 0 ? 'rgba(8, 153, 129,0.08)' : 'rgba(255,82,82,0.08)';
-        const pnlPrefix = pnl >= 0 ? '+' : '';
+          const pnl = pos.realized_pnl != null ? pos.realized_pnl : 0;
+          const pnlColor = pnl >= 0 ? '#089981' : '#FF5252';
+          const pnlBg = pnl >= 0 ? 'rgba(8, 153, 129,0.08)' : 'rgba(255,82,82,0.08)';
+          const pnlBorder = pnl >= 0 ? 'rgba(8, 153, 129,0.25)' : 'rgba(255,82,82,0.25)';
+          const pnlPrefix = pnl >= 0 ? '+' : '';
 
-        // Badge styling for exit reason
-        let reasonBadge = '';
-        if (pos.exit_reason === 'TP_HIT') {
-          reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🎯 TP Hit</span>`;
-        } else if (pos.exit_reason === 'SL_HIT') {
-          reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🛑 SL Hit</span>`;
-        } else {
-          reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">✋ Manual Close</span>`;
-        }
+          // Badge styling for exit reason
+          let reasonBadge = '';
+          if (pos.exit_reason === 'TP_HIT') {
+            reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🎯 TP Hit</span>`;
+          } else if (pos.exit_reason === 'SL_HIT') {
+            reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🛑 SL Hit</span>`;
+          } else {
+            reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">✋ Manual Close</span>`;
+          }
 
-        const dateStr = pos.closed_at ? new Date(pos.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const logoTicker = tickerDisplay.split('.')[0];
+          const dateStr = pos.closed_at ? new Date(pos.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 
-        return `
-        <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;"
-            onmouseover="this.style.background='rgba(255,255,255,0.03)'"
-            onmouseout="this.style.background='transparent'">
-          <td style="padding:12px;">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <img src="logos/${pos.ticker.split('.')[0]}.svg" style="width:24px;height:24px;border-radius:50%;background:#1e1e1e;object-fit:contain;padding:2px;" onerror="this.style.display='none'">
-              <div>
-                <div style="font-weight:600; color:#fff; font-size:0.85rem;">${pos.ticker}</div>
-                <div style="font-size:0.72rem; color:#666;">${pos.stock_name || ''}</div>
+          return `
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.04); transition:background 0.15s;"
+              onmouseover="this.style.background='rgba(255,255,255,0.03)'"
+              onmouseout="this.style.background='transparent'">
+            <td style="padding:12px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <img src="/logos/${logoTicker}.svg" style="width:24px;height:24px;border-radius:50%;background:#1e1e1e;object-fit:contain;padding:2px;" onerror="this.style.display='none'">
+                <div>
+                  <div style="font-weight:600; color:#fff; font-size:0.85rem;">${tickerDisplay}</div>
+                  <div style="font-size:0.72rem; color:#666;">${pos.stock_name || ''}</div>
+                </div>
+              </div>
+            </td>
+            <td style="padding:12px;">
+              <span style="background:${typeBg}; color:${typeColor}; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; letter-spacing:0.5px; white-space:nowrap;">${typeLabel}</span>
+            </td>
+            <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; font-weight:600; color:#d1d4dc;">${pos.quantity}</td>
+            <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">₹${pos.entry_price.toFixed(2)}</td>
+            <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">${pos.closing_price != null ? '₹' + pos.closing_price.toFixed(2) : '—'}</td>
+            <td style="padding:12px; text-align:center;">${reasonBadge}</td>
+            <td style="padding:12px; text-align:right;">
+              <span style="font-family:'Roboto Mono',monospace; font-weight:700; font-size:0.85rem; color:${pnlColor}; background:${pnlBg}; border:1px solid ${pnlBorder}; padding:3px 8px; border-radius:6px;">
+                ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
+              </span>
+            </td>
+            <td style="padding:12px; text-align:right; color:#888; font-size:0.75rem; white-space:nowrap;">${dateStr}</td>
+          </tr>`;
+        }).join('');
+      }
+
+      if (mobileList) {
+        mobileList.innerHTML = closedPositions.map(pos => {
+          const isLong = pos.position_type === 'LONG';
+          const typeBg = isLong ? 'rgba(0,200,83,0.12)' : 'rgba(255,23,68,0.12)';
+          const typeColor = isLong ? '#089981' : '#FF5252';
+          const typeLabel = isLong ? '▲ LONG' : '▼ SHORT';
+
+          const pnl = pos.realized_pnl != null ? pos.realized_pnl : 0;
+          const pnlColor = pnl >= 0 ? '#089981' : '#FF5252';
+          const pnlBg = pnl >= 0 ? 'rgba(8, 153, 129,0.12)' : 'rgba(255,82,82,0.12)';
+          const pnlBorder = pnl >= 0 ? 'rgba(8, 153, 129,0.25)' : 'rgba(255,82,82,0.25)';
+          const pnlPrefix = pnl >= 0 ? '+' : '';
+
+          let reasonBadge = '';
+          if (pos.exit_reason === 'TP_HIT') {
+            reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">🎯 TP</span>`;
+          } else if (pos.exit_reason === 'SL_HIT') {
+            reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">🛑 SL</span>`;
+          } else {
+            reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">✋ Manual</span>`;
+          }
+
+          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const logoTicker = tickerDisplay.split('.')[0];
+          const dateStr = pos.closed_at ? new Date(pos.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+
+          return `
+          <div class="pos-mobile-card">
+            <!-- Header -->
+            <div class="pos-m-head">
+              <div class="pos-m-stock">
+                <img src="/logos/${logoTicker}.svg" class="pos-m-logo" onerror="this.style.display='none'">
+                <span class="pos-m-ticker">${tickerDisplay}</span>
+                <span class="pos-m-type" style="background:${typeBg}; color:${typeColor};">${typeLabel}</span>
+                ${reasonBadge}
+              </div>
+              <div class="pos-m-pnl" style="background:${pnlBg}; border:1px solid ${pnlBorder}; color:${pnlColor};">
+                ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
               </div>
             </div>
-          </td>
-          <td style="padding:12px;">
-            <span style="background:${typeBg}; color:${typeColor}; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; letter-spacing:0.5px; white-space:nowrap;">${typeLabel}</span>
-          </td>
-          <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; font-weight:600; color:#d1d4dc;">${pos.quantity}</td>
-          <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">₹${pos.entry_price.toFixed(2)}</td>
-          <td style="padding:12px; text-align:right; font-family:'Roboto Mono',monospace; color:#d1d4dc;">${pos.closing_price != null ? '₹' + pos.closing_price.toFixed(2) : '—'}</td>
-          <td style="padding:12px; text-align:center;">${reasonBadge}</td>
-          <td style="padding:12px; text-align:right;">
-            <span style="font-family:'Roboto Mono',monospace; font-weight:700; font-size:0.85rem; color:${pnlColor}; background:${pnlBg}; padding:3px 8px; border-radius:4px;">
-              ${pnlPrefix}₹${Math.abs(pnl).toFixed(2)}
-            </span>
-          </td>
-          <td style="padding:12px; text-align:right; color:#888; font-size:0.75rem; white-space:nowrap;">${dateStr}</td>
-        </tr>`;
-      }).join('');
+
+            <!-- Stats Strip: Qty, Entry, Exit, Date -->
+            <div class="pos-m-grid">
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">Qty</span>
+                <span class="pos-m-stat-val">${pos.quantity}</span>
+              </div>
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">Entry</span>
+                <span class="pos-m-stat-val">₹${pos.entry_price.toFixed(1)}</span>
+              </div>
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">Exit</span>
+                <span class="pos-m-stat-val" style="color:#fff; font-weight:700;">${pos.closing_price != null ? '₹' + pos.closing_price.toFixed(1) : '—'}</span>
+              </div>
+              <div class="pos-m-stat">
+                <span class="pos-m-stat-lbl">Closed</span>
+                <span class="pos-m-stat-val" style="color:#a1a1aa; font-size:0.68rem;">${dateStr}</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      }
     }
 
     function togglePositionsPanel() {
@@ -704,7 +899,7 @@
 
             return `<tr>
               <td class="ticker-cell">
-                ${pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—' ? '<img src="logos/' + pos.ticker.trim().split('.')[0] + '.svg" class="stock-logo" onerror="this.style.display=\'none\'">' : ''}
+                ${pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—' ? '<img src="/logos/' + pos.ticker.trim().split('.')[0] + '.svg" class="stock-logo" onerror="this.style.display=\'none\'">' : ''}
                 ${pos.ticker || '--'}
               </td>
               <td><span class="badge" style="color: #fff; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700;">${pos.position_type}</span></td>
@@ -762,7 +957,7 @@
                 <td><span class="badge" style="background: rgba(255,255,255,0.1); padding: 2px 8px; border-radius: 4px; font-size: 11px; color: #fff; font-weight: 700;">${statusName}</span></td>
                 <td>${txn.position_type ? `<span class="badge" style="color: #fff; background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700;">${txn.position_type}</span>` : '-'}</td>
                 <td class="ticker-cell" style="font-weight: 700;">
-                  ${txn.ticker && txn.ticker !== '--' && txn.ticker.trim() ? `<img src="logos/${txn.ticker.split('.')[0]}.svg" class="stock-logo" onerror="this.style.display='none'">${txn.ticker}` : '-'}
+                  ${txn.ticker && txn.ticker !== '--' && txn.ticker.trim() ? `<img src="/logos/${txn.ticker.split('.')[0]}.svg" class="stock-logo" onerror="this.style.display='none'">${txn.ticker}` : '-'}
                 </td>
                 <td class="mono" style="color: ${amountColor};">₹${Math.abs(txn.amount).toFixed(2)}</td>
                 <td class="mono" style="color: ${pnlColor};">${pnl ? (pnl >= 0 ? '+' : '-') + '₹' + Math.abs(pnl).toFixed(2) : '-'}</td>
@@ -978,22 +1173,29 @@
         }
 
         if (res.ok) {
-          // Update balance
-          const user = JSON.parse(sessionStorage.getItem('user') || '{}');
-          user.virtual_balance = data.balance;
-          sessionStorage.setItem('user', JSON.stringify(user));
-          var ub = document.getElementById('userBalance'); if (ub) ub.textContent = `₹${data.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+          // Update balance safely
+          if (data && data.balance != null) {
+            const user = JSON.parse(sessionStorage.getItem('user') || '{}');
+            user.virtual_balance = data.balance;
+            sessionStorage.setItem('user', JSON.stringify(user));
+            var ub = document.getElementById('userBalance');
+            if (ub) ub.textContent = `₹${Number(data.balance).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+          }
 
           // Hide close confirmation modal
           hideClosePositionModal();
 
           // Show success modal with P&L
-          const pnl = data.realized_pnl || 0;
+          const pnl = (data && data.realized_pnl != null) ? data.realized_pnl : 0;
           const pnlColor = pnl >= 0 ? '#26a69a' : '#ef5350';
           const pnlSign = pnl >= 0 ? '+' : '';
-          document.getElementById('closedPnlAmount').textContent = `${pnlSign}₹${pnl.toFixed(2)}`;
-          document.getElementById('closedPnlAmount').style.color = pnlColor;
-          document.getElementById('positionClosedSuccessModal').style.display = 'flex';
+          var pnlEl = document.getElementById('closedPnlAmount');
+          if (pnlEl) {
+            pnlEl.textContent = `${pnlSign}₹${Number(pnl).toFixed(2)}`;
+            pnlEl.style.color = pnlColor;
+          }
+          var succModal = document.getElementById('positionClosedSuccessModal');
+          if (succModal) succModal.style.display = 'flex';
 
           // Reload positions
           loadOpenPositions();
@@ -1435,12 +1637,27 @@
       else { startPositionsPoll(); loadOpenPositions(); }
     });
 
-    // Load positions on page load
+    // Load positions on page load & check URL action parameters
     document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(loadOpenPositions, 2000);
+      setTimeout(loadOpenPositions, 1500);
       setTimeout(startPositionsPoll, 5000);
       connectUserWebSocket();
       
+      // Auto-open Trade Modal if action query param is present (e.g. from overview.html Buy/Sell)
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const action = (urlParams.get('action') || '').toLowerCase();
+        if (action === 'buy' || action === 'long') {
+          setTimeout(() => showTradeModal('LONG'), 300);
+        } else if (action === 'sell' || action === 'short') {
+          setTimeout(() => showTradeModal('SHORT'), 300);
+        } else if (action === 'trade') {
+          setTimeout(() => showTradeModal('LONG'), 300);
+        }
+      } catch (e) {
+        console.error('Failed to parse URL action param:', e);
+      }
+
       const panel = document.getElementById('openPositionsPanel');
       if (panel) {
         new MutationObserver(() => {

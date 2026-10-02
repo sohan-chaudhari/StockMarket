@@ -321,7 +321,9 @@ function showError() {
 function renderNews(articles) {
     // Sort by published_at (newest first)
     const sortedArticles = [...articles].sort((a, b) => {
-        return new Date(b.published_at) - new Date(a.published_at);
+        const da = Date.parse(a.published_at) || 0;
+        const db = Date.parse(b.published_at) || 0;
+        return db - da;
     });
 
     const html = sortedArticles.map(article => createNewsCard(article)).join('');

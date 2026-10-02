@@ -287,31 +287,10 @@ try {
 
             // Close submenus on click outside
             document.addEventListener('click', (e) => {
-                console.log(`[EVENT] Document click target:`, e.target);
-                this.logDrawingState('document_click');
-                if (!e.target.closest('.toolbar-item')) {
+                if (!e.target.closest('.toolbar-item') && !e.target.closest('.drawing-submenu') && !e.target.closest('#drawing-toolbar') && !e.target.closest('.emoji-picker-panel')) {
                     this.closeAllSubmenus();
                 }
             });
-
-            // Bind pointerdown to all submenu items via delegation to ensure immediate activation
-            // even if clicked while scrolling or moving, avoiding browser click cancellation.
-            document.addEventListener('pointerdown', (e) => {
-                if (e.target.closest('.favorite-star-btn')) {
-                    return;
-                }
-                const item = e.target.closest('.submenu-item');
-                if (item) {
-                    const toolId = item.getAttribute('data-tool-id');
-                    const onclickAttr = item.getAttribute('onclick') || '';
-                    const match = onclickAttr.match(/activateTool\(['"]([^'"]+)['"]/);
-                    const key = toolId || (match && match[1]);
-                    if (key) {
-                        console.log(`[EVENT] pointerdown captured on submenu-item: ${key}`);
-                        window.activateTool(key, e);
-                    }
-                }
-            }, { capture: true });
 
             // PARENT INTERACTION LAYER (Crucial for "Click-Through" behavior)
             // We listen on the chart-container in Capture phase to intercept events 
@@ -327,10 +306,32 @@ try {
                     chartContainer.addEventListener('pointerdown', (e) => this.handleContainerMouseDown(e), { capture: true });
                     chartContainer.addEventListener('pointermove', (e) => this.handleContainerMouseMove(e), { capture: true });
                     chartContainer.addEventListener('pointerup', (e) => this.handleContainerMouseUp(e), { capture: true });
+                    chartContainer.addEventListener('pointercancel', (e) => this.handleContainerMouseUp(e), { capture: true });
                     chartContainer.addEventListener('dblclick', (e) => this.handleContainerDoubleClick(e), { capture: true });
                     chartContainer.addEventListener('contextmenu', (e) => this.handleContainerContextMenu(e), { capture: true });
+
+                    // Mobile Touch Interceptors: Prevent chart scrolling/panning during tool drawing or tool dragging
+                    var handleTouchCapture = (e) => {
+                        var isDragging = this.isDrawing || this.isDraggingHandle || this.isDraggingDrawing;
+                        var isDrawingToolActive = this.activeTool && this.activeTool.type !== 'cursor';
+                        if (isDragging || isDrawingToolActive) {
+                            if (e.cancelable) e.preventDefault();
+                            e.stopPropagation();
+                            e.stopImmediatePropagation();
+                        }
+                    };
+                    chartContainer.addEventListener('touchstart', handleTouchCapture, { capture: true, passive: false });
+                    chartContainer.addEventListener('touchmove', handleTouchCapture, { capture: true, passive: false });
+                    chartContainer.addEventListener('touchend', handleTouchCapture, { capture: true, passive: false });
+                    chartContainer.addEventListener('touchcancel', handleTouchCapture, { capture: true, passive: false });
+
                     // Also add window-level safety pointerup to ensure drag termination (C-2)
                     window.addEventListener('pointerup', (e) => {
+                        if (this.isDraggingHandle || this.isDraggingDrawing) {
+                            this.handleContainerMouseUp(e);
+                        }
+                    }, { capture: true });
+                    window.addEventListener('touchend', (e) => {
                         if (this.isDraggingHandle || this.isDraggingDrawing) {
                             this.handleContainerMouseUp(e);
                         }
@@ -347,7 +348,7 @@ try {
         // These run BEFORE the Chart or Canvas gets the event.
 
         handleContainerMouseDown(e) {
-            if (e.button !== 0) return;
+            if (e.button !== undefined && e.button !== 0) return;
             if (this._justActivatedTool) return;
             if (e.target.closest('.toolbar-item, .drawing-submenu, .drawing-toolbar, .left-toolbar, .submenu-item, #drawing-toolbar, #left-toolbar, .style-panel, .floating-panel, button, input, select')) {
                 return;
@@ -361,6 +362,9 @@ try {
             this.mouseDownPos = pos;
 
             if (isDrawingToolActive) {
+                e.stopPropagation();
+                if (e.cancelable) e.preventDefault();
+                this._disableChartScroll();
                 if (!this.isDrawing) {
                     this.isDrawing = true;
                     this.updatePointerEvents();
@@ -391,7 +395,7 @@ try {
                 var handleHit = this.hitTestHandles(pos, this.selectedDrawing, chartState);
                 if (handleHit) {
                     e.stopPropagation();
-                    e.preventDefault();
+                    if (e.cancelable) e.preventDefault();
                     this.isDraggingHandle = true;
                     this.draggedHandle = handleHit;
                     this.dragDrawing = this.selectedDrawing;
@@ -399,6 +403,7 @@ try {
                     this.dragStartTargetPrice = this.selectedDrawing.targetPrice;
                     this.dragStartStopPrice = this.selectedDrawing.stopPrice;
                     this.dragStartEntryPrice = this.selectedDrawing.entryPrice;
+                    this._disableChartScroll();
                     this.updatePointerEvents();
                     this.engine.stopAutoScroll();
                     return;
@@ -411,7 +416,7 @@ try {
 
             if (hitDrawing && !hitDrawing.locked) {
                 e.stopPropagation();
-                e.preventDefault();
+                if (e.cancelable) e.preventDefault();
                 this._selectDrawing(hitDrawing);
                 this.dragStartCoords = hitDrawing.coords ? JSON.parse(JSON.stringify(hitDrawing.coords)) : null;
                 this.dragStartTargetPrice = hitDrawing.targetPrice;
@@ -425,6 +430,7 @@ try {
                 } else {
                     this.isDraggingDrawing = true;
                 }
+                this._disableChartScroll();
                 this.updatePointerEvents();
                 this.engine.stopAutoScroll();
                 this.redraw();
@@ -500,7 +506,7 @@ try {
                         var handleArg = (this.draggedHandle && this.draggedHandle.hitType === 'edge')
                             ? this.draggedHandle.handleLabel
                             : this.draggedHandle;
-                        this.dragDrawing.updateHandle(handleArg, coord.price, chartState, dp.x);
+                        this.dragDrawing.updateHandle(handleArg, coord.price, chartState, dp.x, dp.y);
                     }
                     this.redraw();
                 }
@@ -633,7 +639,7 @@ try {
 
             if (this.isDraggingHandle) {
                 e.stopPropagation();
-                e.preventDefault();
+                if (e.cancelable) e.preventDefault();
                 if (this.dragDrawing && this.dragDrawing.model) {
                     this.engine.syncAndCapture(this.dragDrawing, 'resize');
                     this.engine.saveNow();
@@ -645,13 +651,14 @@ try {
                 this.dragDrawing = null;
                 this.containerMouseDownPos = null;
                 this.updatePointerEvents();
+                this._enableChartScroll();
                 this.redraw();
                 return;
             }
 
             if (this.isDraggingDrawing) {
                 e.stopPropagation();
-                e.preventDefault();
+                if (e.cancelable) e.preventDefault();
                 var sel = this.selectedDrawing;
                 if (sel && typeof sel._invalidateCache === 'function') {
                     sel._invalidateCache();
@@ -666,6 +673,7 @@ try {
                 this.dragStartCoords = null;
                 this.containerMouseDownPos = null;
                 this.updatePointerEvents();
+                this._enableChartScroll();
                 this.redraw();
                 return;
             }
@@ -882,10 +890,45 @@ try {
 
         resizeCanvas() {
             if (this.container && this.canvas) {
+                var chart = window.bigChart || window.chart;
                 var dpr = window.devicePixelRatio || 1;
-                var rect = this.container.getBoundingClientRect();
-                this.canvas.width = Math.round(rect.width * dpr);
-                this.canvas.height = Math.round(rect.height * dpr);
+                var parentElem = this.chartContainer || (this.container ? this.container.parentElement : null) || document.getElementById('chart-container');
+                var parentRect = parentElem ? parentElem.getBoundingClientRect() : null;
+
+                var plotWidth = 0;
+                var plotHeight = 0;
+
+                if (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') {
+                    plotWidth = chart.timeScale().width();
+                }
+                if (chart && typeof chart.paneSize === 'function') {
+                    var ps = chart.paneSize();
+                    if (ps && ps.height > 0) plotHeight = ps.height;
+                }
+
+                var priceScaleWidth = (window.innerWidth <= 480 ? 54 : (window.innerWidth <= 768 ? 58 : 68));
+                var timeScaleHeight = 28;
+
+                if (parentRect) {
+                    if (plotWidth <= 0) plotWidth = Math.max(0, parentRect.width - priceScaleWidth);
+                    if (plotHeight <= 0) plotHeight = Math.max(0, parentRect.height - timeScaleHeight);
+                }
+
+                if (plotWidth > 0) {
+                    this.container.style.width = plotWidth + 'px';
+                }
+                if (plotHeight > 0) {
+                    this.container.style.height = plotHeight + 'px';
+                }
+                this.container.style.overflow = 'hidden';
+
+                var w = plotWidth || (parentRect ? parentRect.width - priceScaleWidth : 800);
+                var h = plotHeight || (parentRect ? parentRect.height - timeScaleHeight : 500);
+
+                this.canvas.width = Math.round(w * dpr);
+                this.canvas.height = Math.round(h * dpr);
+                this.canvas.style.width = w + 'px';
+                this.canvas.style.height = h + 'px';
                 this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 this.redraw();
             }
@@ -900,6 +943,18 @@ try {
             if (!lr) return false;
             var width = chart.timeScale().width() || 500;
             var height = this.canvas ? this.canvas.height / (window.devicePixelRatio || 1) : 500;
+
+            if (this.container && width > 0) {
+                var currentW = parseFloat(this.container.style.width) || 0;
+                if (Math.abs(currentW - width) > 1) {
+                    this.container.style.width = width + 'px';
+                    var dpr = window.devicePixelRatio || 1;
+                    this.canvas.width = Math.round(width * dpr);
+                    this.canvas.style.width = width + 'px';
+                    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                }
+            }
+
             if (series) {
                 var priceTop = series.coordinateToPrice(0);
                 var priceBottom = series.coordinateToPrice(height);
@@ -915,6 +970,36 @@ try {
             }
             // Viewport update skipped (series not ready) — redraw will retry on next cycle
             return false;
+        }
+
+        _disableChartScroll() {
+            var chart = window.bigChart || window.chart || (this.chartContainer && this.chartContainer._chart);
+            if (chart && typeof chart.applyOptions === 'function') {
+                try {
+                    chart.applyOptions({
+                        handleScroll: false,
+                        handleScale: false
+                    });
+                } catch(e) {}
+            }
+            if (this.chartContainer) {
+                this.chartContainer.style.touchAction = 'none';
+            }
+        }
+
+        _enableChartScroll() {
+            var chart = window.bigChart || window.chart || (this.chartContainer && this.chartContainer._chart);
+            if (chart && typeof chart.applyOptions === 'function') {
+                try {
+                    chart.applyOptions({
+                        handleScroll: true,
+                        handleScale: true
+                    });
+                } catch(e) {}
+            }
+            if (this.chartContainer) {
+                this.chartContainer.style.touchAction = '';
+            }
         }
 
         updatePointerEvents() {
@@ -934,6 +1019,12 @@ try {
             }
             if (this.container && this.container.style.pointerEvents !== val) {
                 this.container.style.pointerEvents = val;
+            }
+
+            if (this.isDrawing || this.isDraggingDrawing || this.isDraggingHandle || (this.activeTool && this.activeTool.type !== 'cursor')) {
+                this._disableChartScroll();
+            } else {
+                this._enableChartScroll();
             }
         }
 
@@ -1001,8 +1092,17 @@ try {
 
         getMousePos(e, allowSnap = true) {
             const rect = this.canvas.getBoundingClientRect();
-            let x = e.clientX - rect.left;
-            let y = e.clientY - rect.top;
+            let clientX = e.clientX;
+            let clientY = e.clientY;
+            if (clientX === undefined && e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else if (clientX === undefined && e.changedTouches && e.changedTouches.length > 0) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            }
+            let x = (clientX !== undefined ? clientX : 0) - rect.left;
+            let y = (clientY !== undefined ? clientY : 0) - rect.top;
 
             // Long Position and Short Position do not use magnet snap
             if (this.activeTool && (this.activeTool.key === 'long_position' || this.activeTool.key === 'short_position')) {
@@ -1262,6 +1362,19 @@ try {
         redraw() {
             if (!this.ctx) return;
             var dpr = window.devicePixelRatio || 1;
+            var chart = window.bigChart || window.chart;
+            var plotWidth = this.canvas.width / dpr;
+            var plotHeight = this.canvas.height / dpr;
+
+            if (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') {
+                var tw = chart.timeScale().width();
+                if (tw > 0) plotWidth = tw;
+            }
+            if (chart && typeof chart.paneSize === 'function') {
+                var ps = chart.paneSize();
+                if (ps && ps.height > 0) plotHeight = ps.height;
+            }
+
             this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             this.ctx.clearRect(0, 0, this.canvas.width / dpr, this.canvas.height / dpr);
 
@@ -1269,6 +1382,12 @@ try {
 
             const chartState = this.getChartState();
             if (!chartState) return;
+
+            // Clip all drawing renders strictly within the candle chart plotting area (never overflow onto right Y-axis price scale)
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(0, 0, plotWidth, plotHeight);
+            this.ctx.clip();
 
             // Update engine canvas dimensions
             this.engine.setCanvas(this.canvas, dpr);
@@ -1297,6 +1416,8 @@ try {
                 this.ctx.setLineDash([]);
                 this.ctx.restore();
             }
+
+            this.ctx.restore();
         }
 
         logDrawingState(context) {
@@ -1495,7 +1616,7 @@ try {
     // wouldn't map to anything real. Only classic Pitchfork still uses a
     // single fillColor.
     var _spFillTypes = { Rectangle: 1, ParallelChannel: 1, FlatTopChannel: 1, FlatBottomChannel: 1, DisjointChannel: 1, RegressionTrend: 1, Pitchfork: 1 };
-    var _spTextTypes = { TextDrawing: 1, PriceLabel: 1, EmojiDrawing: 1 };
+    var _spTextTypes = { TextDrawing: 1, PriceLabel: 1 };
 
     class DrawingStylePanel {
         constructor(tm) {
@@ -1540,11 +1661,24 @@ try {
                 '</div>' +
                 '<div class="sp-row sp-font-row" id="sp-font-row">' +
                     '<label class="sp-label">Font</label>' +
-                    '<input type="number" class="sp-font-size" id="sp-font-size" min="8" max="24" step="1" value="11">' +
+                    '<input type="number" class="sp-font-size" id="sp-font-size" min="8" max="120" step="1" value="11">' +
                 '</div>' +
-                '<div class="sp-row sp-emoji-row" id="sp-emoji-row" style="display:none;align-items:center;">' +
+                '<div class="sp-row sp-emoji-row" id="sp-emoji-row" style="display:none;align-items:center;gap:6px;">' +
                     '<label class="sp-label">Emoji</label>' +
-                    '<button class="sp-emoji-btn" id="sp-emoji-btn" style="background:#2a2e39;color:#d1d4dc;border:1px solid #363a45;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:16px;min-width:40px;">📌</button>' +
+                    '<button class="sp-emoji-btn" id="sp-emoji-btn" style="background:#2a2e39;color:#d1d4dc;border:1px solid #363a45;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:18px;min-width:38px;line-height:1;" title="Click to change emoji">📈</button>' +
+                    '<label class="sp-label" style="min-width:auto;margin-left:4px;">Size</label>' +
+                    '<input type="range" class="sp-emoji-size" id="sp-emoji-size" min="14" max="140" step="2" value="28" style="flex:1;min-width:60px;">' +
+                    '<span class="sp-emoji-size-val" id="sp-emoji-size-val" style="font-size:11px;color:#d1d4dc;min-width:32px;text-align:right;">28px</span>' +
+                '</div>' +
+                '<div class="sp-row sp-emoji-presets-row" id="sp-emoji-presets-row" style="display:none;align-items:center;gap:4px;">' +
+                    '<label class="sp-label">Preset</label>' +
+                    '<div class="sp-width-group" id="sp-emoji-preset-group">' +
+                        '<button data-size="20" title="Small (20px)">S</button>' +
+                        '<button data-size="32" title="Medium (32px)">M</button>' +
+                        '<button data-size="48" title="Large (48px)">L</button>' +
+                        '<button data-size="64" title="Extra Large (64px)">XL</button>' +
+                        '<button data-size="96" title="Huge (96px)">2X</button>' +
+                    '</div>' +
                 '</div>' +
                 '<div class="sp-divider sp-regression-row" id="sp-regression-divider"></div>' +
                 '<div class="sp-row sp-regression-row" id="sp-regression-source-row">' +
@@ -1666,13 +1800,58 @@ try {
                 setAndSave(function (d) { d.style.fillOpacity = val; });
             });
 
-            // Font size
+            // Font size (Text Drawings)
             this._on('#sp-font-size', 'change', function () {
                 var val = parseInt(this.value, 10);
                 if (isNaN(val) || val < 8) val = 8;
-                if (val > 24) val = 24;
+                if (val > 120) val = 120;
                 this.value = val;
-                setAndSave(function (d) { d.style.fontSize = val; });
+                setAndSave(function (d) { 
+                    d.style.fontSize = val; 
+                    if (d._invalidateCache) d._invalidateCache();
+                });
+            });
+
+            // Emoji size slider
+            this._on('#sp-emoji-size', 'change', function () {
+                var val = parseInt(this.value, 10);
+                if (isNaN(val) || val < 10) val = 10;
+                setAndSave(function (d) {
+                    d.style.fontSize = val;
+                    if (d._invalidateCache) d._invalidateCache();
+                });
+                var valEl = document.getElementById('sp-emoji-size-val');
+                if (valEl) valEl.textContent = val + 'px';
+                self._updateEmojiPresetActive(val);
+            });
+            this._on('#sp-emoji-size', 'input', function () {
+                var val = parseInt(this.value, 10);
+                var valEl = document.getElementById('sp-emoji-size-val');
+                if (valEl) valEl.textContent = val + 'px';
+                var d = getDrawing();
+                if (d) {
+                    d.style.fontSize = val;
+                    if (d._invalidateCache) d._invalidateCache();
+                    self.tm.redraw();
+                }
+                self._updateEmojiPresetActive(val);
+            });
+
+            // Emoji preset buttons (S, M, L, XL, 2X)
+            this._on('#sp-emoji-preset-group', 'click', function (e) {
+                var btn = e.target.closest('button[data-size]');
+                if (!btn) return;
+                var size = parseInt(btn.getAttribute('data-size'), 10);
+                if (isNaN(size)) return;
+                setAndSave(function (d) {
+                    d.style.fontSize = size;
+                    if (d._invalidateCache) d._invalidateCache();
+                });
+                var slider = document.getElementById('sp-emoji-size');
+                if (slider) slider.value = size;
+                var valEl = document.getElementById('sp-emoji-size-val');
+                if (valEl) valEl.textContent = size + 'px';
+                self._updateEmojiPresetActive(size);
             });
 
             // Show label
@@ -1681,7 +1860,7 @@ try {
                 setAndSave(function (d) { d.style.showLabel = checked; });
             });
 
-            // Emoji button clicked in Style Panel
+            // Emoji button clicked in Style Panel -> opens rich emoji picker
             this._on('#sp-emoji-btn', 'click', function (e) {
                 e.stopPropagation();
                 if (window.showEmojiPickerForStylePanel) {
@@ -1771,6 +1950,15 @@ try {
             });
         }
 
+        _updateEmojiPresetActive(size) {
+            var group = this._el.querySelector('#sp-emoji-preset-group');
+            if (!group) return;
+            group.querySelectorAll('button').forEach(function (btn) {
+                var s = parseInt(btn.getAttribute('data-size'), 10);
+                btn.classList.toggle('active', s === size);
+            });
+        }
+
         show(drawing) {
             var s = drawing.style;
             var cname = (drawing.constructor && drawing.constructor.name) || '';
@@ -1808,8 +1996,15 @@ try {
             }
 
             // Populate fields
+            var isEmoji = cname === 'EmojiDrawing' || (drawing.getObjectDef && drawing.getObjectDef() && (drawing.getObjectDef().geometry === RichGeometry.EMOJI || (drawing.getObjectDef().defaults && drawing.getObjectDef().defaults.emoji)));
+
             var colorEl = document.getElementById('sp-color');
-            if (colorEl) colorEl.value = s.color || '#2962ff';
+            var colorLabelEl = colorEl ? colorEl.previousElementSibling : null;
+            if (colorEl) {
+                colorEl.value = s.color || '#2962ff';
+                colorEl.style.display = isEmoji ? 'none' : '';
+            }
+            if (colorLabelEl) colorLabelEl.style.display = isEmoji ? 'none' : '';
 
             var opacityEl = document.getElementById('sp-opacity');
             if (opacityEl) opacityEl.value = s.opacity != null ? s.opacity : 1;
@@ -1825,6 +2020,10 @@ try {
             }
             this._updateStyleActive(dashStyle);
 
+            var widthGroupEl = document.getElementById('sp-width-group');
+            var widthRowEl = widthGroupEl ? widthGroupEl.parentElement : null;
+            if (widthRowEl) widthRowEl.style.display = isEmoji ? 'none' : 'flex';
+
             var fillRow = document.getElementById('sp-fill-row');
             if (fillRow) fillRow.style.display = _spFillTypes[cname] ? 'flex' : 'none';
 
@@ -1835,13 +2034,16 @@ try {
             if (fillOpacityEl) fillOpacityEl.value = s.fillOpacity != null ? s.fillOpacity : 0;
 
             var fontRow = document.getElementById('sp-font-row');
-            if (fontRow) fontRow.style.display = _spTextTypes[cname] ? 'flex' : 'none';
+            if (fontRow) fontRow.style.display = (_spTextTypes[cname] && !isEmoji) ? 'flex' : 'none';
 
             var fontSizeEl = document.getElementById('sp-font-size');
             if (fontSizeEl) fontSizeEl.value = s.fontSize || 11;
 
             var showLabelEl = document.getElementById('sp-show-label');
-            if (showLabelEl) showLabelEl.checked = s.showLabel !== false;
+            if (showLabelEl) {
+                showLabelEl.checked = s.showLabel !== false;
+                if (showLabelEl.parentElement) showLabelEl.parentElement.style.display = isEmoji ? 'none' : '';
+            }
 
             var lockedEl = document.getElementById('sp-locked');
             if (lockedEl) lockedEl.checked = drawing.locked || false;
@@ -1849,18 +2051,25 @@ try {
             var hiddenEl = document.getElementById('sp-hidden');
             if (hiddenEl) hiddenEl.checked = drawing.hidden || false;
 
-            var isEmoji = cname === 'EmojiDrawing';
             var emojiRow = document.getElementById('sp-emoji-row');
+            var emojiPresetsRow = document.getElementById('sp-emoji-presets-row');
             if (emojiRow) emojiRow.style.display = isEmoji ? 'flex' : 'none';
+            if (emojiPresetsRow) emojiPresetsRow.style.display = isEmoji ? 'flex' : 'none';
             if (isEmoji) {
                 var emojiBtn = document.getElementById('sp-emoji-btn');
                 if (emojiBtn) {
-                    var plainEmoji = (drawing.model && drawing.model.content && drawing.model.content.plain) || drawing.content || '📌';
+                    var plainEmoji = (drawing.model && drawing.model.content && drawing.model.content.plain) || drawing.content || '📈';
                     if (typeof plainEmoji === 'object' && plainEmoji.plain) {
                         plainEmoji = plainEmoji.plain;
                     }
-                    emojiBtn.textContent = typeof plainEmoji === 'string' ? plainEmoji : '📌';
+                    emojiBtn.textContent = typeof plainEmoji === 'string' ? plainEmoji : '📈';
                 }
+                var curEmojiSize = s.fontSize || 28;
+                var emojiSlider = document.getElementById('sp-emoji-size');
+                if (emojiSlider) emojiSlider.value = curEmojiSize;
+                var emojiValEl = document.getElementById('sp-emoji-size-val');
+                if (emojiValEl) emojiValEl.textContent = curEmojiSize + 'px';
+                this._updateEmojiPresetActive(curEmojiSize);
             }
 
             // Position below the drawing toolbar, then clamp so it can't render off-screen
@@ -10092,7 +10301,7 @@ try {
             geometry: RichGeometry.EMOJI,
             points: 1,
             anchorMeta: [{label:''}],
-            defaults: { layer: Layer.DRAWINGS_ABOVE, emoji: '📌', fontSize: 24 }
+            defaults: { layer: Layer.DRAWINGS_BELOW, emoji: '📌', fontSize: 28, behindCandles: true }
         },
         icon: {
             geometry: RichGeometry.ICON,
@@ -10232,6 +10441,67 @@ try {
         }
     };
 
+    // Global function to draw visible candles overlay over background/below-layer drawings
+    window.drawVisibleCandlesOverlay = function(ctx, chartState) {
+        if (!window.bigCandleSeries || !window.bigChart) return;
+        var timeScale = window.bigChart.timeScale();
+        if (!timeScale) return;
+        var data = null;
+        try {
+            if (typeof window.bigCandleSeries.data === 'function') {
+                data = window.bigCandleSeries.data();
+            }
+        } catch(e) {}
+        if (!data || !data.length) return;
+
+        var chartOpt = window.bigCandleSeries.options ? window.bigCandleSeries.options() : {};
+        var upColor = chartOpt.upColor || '#089981';
+        var downColor = chartOpt.downColor || '#f23645';
+        var wickUpColor = chartOpt.wickUpColor || upColor;
+        var wickDownColor = chartOpt.wickDownColor || downColor;
+
+        var tsOpt = (timeScale.options && timeScale.options()) || {};
+        var barSpacing = tsOpt.barSpacing || 6;
+        var candleWidth = Math.max(1, Math.floor(barSpacing * 0.75));
+        if (candleWidth % 2 === 0) candleWidth += 1; // odd width for crisp centering
+        var halfWidth = Math.floor(candleWidth / 2);
+
+        ctx.save();
+        for (var i = 0; i < data.length; i++) {
+            var c = data[i];
+            var x = timeScale.timeToCoordinate(c.time);
+            if (x === null || x === undefined || x < -30 || x > ctx.canvas.width + 30) continue;
+
+            var openY = window.bigCandleSeries.priceToCoordinate(c.open);
+            var highY = window.bigCandleSeries.priceToCoordinate(c.high);
+            var lowY = window.bigCandleSeries.priceToCoordinate(c.low);
+            var closeY = window.bigCandleSeries.priceToCoordinate(c.close);
+
+            if (openY === null || highY === null || lowY === null || closeY === null) continue;
+
+            var isUp = c.close >= c.open;
+            var bodyColor = isUp ? upColor : downColor;
+            var wickColor = isUp ? wickUpColor : wickDownColor;
+
+            var px = Math.round(x);
+
+            // Draw Wick
+            ctx.strokeStyle = wickColor;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(px + 0.5, Math.round(highY));
+            ctx.lineTo(px + 0.5, Math.round(lowY));
+            ctx.stroke();
+
+            // Draw Body
+            var bodyTop = Math.round(Math.min(openY, closeY));
+            var bodyHeight = Math.max(1, Math.round(Math.abs(closeY - openY)));
+            ctx.fillStyle = bodyColor;
+            ctx.fillRect(px - halfWidth, bodyTop, candleWidth, bodyHeight);
+        }
+        ctx.restore();
+    };
+
     // BaseRichDrawing — base class for all rich objects
     class BaseRichDrawing extends BaseDrawing {
         constructor(startPos, chartState, options = {}) {
@@ -10239,7 +10509,7 @@ try {
             this._cachedPrimitives = null;
             var def = this.getObjectDef();
             var defaultEmoji = def && def.defaults && def.defaults.emoji;
-            this.content = { plain: options.emoji || defaultEmoji || '📌' };
+            this.content = { plain: options.emoji || (this.model && this.model.content && this.model.content.plain) || window.selectedEmoji || defaultEmoji || '📌' };
             this.rotation = options.rotation || 0;
         }
 
@@ -10326,6 +10596,18 @@ try {
         getFillShape(pixels) {
             if (!pixels || pixels.length === 0) return null;
             var def = this.getObjectDef();
+            if (def && (def.geometry === RichGeometry.EMOJI || this.constructor.name === 'EmojiDrawing' || (def.defaults && def.defaults.emoji))) {
+                var size = (this.style && this.style.fontSize) || (def.defaults && def.defaults.fontSize) || 28;
+                var p = pixels[0];
+                if (!p) return null;
+                var half = size / 2 + 5;
+                return [
+                    { x: p.x - half, y: p.y - half },
+                    { x: p.x + half, y: p.y - half },
+                    { x: p.x + half, y: p.y + half },
+                    { x: p.x - half, y: p.y + half }
+                ];
+            }
             if (def && def.geometry === RichGeometry.TEXT) {
                 var fontSize = this.style.fontSize || 14;
                 var text = this.text || (this.model && this.model.content && this.model.content.plain) || '';
@@ -10384,7 +10666,31 @@ try {
         }
 
         drawHandles(ctx, pixels, isSelected) {
-            if (!pixels) return;
+            if (!pixels || pixels.length === 0) return;
+            var def = this.getObjectDef();
+            var isEmoji = def && (def.geometry === RichGeometry.EMOJI || this.constructor.name === 'EmojiDrawing' || (def.defaults && def.defaults.emoji));
+            if (isEmoji && pixels.length === 1 && pixels[0]) {
+                var p = pixels[0];
+                var size = (this.style && this.style.fontSize) || (def.defaults && def.defaults.fontSize) || 28;
+                var half = size / 2 + 5;
+                if (isSelected) {
+                    ctx.save();
+                    ctx.strokeStyle = '#2962ff';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.strokeRect(p.x - half, p.y - half, size + 10, size + 10);
+                    ctx.setLineDash([]);
+                    this._drawHandle(ctx, { x: p.x - half, y: p.y - half }, true, false);
+                    this._drawHandle(ctx, { x: p.x + half, y: p.y - half }, true, false);
+                    this._drawHandle(ctx, { x: p.x + half, y: p.y + half }, true, false);
+                    this._drawHandle(ctx, { x: p.x - half, y: p.y + half }, true, false);
+                    ctx.restore();
+                } else {
+                    this._drawHandle(ctx, p, false, false);
+                }
+                return;
+            }
+
             // Standard anchor handles
             for (var i = 0; i < pixels.length; i++) {
                 if (pixels[i]) this._drawHandle(ctx, pixels[i], isSelected, false);
@@ -10428,8 +10734,73 @@ try {
             this._invalidateCache();
         }
 
-        updateHandle(draggedHandle, newPrice, chartState, pixelX) {
-            super.updateHandle(draggedHandle,newPrice,chartState,pixelX);
+        hitTestHandle(pos, chartState) {
+            var def = this.getObjectDef();
+            var isEmoji = def && (def.geometry === RichGeometry.EMOJI || this.constructor.name === 'EmojiDrawing' || (def.defaults && def.defaults.emoji));
+            if (!isEmoji) return null;
+
+            var pixels = this.getPixels ? this.getPixels(chartState) : [];
+            if (!pixels || pixels.length === 0 || !pixels[0]) return null;
+            var p = pixels[0];
+            var size = (this.style && this.style.fontSize) || (def.defaults && def.defaults.fontSize) || 28;
+            var half = size / 2 + 5;
+            var threshold = 10;
+
+            var handles = {
+                'topLeft':     { x: p.x - half, y: p.y - half },
+                'topRight':    { x: p.x + half, y: p.y - half },
+                'bottomLeft':  { x: p.x - half, y: p.y + half },
+                'bottomRight': { x: p.x + half, y: p.y + half }
+            };
+
+            for (var key in handles) {
+                var h = handles[key];
+                var dist = Math.hypot(pos.x - h.x, pos.y - h.y);
+                if (dist <= threshold) {
+                    return key;
+                }
+            }
+            return null;
+        }
+
+        updateHandle(draggedHandle, newPrice, chartState, pixelX, pixelY) {
+            var def = this.getObjectDef();
+            var isEmoji = def && (def.geometry === RichGeometry.EMOJI || this.constructor.name === 'EmojiDrawing' || (def.defaults && def.defaults.emoji));
+            
+            if (isEmoji) {
+                var pixels = this.getPixels ? this.getPixels(chartState) : [];
+                if (!pixels || pixels.length === 0 || !pixels[0]) return;
+                var p = pixels[0];
+
+                if (pixelY === undefined && chartState && chartState.priceToY) {
+                    pixelY = chartState.priceToY(newPrice);
+                }
+                if (pixelX === undefined || pixelY === undefined) return;
+
+                var dx = Math.abs(pixelX - p.x);
+                var dy = Math.abs(pixelY - p.y);
+                var maxDist = Math.max(dx, dy);
+                var newSize = Math.round(Math.max(14, Math.min(240, (maxDist - 5) * 2)));
+
+                this.style.fontSize = newSize;
+                if (this.model) {
+                    if (!this.model.style) this.model.style = {};
+                    this.model.style.fontSize = newSize;
+                }
+                this._invalidateCache();
+
+                // Synchronize Style Panel if visible
+                var sizeSlider = document.getElementById('sp-emoji-size');
+                if (sizeSlider) sizeSlider.value = newSize;
+                var sizeVal = document.getElementById('sp-emoji-size-val');
+                if (sizeVal) sizeVal.textContent = newSize + 'px';
+                if (window.toolManager && window.toolManager.stylePanel && typeof window.toolManager.stylePanel._updateEmojiPresetActive === 'function') {
+                    window.toolManager.stylePanel._updateEmojiPresetActive(newSize);
+                }
+                return;
+            }
+
+            super.updateHandle(draggedHandle, newPrice, chartState, pixelX);
             this._invalidateCache();
         }
 

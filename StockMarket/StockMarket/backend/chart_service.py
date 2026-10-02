@@ -134,6 +134,14 @@ class ChartService:
                     "_stored_until": self._last_ts(exact_stored),
                 }
 
+            # Fast Path: If exact_stored is sufficient, bypass all lower-tier DB queries and Python resampling
+            if self._is_exact_sufficient(exact_stored, target_tf, start, end, limit):
+                return {
+                    "candles": self._stored_to_dict(exact_stored),
+                    "_source": "db",
+                    "_stored_until": self._last_ts(exact_stored),
+                }
+
             target_idx = SOURCE_HIERARCHY.index(target_tf)
             # Fallback through source hierarchy: try from the immediate lower TF down to 5m.
             # Highest TFs win on duplicate timestamps (prefer already-aggregated data).
@@ -271,3 +279,71 @@ class ChartService:
                 seen.add(t)
                 result.append(c)
         return result
+
+    def _is_exact_sufficient(self, exact_stored: List, target_tf: str,
+                              start: Optional[int], end: Optional[int],
+                              limit: int) -> bool:
+        """
+        Determines whether exact_stored from the candles table completely satisfies
+        the requested range/limit.
+
+        Rules:
+        1. If exact_stored is empty: False (must fallback to lower tiers).
+        2. If target_tf is a macro/session tier ("1D", "1W", "1M"):
+           Candles table is the SSOT back to inception; lower tiers cannot yield older data -> True.
+        3. If explicit start range is requested:
+           - First stored candle must start at or before `start` (with 1-period tolerance).
+           - If `end` is specified, last stored candle must reach `end` (or current completed bar).
+           - If range is not fully covered by exact_stored -> False (reconstruct missing history from 5m).
+        4. If limit-based request (start is None):
+           - If len(exact_stored) >= limit -> True (full requested count satisfied).
+           - If len(exact_stored) < limit -> False (lower tiers may contain older 5m data to reach limit).
+        """
+        if not exact_stored:
+            return False
+
+        count = len(exact_stored)
+
+        # Macro / session tiers (1D, 1W, 1M) are the primary SSOT back to stock inception
+        if target_tf in ("1D", "1W", "1M"):
+            return True
+
+        # Explicit range query (start timestamp specified)
+        if start is not None:
+            first_ts = getattr(exact_stored[0], "timestamp", getattr(exact_stored[0], "date", None))
+            if not first_ts:
+                return False
+            if isinstance(first_ts, datetime):
+                first_epoch = int(first_ts.replace(tzinfo=IST).timestamp() if first_ts.tzinfo is None else first_ts.timestamp())
+            else:
+                first_epoch = int(first_ts)
+
+            # Tolerance for market closures (weekends, holidays, overnight sessions: up to 4 calendar days)
+            calendar_tolerance = 4 * 86400
+
+            # If the earliest stored candle is more than 4 days after the requested start,
+            # exact_stored does not cover the historical start -> reconstruct from lower tiers
+            if first_epoch > start + calendar_tolerance:
+                return False
+
+            if end is not None:
+                last_ts = getattr(exact_stored[-1], "timestamp", getattr(exact_stored[-1], "date", None))
+                if last_ts:
+                    if isinstance(last_ts, datetime):
+                        last_epoch = int(last_ts.replace(tzinfo=IST).timestamp() if last_ts.tzinfo is None else last_ts.timestamp())
+                    else:
+                        last_epoch = int(last_ts)
+                    # End tolerance: 4 days for weekend/holiday closed periods
+                    if last_epoch < end - calendar_tolerance:
+                        return False
+
+            return True
+
+        # Limit-based query (start is None)
+        # If exact_stored returned the full requested limit, the limit is 100% satisfied
+        if count >= limit:
+            return True
+
+        # If count < limit for an intraday timeframe, lower tiers (e.g. 5m) might have older data
+        # to satisfy the remainder of the limit -> do NOT short-circuit
+        return False

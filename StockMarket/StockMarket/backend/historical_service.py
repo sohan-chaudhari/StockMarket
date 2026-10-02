@@ -65,6 +65,8 @@ def _is_retryable_api_error(message: str) -> bool:
     return not any(marker in m for marker in _PERMANENT_ERROR_MARKERS)
 
 
+import threading
+
 class HistoricalDataService:
     """
     Dedicated service for historical data fetching
@@ -83,6 +85,7 @@ class HistoricalDataService:
         if self._initialized:
             return
         
+        self._login_lock = threading.Lock()
         # Load HISTORICAL credentials (separate from live)
         self.api_key = os.getenv("HISTORICAL_API_KEY")
         self.client_id = os.getenv("HISTORICAL_CLIENT_ID")
@@ -106,62 +109,56 @@ class HistoricalDataService:
     def login(self) -> bool:
         """
         Authenticate with Angel One using HISTORICAL credentials.
-
-        If HISTORICAL_* credentials are unset, this service falls back to the
-        same account angelone_service.py uses for the live feed (see __init__).
-        Calling generateSession() a second time under that same account can
-        invalidate the live feed's session token -- so whenever the live
-        service is already logged in under those same shared credentials,
-        reuse its session instead of creating a second one. This only
-        matters when both services run in the same process (the live app);
-        a standalone script (e.g. the migration CLI) where angelone_service
-        was never logged in falls through to the independent login below,
-        unchanged.
+        Protected by _login_lock to avoid concurrent login storms.
         """
-        try:
-            from angelone_service import angelone_service
-            if angelone_service.is_logged_in and angelone_service.smart_api \
-                    and angelone_service.api_key == self.api_key:
-                print("[HISTORICAL] Reusing angelone_service's live session (shared credentials) instead of a second login")
-                self.smart_api = angelone_service.smart_api
-                self.is_logged_in = True
+        with self._login_lock:
+            if self.is_logged_in and self.smart_api:
                 return True
-        except Exception:
-            pass
 
-        if not all([self.api_key, self.client_id, self.password, self.totp_token]):
-            print("[HISTORICAL] Missing credentials in .env")
-            return False
+            try:
+                from angelone_service import angelone_service
+                if angelone_service.is_logged_in and angelone_service.smart_api \
+                        and angelone_service.api_key == self.api_key:
+                    print("[HISTORICAL] Reusing angelone_service's live session (shared credentials) instead of a second login")
+                    self.smart_api = angelone_service.smart_api
+                    self.is_logged_in = True
+                    return True
+            except Exception:
+                pass
 
-        try:
-            print("[HISTORICAL] Logging in to Angel One (Historical API)...")
-            
-            # Initialize SmartConnect
-            self.smart_api = SmartConnect(api_key=self.api_key)
-            
-            # Generate TOTP
-            totp = pyotp.TOTP(self.totp_token)
-            totp_code = totp.now()
-            
-            # Login
-            session = self.smart_api.generateSession(
-                self.client_id,
-                self.password,
-                totp_code
-            )
-            
-            if not session.get('status'):
-                print(f"[HISTORICAL] [ERROR] Login failed: {session.get('message', 'Unknown error')}")
+            if not all([self.api_key, self.client_id, self.password, self.totp_token]):
+                print("[HISTORICAL] Missing credentials in .env")
                 return False
-            
-            self.is_logged_in = True
-            print(f"[HISTORICAL] Login successful!")
-            return True
-            
-        except Exception as e:
-            print(f"[HISTORICAL] [ERROR] Login error: {e}")
-            self.is_logged_in = False
-            return False
+
+            try:
+                print("[HISTORICAL] Logging in to Angel One (Historical API)...")
+                
+                # Initialize SmartConnect
+                self.smart_api = SmartConnect(api_key=self.api_key)
+                
+                # Generate TOTP
+                totp = pyotp.TOTP(self.totp_token)
+                totp_code = totp.now()
+                
+                # Login
+                session = self.smart_api.generateSession(
+                    self.client_id,
+                    self.password,
+                    totp_code
+                )
+                
+                if not session.get('status'):
+                    print(f"[HISTORICAL] [ERROR] Login failed: {session.get('message', 'Unknown error')}")
+                    return False
+                
+                self.is_logged_in = True
+                print(f"[HISTORICAL] Login successful!")
+                return True
+                
+            except Exception as e:
+                print(f"[HISTORICAL] [ERROR] Login error: {e}")
+                self.is_logged_in = False
+                return False
     
     def get_historical_candles(
         self,

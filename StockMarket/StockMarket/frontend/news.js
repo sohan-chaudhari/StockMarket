@@ -27,10 +27,24 @@ function _newsNormaliseSentiment(raw, score) {
     return s < 0 ? 'Bearish' : 'Bullish';
 }
 
+function _newsParseDate(dateStr) {
+    if (!dateStr) return 0;
+    var t = Date.parse(dateStr);
+    if (!isNaN(t)) return t;
+    try {
+        var d = new Date(dateStr);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+    } catch(e) { return 0; }
+}
+
 function _newsTimeAgo(dateStr) {
     if (!dateStr) return '';
     try {
-        var sec = Math.floor((Date.now() - new Date(dateStr)) / 1000);
+        var t = _newsParseDate(dateStr);
+        if (!t) return '';
+        var sec = Math.floor((Date.now() - t) / 1000);
+        if (isNaN(sec)) return '';
+        if (sec < 0)     return 'just now';
         if (sec < 60)    return 'just now';
         if (sec < 3600)  return Math.floor(sec / 60) + 'm ago';
         if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
@@ -38,11 +52,36 @@ function _newsTimeAgo(dateStr) {
     } catch(e) { return ''; }
 }
 
-function _newsCleanTitle(t) {
-    return (t || '')
+function _newsCleanTitle(t, excerpt, ticker) {
+    var raw = (t || '').trim();
+    var clean = raw
         .replace(/\s*[-–|]\s*scanx\.trade\s*$/i, '')
-        .replace(/\s*\|\s*[^|]+$/, '')        // strip trailing "| Source"
         .trim();
+    if (clean.indexOf(' - ') !== -1 || clean.indexOf(' | ') !== -1 || clean.indexOf(' – ') !== -1) {
+        var cand = clean.replace(/\s*[-–|]\s*[^–\-|]+$/, '').trim();
+        var candWords = cand.split(/\s+/).filter(Boolean);
+        if (cand && candWords.length >= 3 && cand.length >= 15) {
+            clean = cand;
+        }
+    }
+    var words = clean.split(/\s+/).filter(Boolean);
+    if (words.length <= 1 || clean.length < 10) {
+        if (excerpt) {
+            var cleanEx = excerpt.replace(/<[^>]*>/g, '').replace(/&[a-z0-9#]+;/gi, ' ').trim();
+            var exWords = cleanEx.split(/\s+/).filter(Boolean);
+            if (exWords.length >= 4) {
+                var firstSent = cleanEx.split(/[.!?]/)[0].trim();
+                if (firstSent.length >= 15) {
+                    return firstSent.length > 95 ? firstSent.slice(0, 95) + '...' : firstSent;
+                }
+                return exWords.slice(0, 12).join(' ') + '...';
+            }
+        }
+        if (ticker && words.length === 1) {
+            return ticker + ': Latest Market News & Updates';
+        }
+    }
+    return clean || raw || 'Market News & Updates';
 }
 
 function _newsNormaliseArticle(a, defaultSource) {
@@ -89,9 +128,11 @@ async function _fetchScanXMarketNews() {
         var resp = await fetch('/api/news/search/market', signal ? { signal: signal } : {});
         if (!resp.ok) return [];
         var data = await resp.json();
-        return Array.isArray(data)
+        var articles = Array.isArray(data)
             ? data.map(function(a) { return _newsNormaliseArticle(a, 'ScanX'); })
             : [];
+        articles.sort(function(a, b) { return _newsParseDate(b.published_at) - _newsParseDate(a.published_at); });
+        return articles;
     } catch(e) { return []; }
 }
 
@@ -109,6 +150,7 @@ async function fetchStockNews(ticker) {
         var articles = Array.isArray(data)
             ? data.map(function(a) { return _newsNormaliseArticle(a, 'ScanX'); })
             : [];
+        articles.sort(function(a, b) { return _newsParseDate(b.published_at) - _newsParseDate(a.published_at); });
         window._newsArticles = articles;
         return articles;
     } catch(e) { return []; }
@@ -193,7 +235,12 @@ async function loadDashboardNews(retryCount) {
 }
 
 function renderDashboardNewsCards(container, topNews, allArticles) {
-    if (!topNews || !topNews.length) {
+    var validNews = (topNews || []).filter(function(article) {
+        var t = _newsCleanTitle(article.title, article.excerpt, article.ticker);
+        return t && t.split(/\s+/).filter(Boolean).length >= 2;
+    });
+
+    if (!validNews.length) {
         container.innerHTML =
             '<div style="padding:2rem 1rem;text-align:center;">' +
             '<div style="font-size:1.5rem;margin-bottom:0.5rem;">📰</div>' +
@@ -205,7 +252,7 @@ function renderDashboardNewsCards(container, topNews, allArticles) {
     var sentimentColors = { Bullish: '#089981', Bearish: '#f23645', Neutral: '#a1a1aa' };
     var sentimentDots   = { Bullish: '▲', Bearish: '▼', Neutral: '●' };
 
-    var cardsHtml = topNews.map(function(article, localIdx) {
+    var cardsHtml = validNews.slice(0, 5).map(function(article, localIdx) {
         var globalIdx  = allArticles.indexOf(article);
         if (globalIdx === -1) globalIdx = localIdx;
 
@@ -213,7 +260,7 @@ function renderDashboardNewsCards(container, topNews, allArticles) {
         var color      = sentimentColors[label] || '#a1a1aa';
         var dot        = sentimentDots[label]   || '●';
         var scoreStr   = _newsScoreStr(article);
-        var cleanTitle = _newsCleanTitle(article.title);
+        var cleanTitle = _newsCleanTitle(article.title, article.excerpt, article.ticker);
         var timeAgo    = _newsTimeAgo(article.published_at);
         var source     = (article.source || 'ScanX').replace(/scanx\.trade/i, 'ScanX');
 
@@ -277,7 +324,13 @@ function renderDashboardNewsCards(container, topNews, allArticles) {
 function renderNewsCards(containerId, newsData) {
     var container = document.getElementById(containerId);
     if (!container) return;
-    var articles = Array.isArray(newsData) ? newsData : [];
+    var rawArticles = Array.isArray(newsData) ? newsData.slice() : [];
+    rawArticles.sort(function(a, b) { return _newsParseDate(b.published_at) - _newsParseDate(a.published_at); });
+    
+    var articles = rawArticles.filter(function(a) {
+        var t = _newsCleanTitle(a.title, a.excerpt, a.ticker);
+        return t && t.split(/\s+/).filter(Boolean).length >= 2;
+    });
     window._newsArticles = articles;
 
     if (!articles.length) {
@@ -298,7 +351,7 @@ function renderNewsCards(containerId, newsData) {
         var color      = sentimentColors[label] || '#a1a1aa';
         var dot        = sentimentDots[label]   || '●';
         var scoreStr   = _newsScoreStr(a);
-        var cleanTitle = _newsCleanTitle(a.title);
+        var cleanTitle = _newsCleanTitle(a.title, a.excerpt, a.ticker);
         var timeAgo    = _newsTimeAgo(a.published_at);
 
         var src = (a.source || 'ScanX').replace(/scanx\.trade/i, 'ScanX');
