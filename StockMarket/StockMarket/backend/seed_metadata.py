@@ -54,6 +54,15 @@ def seed_metadata():
             {'ticker': 'FINNIFTY', 'name': 'NIFTY FINANCIAL SERVICES', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
             {'ticker': 'MIDCAP', 'name': 'NIFTY MIDCAP 50', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
             {'ticker': 'SMALLCAP', 'name': 'NIFTY SMALLCAP 100', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_AUTO', 'name': 'NIFTY AUTO', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_IT', 'name': 'NIFTY IT', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_PHARMA', 'name': 'NIFTY PHARMA', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_FMCG', 'name': 'NIFTY FMCG', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_METAL', 'name': 'NIFTY METAL', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_ENERGY', 'name': 'NIFTY ENERGY', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_MEDIA', 'name': 'NIFTY MEDIA', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_PSU_BANK', 'name': 'NIFTY PSU BANK', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
+            {'ticker': 'NIFTY_REALTY', 'name': 'NIFTY REALTY', 'exchange': 'NSE', 'logo': 'https://s3-symbol-logo.tradingview.com/country/IN.svg'},
         ]
 
         batch = []

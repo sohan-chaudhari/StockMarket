@@ -1964,6 +1964,24 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                 "MIDCAP": ["MIDCPNIFTY", "^NSEMDCP50"],
                 "SMALLCAP": ["NIFTYSMLCAP100", "^CNXSC"],
                 "SENSEX": ["^BSESN"],
+                "NIFTY_AUTO": ["NIFTYAUTO", "^CNXAUTO"],
+                "NIFTYAUTO": ["NIFTY_AUTO", "^CNXAUTO"],
+                "NIFTY_IT": ["NIFTYIT", "^CNXIT"],
+                "NIFTYIT": ["NIFTY_IT", "^CNXIT"],
+                "NIFTY_PHARMA": ["NIFTYPHARMA", "^CNXPHARMA"],
+                "NIFTYPHARMA": ["NIFTY_PHARMA", "^CNXPHARMA"],
+                "NIFTY_FMCG": ["NIFTYFMCG", "^CNXFMCG"],
+                "NIFTYFMCG": ["NIFTY_FMCG", "^CNXFMCG"],
+                "NIFTY_METAL": ["NIFTYMETAL", "^CNXMETAL"],
+                "NIFTYMETAL": ["NIFTY_METAL", "^CNXMETAL"],
+                "NIFTY_ENERGY": ["NIFTYENERGY", "^CNXENERGY"],
+                "NIFTYENERGY": ["NIFTY_ENERGY", "^CNXENERGY"],
+                "NIFTY_MEDIA": ["NIFTYMEDIA", "^CNXMEDIA"],
+                "NIFTYMEDIA": ["NIFTY_MEDIA", "^CNXMEDIA"],
+                "NIFTY_PSU_BANK": ["NIFTYPSUBANK", "^CNXPSUBANK"],
+                "NIFTYPSUBANK": ["NIFTY_PSU_BANK", "^CNXPSUBANK"],
+                "NIFTY_REALTY": ["NIFTYREALTY", "^CNXREALTY"],
+                "NIFTYREALTY": ["NIFTY_REALTY", "^CNXREALTY"],
             }
             for alt in INDEX_LOOKUP_ALIASES.get(raw, []):
                 if alt in angel_ticks:
@@ -1971,7 +1989,11 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                     break
 
         # Check if it's an index missing OHLC data
-        is_index = raw in ["NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP"]
+        is_index = raw in [
+            "NIFTY", "SENSEX", "BANKNIFTY", "FINNIFTY", "MIDCAP", "SMALLCAP",
+            "NIFTY_AUTO", "NIFTY_IT", "NIFTY_PHARMA", "NIFTY_FMCG", "NIFTY_METAL",
+            "NIFTY_ENERGY", "NIFTY_MEDIA", "NIFTY_PSU_BANK", "NIFTY_REALTY"
+        ]
         missing_ohlc = is_index and (tick_data is None or tick_data.get("open", 0) == 0)
 
         # Use _received_ts (server receive time) for stale detection — NOT exchange timestamp.
