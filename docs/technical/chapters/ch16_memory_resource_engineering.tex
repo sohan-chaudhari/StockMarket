@@ -1,0 +1,35 @@
+\chapter{Memory \& Resource Engineering}
+\label{ch:memory_engineering}
+
+\section{Target Envelope \& Measured Baseline}
+The LEVERAGE architecture is specifically engineered to operate reliably within a **1 GB RAM budget** on AWS Lightsail or EC2 instances \cite{ref:deploy_guide}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/Dockerfile:30-55}, \code{backend/gunicorn.conf.py:1-45}, \code{backend/main.py:6816}.
+\end{citationbox}
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{Memory Measurements and Production Resource Allocations}
+\label{tab:memory_measurements}
+\begin{tabularx}{\linewidth}{p{38mm} p{26mm} Y p{22mm}}
+\toprule
+\textbf{Component / Metric} & \textbf{Observed Metric} & \textbf{Engineering Safeguard / Operational Rationale} & \textbf{Status} \\
+\midrule
+\textbf{Python heap after import (tracemalloc, Windows dev)} & 124.04 MB & Measured base memory consumption upon full module import & \tag{VERIFIED} \\
+\textbf{Peak Initialization} & 128.33 MB & Peak tracemalloc heap allocation during bootstrap & \tag{VERIFIED} \\
+\textbf{1 GB Production Fit} & Not measured & Operational fit derived from single worker and bounded caches & \tag{INFERENCE} \\
+\textbf{Glibc Malloc Arenas} & \code{MALLOC_ARENA_MAX=2} & Restricts glibc thread-local heap allocation arenas & \tag{VERIFIED} \\
+\textbf{AnyIO Thread Limiter} & \code{total_tokens=64} & Bounds synchronous thread pool size to prevent arena expansion & \tag{VERIFIED} \\
+\textbf{Gunicorn Recycling} & 8,000 req ($\pm 800$) & Worker recycle backstop mitigating subtle memory fragmentation & \tag{VERIFIED} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Glibc Malloc Arena Optimization (\tag{GATE-10})}
+In standard multi-threaded Python applications running on 64-bit Linux glibc, each worker thread dynamically allocates its own memory arena (up to $8 \times \text{CPU cores}$). Under concurrent synchronous FastAPI database queries, thread spawning creates unreleased glibc heap fragmentation:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Safeguard}: Hardcoded \code{MALLOC_ARENA_MAX=2} in \code{backend/Dockerfile:51} forces thread reuse of a small, bounded set of memory arenas, eliminating thread-driven RSS bloat \tag{VERIFIED}.
+\end{itemize}

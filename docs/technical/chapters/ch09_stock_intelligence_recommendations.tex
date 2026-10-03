@@ -1,0 +1,23 @@
+\chapter{Stock Intelligence \& Recommendation Architecture}
+\label{ch:stock_intelligence}
+
+\section{Overview \& Implementation Scope}
+LEVERAGE provides stock intelligence and trade setup discovery by evaluating equities across discrete technical indicators computed in \code{backend/indicator_service.py} \cite{ref:indicator_service} and filtered through the multi-factor screener (\code{frontend/screener.html}).
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/indicator_service.py:1-598}, \code{frontend/screener.html}, \code{frontend/stock-logic.js}.
+\end{citationbox}
+
+\section{Technical Signal Evaluation Factors}
+Stock evaluation combines discrete technical rules without arbitrary composite weights:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Momentum Factor (RSI)}: Identifies oversold reversals ($\mathrm{RSI}_{14} \le 30$) and overbought extensions ($\mathrm{RSI}_{14} \ge 70$) \tag{VERIFIED}.
+    \item \textbf{Trend Alignment (EMA \& Supertrend)}: Bullish alignment occurs when $\mathrm{Close} > \operatorname{EMA}_{20} > \operatorname{EMA}_{50}$ and the Supertrend indicator ($10, 3.0$) is in a positive state \tag{VERIFIED}.
+    \item \textbf{Volume Conviction}: Surge detected when current volume exceeds the 20-period moving average ($\mathrm{Volume}_t > \operatorname{SMA}_{20}(\mathrm{Volume})_t$) \tag{VERIFIED}.
+    \item \textbf{Volatility Expansion}: Bollinger Band width expansion ($\mathrm{UpperBand} - \mathrm{LowerBand}$) identifies volatility breakout setups \tag{VERIFIED}.
+\end{itemize}
+
+\section{Composite Scoring Roadmap}
+\begin{accuracybox}
+\textbf{Architectural Note}: While individual quantitative signals (RSI, MACD crossover, Supertrend, Bollinger expansion) are computed deterministically, composite weighted scoring algorithms ($S \in [0, 100]$) are documented for future release \tag{PLANNED} and are not hardcoded into the active backend.
+\end{accuracybox}

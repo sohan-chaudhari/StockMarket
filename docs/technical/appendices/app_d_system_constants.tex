@@ -1,0 +1,32 @@
+\chapter{System Constants \& Architectural Limits}
+\label{app:system_constants}
+
+\section{Master Constants Table}
+Table~\ref{tab:system_constants_master} documents the verified system constants and operational boundaries.
+
+\begin{table}[H]
+\centering
+\small
+\sffamily
+\renewcommand{\arraystretch}{0.92}
+\caption{System Constants and Operational Limits}
+\label{tab:system_constants_master}
+\begin{tabularx}{\linewidth}{p{38mm} p{26mm} p{28mm} Y p{20mm}}
+\toprule
+\textbf{Constant Name} & \textbf{Value / Limit} & \textbf{Subsystem} & \textbf{Architectural Function} & \textbf{Source} \\
+\midrule
+\code{MAX_L2_ENTRIES} & 5,000 entries & \code{CandleCache} & LRU historical candle capacity limit & \code{candle_cache.py} \\
+\code{MAX_BUILDERS} & 5,000 symbols & \code{LiveTimeframeMgr} & In-memory forming candle capacity & \code{live_tf_mgr.py} \\
+\code{MAX_ACTIVE_TICKERS} & 2,000 symbols & \code{ViewedTickerMgr} & Max concurrent WS broker subscriptions & \code{main.py} \\
+\code{MAX_TP_SL_EDITS} & 3 modifications & \code{TradingService} & Max allowable TP/SL adjustments & \code{trade_service.py} \\
+\code{TOTAL_TOKENS} & 64 threads & AnyIO Limiter & Max concurrent sync database workers & \code{main.py} \\
+\code{MALLOC_ARENA_MAX} & 2 arenas & Linux glibc & Caps glibc multi-threaded heap arenas & \code{Dockerfile} \\
+\code{STATEMENT_TIMEOUT} & 30,000 ms & PostgreSQL Pool & Server-side query cancellation ceiling & \code{database.py} \\
+\code{POOL_SIZE} & 20 connections & PostgreSQL Pool & Base persistent database pool size & \code{database.py} \\
+\code{MAX_OVERFLOW} & 30 connections & PostgreSQL Pool & Dynamic burst overflow connections & \code{database.py} \\
+\code{GUNICORN_TIMEOUT} & 120 seconds & Gunicorn Master & HTTP request execution timeout & \code{gunicorn.conf.py} \\
+\code{MAX_REQUESTS} & 8,000 requests & Gunicorn Master & Worker recycle interval ($\pm 800$ jitter) & \code{gunicorn.conf.py} \\
+\code{INITIAL_VIRTUAL_BAL} & INR 100,000.00 & Paper Trading & Starting account balance allocation & \code{models.py} \\
+\bottomrule
+\end{tabularx}
+\end{table}

@@ -1,0 +1,49 @@
+\chapter{Reliability, Failure Recovery \& Operational Behavior}
+\label{ch:reliability_recovery}
+
+\section{System Failure Recovery Models}
+LEVERAGE incorporates multi-layered fault isolation to handle broker network disconnects, database timeouts, and process lifecycle events gracefully.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.95\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=10mm and 12mm,
+    rbox/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=32mm, minimum height=11mm, align=center, font=\sffamily\footnotesize, thick},
+    alertbox/.style={rectangle, draw=Maroon, fill=Maroon!10, rounded corners=2mm, minimum width=30mm, minimum height=11mm, align=center, font=\sffamily\footnotesize, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=navyblue}
+]
+
+\node[alertbox] (wsdrop) {Broker WebSocket\\Disconnect Spike};
+\node[rbox, right=14mm of wsdrop] (watchdog) {Watchdog Detects\\Stale Ticks ($>30$s)};
+\node[rbox, right=14mm of watchdog] (reconnect) {Exponential Backoff\\Auto-Reconnect};
+\node[rbox, below=12mm of watchdog] (poller) {\code{PricePoller} REST\\Fallback Activated};
+\node[rbox, below=12mm of reconnect] (gapfill) {\code{recovery_service}\\Gap Backfill Fired};
+
+\draw[arrow] (wsdrop) -- (watchdog);
+\draw[arrow] (watchdog) -- (reconnect);
+\draw[arrow] (watchdog) -- (poller);
+\draw[arrow] (reconnect) -- (gapfill);
+
+\end{tikzpicture}
+}
+\caption{Broker Disconnect Detection, REST Fallback, and Gap Recovery Flow}
+\label{fig:recovery_flow}
+\end{figure}
+
+\section{Documented Post-Mortem Incidents}
+\begin{enumerate}[leftmargin=6mm,itemsep=2mm]
+    \item \textbf{INC-01: Startup Hang \& Pool Exhaustion}: Synchronous prefill exhausted initial 10-connection pool. Fixed by expanding pool to 20 base + 30 overflow and deferring prefill to background async scheduler (+30s delay).
+    \item \textbf{INC-02: Event Loop Stalling}: Blocking database table scan in \code{_sync_daily_base_price} caused 17s lag spikes. Fixed by offloading to worker threads via \code{asyncio.to_thread}, reducing lag to $\sim 1$--$2\text{ms}$.
+    \item \textbf{INC-03: Glibc Malloc Growth}: Multi-threaded route execution spawned multiple glibc memory arenas (up to 400MB+ RSS growth). Fixed by setting \code{MALLOC_ARENA_MAX=2} and capping AnyIO threads to 64.
+    \item \textbf{INC-04: Hourly Rollover Crash}: Variable name collision (\code{flushed_1h} vs \code{completed_1h}) caused runtime \code{NameError}. Resolved in \code{aggregator.py} with regression tests.
+    \item \textbf{INC-05: JWT Expiration Offset}: Naive IST datetime extended token lifetime to 29.5 hours. Fixed by standardizing on \code{datetime.now(timezone.utc)}.
+    \item \textbf{INC-06: Search 0.00\% Lag}: Metadata load left tickers at 0.00\% until first tick. Fixed by \code{_sync_daily_base_price} and client-side batch resolution.
+\end{enumerate}
+
+\section{Graceful Shutdown \& Buffer Flush}
+Upon receiving \code{SIGTERM} (from Docker/systemd), FastAPI's shutdown handler:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item Halts incoming WebSocket broadcasts and notifies connected clients.
+    \item Invokes \code{CandleAggregator.shutdown_flush()}, flushing all in-memory forming bars to PostgreSQL within 30 seconds before process exit.
+\end{itemize}

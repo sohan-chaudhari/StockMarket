@@ -1,0 +1,89 @@
+\chapter{Platform Architecture}
+\label{ch:platform_architecture}
+
+\section{System Architecture Overview}
+The LEVERAGE system follows a modular, asynchronous, single-worker topology designed for maximum throughput and deterministic memory efficiency under a 1 GB RAM operational envelope. Figure~\ref{fig:system_architecture} illustrates the core data and control flow across the proxy, application, database, and broker ingestion tiers.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=10mm and 12mm,
+    box/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=28mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    procbox/.style={rectangle, draw=primaryblue, fill=white, rounded corners=2mm, minimum width=30mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    dbbox/.style={cylinder, cylinder uses custom fill, cylinder body fill=lightbg, cylinder end fill=accentblue!20, draw=navyblue, shape aspect=0.5, shape border rotate=90, minimum width=24mm, minimum height=14mm, align=center, font=\sffamily\footnotesize, thick},
+    feedbox/.style={rectangle, draw=ForestGreen, fill=ForestGreen!10, rounded corners=2mm, minimum width=28mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=navyblue},
+    darrow/.style={{Latex[length=2mm]}-{Latex[length=2mm]}, thick, color=accentblue},
+    dashedarrow/.style={-{Latex[length=2mm]}, dashed, thick, color=primaryblue}
+]
+
+% Row 1: Ingress
+\node[box] (client) {Client Browser\\(TradingView / ES6)};
+\node[box, right=14mm of client] (nginx) {Nginx 1.27\\Reverse Proxy (Port 80)};
+\node[procbox, right=14mm of nginx] (gunicorn) {Gunicorn Master\\(1 Uvicorn Worker)};
+
+% Row 2: FastAPI Core
+\node[procbox, below=12mm of gunicorn] (fastapi) {FastAPI Core App\\(\code{main.py}: 70 Routes)};
+\node[box, left=14mm of fastapi] (wsmgr) {WebSocket Manager\\(\code{/ws/dashboard}, \code{/ws/user})};
+\node[box, right=14mm of fastapi] (cache) {In-Memory Caches\\L1: \code{LiveTimeframeMgr}\\L2: \code{CandleCache} (5000)};
+
+% Row 3: Internal Services & Ingestion
+\node[box, below=14mm of wsmgr] (tradesvc) {Execution Engine\\(2s TP/SL Async Loop)};
+\node[box, below=14mm of fastapi] (aggregator) {Candle Aggregator\\(Multi-TF Synthesis)};
+\node[feedbox, below=14mm of cache] (angel) {Angel One SmartAPI\\(WebSocket V2 \& REST)};
+
+% Row 4: Persistence & Fallback
+\node[dbbox, below=12mm of aggregator] (postgres) {PostgreSQL 16\\(SQLAlchemy 20+30)};
+\node[feedbox, right=14mm of postgres] (yfinance) {yfinance Engine\\(Historical Gap-Fill)};
+
+% Connections
+\draw[darrow] (client) -- node[above, font=\sffamily\tiny] {HTTP / WS} (nginx);
+\draw[arrow] (nginx) -- node[above, font=\sffamily\tiny] {Proxy Pass} (gunicorn);
+\draw[arrow] (gunicorn) -- (fastapi);
+\draw[darrow] (fastapi) -- (wsmgr);
+\draw[arrow] (fastapi) -- (tradesvc);
+\draw[arrow] (fastapi) -- (aggregator);
+\draw[darrow] (fastapi) -- (cache);
+
+\draw[darrow] (tradesvc) |- node[near end, above, font=\sffamily\tiny] {ACID TX} (postgres);
+\draw[arrow] (aggregator) -- node[right, font=\sffamily\tiny] {Flush} (postgres);
+\draw[arrow] (angel) -- node[above, font=\sffamily\tiny] {Live Ticks} (aggregator);
+\draw[arrow] (yfinance) -- node[above, font=\sffamily\tiny] {Backfill} (postgres);
+\draw[dashedarrow] (wsmgr) -| (client);
+
+\end{tikzpicture}
+}
+\caption{LEVERAGE End-to-End System Architecture and Data Pipeline}
+\label{fig:system_architecture}
+\end{figure}
+
+\section{Request-Response Lifecycle}
+When an incoming HTTP request arrives from a client browser:
+\begin{enumerate}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Ingress Handling}: Nginx terminates connection on port 80, applies security headers (\code{X-Content-Type-Options}, \code{X-Frame-Options}, \code{Referrer-Policy}, \code{Permissions-Policy}), and proxies the request to the upstream \code{app:8000} over HTTP/1.1 \cite{ref:nginx_conf}.
+    \item \textbf{Middleware Evaluation}: FastAPI invokes \code{CacheControlMiddleware} (\code{backend/main.py:456}) to manage cache-busting headers and executes \code{slowapi} rate limiting against the caller's IP address.
+    \item \textbf{Authentication Dependency}: For protected endpoints, \code{auth.get_current_user} extracts the Bearer JWT from the \code{Authorization} header, decodes the signature using HMAC-SHA256, verifies token expiration in UTC, checks revocation against the \code{token_blacklist} table, and loads the active user record (\code{backend/auth.py:585-624}).
+    \item \textbf{Service \& Database Execution}: Synchronous database operations run in isolated thread-pool workers via AnyIO's thread limiter (\code{total_tokens = 64}), pulling connections from SQLAlchemy's pre-ping pool (\code{pool_size=20}, \code{max_overflow=30}).
+    \item \textbf{Serialization}: Pydantic v2 schemas serialize the response payload into compliant JSON structures.
+\end{enumerate}
+
+\section{Dual WebSocket Pipeline}
+LEVERAGE maintains two distinct WebSocket channels:
+\begin{itemize}[leftmargin=6mm,itemsep=2mm]
+    \item \textbf{Public Dashboard Channel (\code{/ws/dashboard})}:
+    \begin{itemize}[leftmargin=4mm]
+        \item Consumed by \code{frontend/dashboard.js} and \code{frontend/stock-logic.js}.
+        \item Handles dynamic client subscriptions (\code{view_ticker}, \code{add_tickers}).
+        \item Broadcasts high-frequency tick updates, daily price change percentages, and forming candle updates.
+        \item Bounded by LRU subscription limits ($\le 2,000$ active symbols) to protect server memory.
+    \end{itemize}
+    \item \textbf{Private User Channel (\code{/ws/user})}:
+    \begin{itemize}[leftmargin=4mm]
+        \item Authenticated via JWT token query parameter on handshake.
+        \item Streams instantaneous order fill confirmations, TP/SL executions, and portfolio margin alerts directly to the user's active session.
+    \end{itemize}
+\end{itemize}
+
+\section{Process Boundary \& Concurrency Invariant}
+A core architectural invariant of LEVERAGE is the \textbf{single-worker constraint} (\code{workers = 1} in \code{backend/gunicorn.conf.py:19}). The market-data ingestion pipeline, in-memory tick queues, forming candle managers, and viewed ticker sets are maintained in process-local memory. Running multiple worker processes without a distributed messaging broker (such as Redis) would duplicate WebSocket subscriptions to Angel One and cause state divergence across workers.

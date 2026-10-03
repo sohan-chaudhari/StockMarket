@@ -1,0 +1,30 @@
+\chapter{Configuration Reference}
+\label{app:config_reference}
+
+\section{Environment Variables Inventory}
+Table~\ref{tab:env_vars} catalogs every configuration variable consumed by LEVERAGE.
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{Environment Configuration Master Reference}
+\label{tab:env_vars}
+\begin{tabularx}{\linewidth}{p{45mm} p{36mm} p{12mm} Y p{22mm}}
+\toprule
+\textbf{Variable Name} & \textbf{Purpose \& Scope} & \textbf{Type} & \textbf{Default / Behavior} & \textbf{Source} \\
+\midrule
+\code{DATABASE_URL} & PostgreSQL connection string & String & Target DB URI & \code{database.py} \\
+\code{DB_SSLMODE} & PostgreSQL SSL connection mode & String & \code{"prefer"} & \code{database.py} \\
+\code{SECRET_KEY} & JWT signing HMAC key & String & Required in prod & \code{auth.py} \\
+\code{ALGORITHM} & JWT signature algorithm & String & \code{"HS256"} & \code{auth.py} \\
+\code{ACCESS_TOKEN_EXPIRE_HOURS} & Access token expiration lifetime & Int & \code{24} hours & \code{auth.py} \\
+\code{SMARTAPI_API_KEY} & Angel One SmartAPI access key & String & Optional (enables WS) & \code{main.py} \\
+\code{SMARTAPI_CLIENT_CODE} & Angel One account client code & String & Optional & \code{main.py} \\
+\code{SMARTAPI_PASSWORD} & Angel One account PIN & String & Optional & \code{main.py} \\
+\code{SMARTAPI_TOTP_KEY} & Angel One TOTP secret key & String & Optional & \code{main.py} \\
+\code{MALLOC_ARENA_MAX} & Glibc memory arena allocation ceiling & Int & \code{2} & \code{Dockerfile} \\
+\code{FRONTEND_URL} & Base URL for email verification links & String & \code{"http://127.0.0.1:8000"} & \code{auth.py} \\
+\bottomrule
+\end{tabularx}
+\end{table}

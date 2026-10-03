@@ -1,0 +1,71 @@
+\chapter{Market Data Architecture}
+\label{ch:market_data_architecture}
+
+\section{Three-Tier Ingestion Hierarchy}
+The LEVERAGE market-data pipeline employs a three-tier layered ingestion architecture to ensure continuous price discovery, fault tolerance, and zero data loss across varying market states.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=9mm and 10mm,
+    tierbox/.style={rectangle, draw=primaryblue, fill=primaryblue!5, rounded corners=2mm, minimum width=32mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    stepbox/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=30mm, minimum height=10mm, align=center, font=\sffamily\footnotesize, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=navyblue},
+    darrow/.style={{Latex[length=2mm]}-{Latex[length=2mm]}, thick, color=accentblue}
+]
+
+\node[tierbox] (t1) {\textbf{Tier 1: Angel One WS V2}\\Low-Latency Live Ticks\\(\code{SmartWebSocketV2})};
+\node[tierbox, right=10mm of t1] (t2) {\textbf{Tier 2: PricePoller REST}\\Market-Hours Fallback\\(\code{price_poller.py})};
+\node[tierbox, right=10mm of t2] (t3) {\textbf{Tier 3: yfinance Engine}\\Historical Gap Recovery\\(\code{yfinance_downloader.py})};
+
+\node[stepbox, below=12mm of t2] (norm) {\textbf{Tick Normalization \& Queue}\\LTP, Volume, High, Low, Timestamp};
+\node[stepbox, below left=10mm and 2mm of norm] (agg) {\textbf{CandleAggregator}\\1m Base Synthesis};
+\node[stepbox, below right=10mm and 2mm of norm] (livemgr) {\textbf{LiveTimeframeManager}\\5m, 15m, 1h, 1d Forming};
+
+\node[stepbox, below=10mm of norm] (store) {\textbf{PostgreSQL candles Table}\\\code{candles} Relational Store (Batch Insert)};
+
+\draw[arrow] (t1) -- (norm);
+\draw[arrow] (t2) -- (norm);
+\draw[arrow] (norm) -- (agg);
+\draw[arrow] (norm) -- (livemgr);
+\draw[arrow] (agg) -- (store);
+\draw[arrow] (t3) |- (store);
+
+\end{tikzpicture}
+}
+\caption{Three-Tier Market Data Ingestion and Candle Processing Pipeline}
+\label{fig:market_data_pipeline}
+\end{figure}
+
+\begin{enumerate}[leftmargin=6mm,itemsep=2mm]
+    \item \textbf{Tier 1 --- Angel One SmartWebSocket V2}:
+    \begin{itemize}[leftmargin=4mm]
+        \item Primary low-latency transport streaming real-time market ticks over binary/JSON WebSocket connections (\code{backend/main.py:7216}).
+        \item Ticks are dispatched to \code{_on_angel_tick}, updating the global \code{latest_ticks} state and queuing raw data for candle synthesis.
+    \end{itemize}
+    \item \textbf{Tier 2 --- PricePoller REST Engine}:
+    \begin{itemize}[leftmargin=4mm]
+        \item Operates as a daemon worker during NSE market hours (\code{09:15--15:30 IST}) \cite{ref:price_poller}.
+        \item Implements exponential backoff on network failures (\code{BACKOFF_MULTIPLIER = 2.0}, \code{MAX_BACKOFF_INTERVAL = 60.0}).
+        \item Automatically polls active subscribed symbols if the primary WebSocket drops or stops emitting ticks.
+    \end{itemize}
+    \item \textbf{Tier 3 --- yfinance Historical Gap-Recovery Engine}:
+    \begin{itemize}[leftmargin=4mm]
+        \item Provides batch-downloaded historical daily and intraday candles with exponential backoff (\code{BASE_BACKOFF = 2.0} in \code{backend/yfinance_downloader.py:72-73}).
+        \item Executed during system bootstrap and nightly recovery runs to fill gaps caused by server downtime.
+    \end{itemize}
+\end{enumerate}
+
+\section{Subscription Lifecycle \& Viewed Ticker Management}
+To prevent unbound memory growth on the server while monitoring thousands of NSE/BSE equities, LEVERAGE utilizes the \code{ViewedTickerManager} (\code{backend/main.py:220-275}):
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Dynamic Subscription}: When a client opens a chart, the client emits \code{\{"action": "view_ticker", "ticker": "RELIANCE"\}} over \code{/ws/dashboard}.
+    \item \textbf{LRU Eviction Ceiling (\tag{GATE-07})}: Active subscriptions are strictly capped at $\le 2,000$ tickers. When the subscription set exceeds 2,000 symbols, the least-recently viewed ticker is evicted, closing its broker feed and freeing builder memory.
+\end{itemize}
+
+\section{Stale Data Detection \& Watchdog Loop}
+The WebSocket watchdog loop (\code{backend/main.py:7260-7320}) monitors tick health at 15-second intervals:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item If no ticks are received for $>30$ seconds during market hours, the watchdog marks the connection degraded, initiates an exponential backoff reconnect attempt, and triggers \code{PricePoller} to sustain live price feeds.
+\end{itemize}

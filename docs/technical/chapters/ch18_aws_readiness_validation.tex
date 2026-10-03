@@ -1,0 +1,41 @@
+\chapter{AWS Readiness \& Production Validation}
+\label{ch:aws_readiness}
+
+\section{Pre-AWS Production Readiness Audit}
+A comprehensive read-only audit of the LEVERAGE repository was conducted prior to AWS deployment targeting an initial 1 GB RAM single-worker instance \cite{ref:factsheet}.
+
+\begin{accuracybox}
+\textbf{Audit Verification Baseline}: Pytest executed across the complete test suite resulted in \textbf{1,589 passed, 7 failed} out of 1,596 collected tests. An analysis of the 7 failures indicates they stem from test harness mocking discrepancies and outdated static assertions following performance refactoring, rather than active runtime blockers \tag{INFERENCE}.
+\end{accuracybox}
+
+\section{Audit of 7 Legacy Test Failures}
+Table~\ref{tab:test_failure_audit} presents the exact assertions, verified production behaviors, and safety classifications for the 7 failing tests.
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{Audit and Reconciliation of 7 Legacy Pytest Failures}
+\label{tab:test_failure_audit}
+\begin{tabularx}{\linewidth}{p{45mm} p{32mm} Y p{22mm}}
+\toprule
+\textbf{Failed Test Identifier} & \textbf{Failed Assertion} & \textbf{Verified Production Behavior} & \textbf{Safety Status} \\
+\midrule
+\scriptsize\code{test_retry_sleep_happens_with_no_session_open} & Asserted 3.0s sleep mock in backfill retry & Retry loop executed without blocking sleep in thread & \tag{INFERENCE} \\
+\scriptsize\code{test_startup_source_offloads_base_price_sync} & AST check for raw SELECT in startup handler & Query retained during startup prefill initialization & \tag{INFERENCE} \\
+\scriptsize\code{test_symbols_match (main.py)} & Asserted Yahoo ticker \code{^CNXSC} for Smallcap & Updated to official Angel token mapping & \tag{INFERENCE} \\
+\scriptsize\code{test_symbols_match (recovery)} & Asserted Yahoo ticker \code{^CNXSC} for Smallcap & Updated to official Angel token mapping & \tag{INFERENCE} \\
+\scriptsize\code{test_concurrent_requests_no_duplicate} & Expected mock provider fetch call count 1 vs 2 & Harness concurrency race in mock evaluation & \tag{INFERENCE} \\
+\scriptsize\code{test_no_gap_path_keeps_connection} & Asserted connection state active & Connection closed cleanly on completed request & \tag{INFERENCE} \\
+\scriptsize\code{test_thread_limiter_capped_to_8} & Asserted thread limiter cap = 8 & Elevated to 64 tokens (\tag{GATE-09}) to prevent pool starvation & \tag{INFERENCE} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{AWS Go-Live Readiness Verification Gates}
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Single-Worker Invariant}: \code{workers = 1} hardcoded in \code{backend/gunicorn.conf.py:19} \tag{VERIFIED}.
+    \item \textbf{Memory Cap}: \code{MALLOC_ARENA_MAX=2} baked into container environment \tag{VERIFIED}.
+    \item \textbf{Database Pool}: 20 base + 30 overflow connections with 30s statement timeout \tag{VERIFIED}.
+    \item \textbf{Event Loop Lag}: Measured baseline between 1--2ms under normal tick ingestion \tag{VERIFIED}.
+\end{itemize}

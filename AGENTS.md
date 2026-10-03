@@ -410,3 +410,78 @@
 4. **Featured headline compact**: `padding:1rem; border-radius:10px; h2 font-size:1.05rem`.
 5. **News cards**: `padding:0.9rem`, title `0.9rem`, excerpt `0.8rem`, meta `flex-wrap:wrap; 0.72rem`.
 6. **News list gap reduced**: `gap:0.6rem`.
+
+### Session 21: Watchlist List View Redesign, Exchange Badge Detection, Auth Card Close Button, and News Card Clean-up
+
+**Goal:**
+1. Redesign Watchlist from tall grid cards into a compact, responsive list-row layout with clickable rows opening overview.html, accurate exchange badges (NSE/BSE/INDEX), and clean toast notifications.
+2. Fix Auth close button on login.html and register.html to sit inside the top-right corner of the card with matching dark background and navigate back to previous referrer/page.
+3. Remove 'ScanX' source badges from news cards on both Dashboard (index.html via news.js) and News Page (news.html) while keeping backend pipeline untouched.
+4. Significantly increase the search bar width on news.html mobile view to 100% full width with comfortable touch target heights.
+
+**Files Modified:**
+- rontend/watchlist.html - List-row styling, removed 'flex:1' empty middle gap, dynamic exchange lookup from ALL_STOCKS, innerHTML toast notification fix.
+- rontend/overview.html - Dynamic exchange badge & sector enrichment from ALL_STOCKS.
+- rontend/auth.css - Positioned close button inside card corner with matching #0a0a0a background.
+- rontend/login.html & rontend/register.html - Moved button inside card and improved handleAuthClose referrer navigation.
+- rontend/news.js - Removed 'ScanX' label from dashboard cards and ticker modal cards.
+- rontend/news.html - Removed 'ScanX' source badge from news cards and modal; expanded search bar width to 100% on mobile.
+
+---
+
+## Session Summary: News Card View & Search Bar Improvements
+- **Goal**:
+  1. Remove the "ScanX" label from the news card view on both the dashboard (index.html via 
+ews.js) and the dedicated news page (
+ews.html).
+  2. Increase the search bar width on the news page for mobile view while keeping desktop clean and responsive.
+  3. Ensure all underlying news scraping from scanx.trade remains 100% intact (view-only changes).
+- **Changes**:
+  - rontend/news.js: Removed the <span style="color:#4A90E2;font-weight:600;">ScanX</span> badge from enderDashboardNewsCards(), enderNewsCards(), and openNewsDetail(). News items now display clean timestamp and ticker metadata.
+  - rontend/news.html:
+    - Removed the <span class="source-badge">ScanX</span> badge from news cards in enderList() and from the news detail popup.
+    - Updated CSS for .search-news on desktop (height: 42px; width: 100%) and mobile (@media (max-width: 768px): width: 100% !important; min-width: 100% !important; height: 44px; font-size: 0.92rem;).
+
+---
+
+## Session Summary: Dashboard News Fix & Search Enhancements
+- **Goal**:
+  1. Fix issue where news was not rendering on dashboard (index.html / home.html).
+  2. Fix search race condition (e.g. searching 'SBI' and quickly typing 'SBIN' where old in-flight requests overwrote newer search results).
+  3. Significantly increase search bar size, height, and touch-target padding on the news page for mobile view.
+  4. Clarify backend news search mechanism from scanx.trade.
+- **Changes**:
+  - rontend/news.js:
+    - Fixed undefined 	imeAgo variable in enderDashboardNewsCards() which caused a JS runtime error during card mapping.
+    - Improved boot detection in 
+ews.js to run on both DOMContentLoaded and when DOM is already interactive / complete.
+  - rontend/news.html:
+    - Implemented request sequence IDs (currentSearchId) and AbortSignal propagation in ilterNews() and etchNewsAPI(). Outdated in-flight requests (e.g. SBI) are now properly aborted/discarded when the user types a new query (e.g. SBIN).
+    - Redesigned search bar with .search-input-wrap, integrated magnifying search icon SVG, clear button ?, and touch-friendly mobile input (52px height, 1rem font size, 100% width).
+
+---
+
+## Session Summary: Directory Cleanup
+- **Goal**: Safely delete the redundant nested News_Sentiment duplicate folder without affecting any running components.
+- **Action**:
+  - Removed C:\Users\sohan\Desktop\StockMarket\StockMarket\StockMarket\News_Sentiment.
+  - Confirmed active News_Sentiment at C:\Users\sohan\Desktop\StockMarket\StockMarket\News_Sentiment remains untouched.
+  - Verified Port 8000 and Port 8003 servers are running normally and responding with HTTP 200.
+
+---
+
+## Session Summary: Cleaned Up Redundant & Unnecessary Files/Folders
+- **Goal**: Safely delete all redundant, duplicate, and temporary folders/files identified across the workspace without affecting active services.
+- **Removed Items**:
+  1. StockMarket\StockMarket\StockMarket\News_Sentiment (Redundant duplicate news backend folder)
+  2. StockMarket\StockMarket\venv (Unused 1.80 GB outer virtual environment)
+  3. StockMarket\StockMarket\StockMarket\nginx.conf;C (Accidental typo folder)
+  4. StockMarket\StockMarket\StockMarket\tests (Empty directory)
+  5. StockMarket\logs, StockMarket\StockMarket\logs, StockMarket\StockMarket\StockMarket\logs, and root 
+ews_*.log files
+  6. All stale .pytest_cache and __pycache__ directories
+  7. Duplicate root scripts (dd_holiday.py, un.py, etc.) whose active files are maintained in StockMarket\StockMarket\StockMarket\
+- **Health Verification**:
+  - Port 8000 (/api/all-stocks & /api/news/search/market) -> 200 OK
+  - Port 8003 (/docs) -> 200 OK
+  - Active venv (StockMarket\StockMarket\StockMarket\venv) and code intact.

@@ -1,0 +1,42 @@
+\chapter{API Architecture}
+\label{ch:api_architecture}
+
+\section{REST Routing Topology}
+LEVERAGE exposes a total of \textbf{70 route endpoints} (68 REST routes + 2 WebSocket routes) structured across modular router domains \cite{ref:main_py}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/main.py:427-6200} (59 routes), \code{backend/routers/auth_router.py:1-120} (7 routes), \code{backend/routers/trade_router.py:1-85} (4 routes).
+\end{citationbox}
+
+\section{Core Endpoints Summary}
+Table~\ref{tab:core_api_endpoints} outlines the primary REST endpoints powering market intelligence, charting, authentication, and execution (primary routes; see Appendix~\ref{app:api_reference} for the complete 70-endpoint catalog).
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{Primary REST API Endpoints Specification}
+\label{tab:core_api_endpoints}
+\begin{tabularx}{\linewidth}{p{14mm} p{44mm} Y p{14mm} p{26mm}}
+\toprule
+\textbf{Method} & \textbf{Endpoint Path} & \textbf{Description \& Output} & \textbf{Auth} & \textbf{Source} \\
+\midrule
+\code{POST} & \code{/api/auth/register} & Register user account with verification token & None & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/login} & Issue RFC 7519 HS256 JWT access token & None & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/logout} & Blacklist JWT \code{jti} in database & Bearer & \code{auth_router.py} \\
+\code{GET}  & \code{/api/auth/me} & Return active user profile \& balance & Bearer & \code{auth_router.py} \\
+\code{GET}  & \code{/api/all-stocks} & Pre-serialized UTF-8 stock universe (~1.34 MB) & None & \code{main.py} \\
+\code{POST} & \code{/api/live-prices} & Batch live price \& daily change lookup & None & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/chart} & Exact stored candles + live forming overlay & None & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/intraday/paginated} & Historical intraday bars with auto-recovery & None & \code{main.py} \\
+\code{GET}  & \code{/api/market-movers} & Top gainers, losers, and active volume & None & \code{main.py} \\
+\code{GET}  & \code{/api/screener} & Multi-factor stock filter engine & None & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/\{ticker\}} & Compute RSI, MACD, BB, ATR, Supertrend & None & \code{main.py} \\
+\code{POST} & \code{/api/trade/order} & Open Long/Short position with TP/SL & Bearer & \code{trade_router.py} \\
+\code{GET}  & \code{/api/trade/positions} & Active OPEN and CLOSED position list & Bearer & \code{trade_router.py} \\
+\code{POST} & \code{/api/trade/positions/\{id\}/close} & Close position manually at CMP & Bearer & \code{trade_router.py} \\
+\code{PUT}  & \code{/api/trade/positions/\{id\}/tpsl} & Modify TP/SL levels (max 3 edits) & Bearer & \code{trade_router.py} \\
+\code{GET}  & \code{/api/health} & Full diagnostic health report & None & \code{main.py} \\
+\bottomrule
+\end{tabularx}
+\end{table}

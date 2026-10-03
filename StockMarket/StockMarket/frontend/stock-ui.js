@@ -120,18 +120,25 @@
       
       // Close indicator menu if open
       const indMenu = document.getElementById('indicatorMenu');
-      if (indMenu) indMenu.style.display = 'none';
+      if (indMenu) {
+        indMenu.style.display = 'none';
+        indMenu.classList.remove('visible');
+      }
 
       if (isVisible) {
         menu.classList.remove('visible');
         menu.style.display = 'none';
       } else {
+        // Ensure menu is attached to document.body so it is never trapped by container overflow or stacking context
+        if (menu.parentElement !== document.body) {
+          document.body.appendChild(menu);
+        }
         if (btn) {
           const rect = btn.getBoundingClientRect();
           menu.style.position = 'fixed';
           menu.style.top = (rect.bottom + 4) + 'px';
-          menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 140)) + 'px';
-          menu.style.zIndex = '99999';
+          menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - (menu.offsetWidth || 140) - 8)) + 'px';
+          menu.style.zIndex = '999999';
         }
         menu.classList.add('visible');
         menu.style.display = 'block';
@@ -175,12 +182,16 @@
         menu.style.display = 'none';
         menu.classList.remove('visible');
       } else {
+        // Ensure menu is attached to document.body so it is never trapped by container overflow or stacking context
+        if (menu.parentElement !== document.body) {
+          document.body.appendChild(menu);
+        }
         if (btn) {
           const rect = btn.getBoundingClientRect();
           menu.style.position = 'fixed';
           menu.style.top = (rect.bottom + 4) + 'px';
-          menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - 240)) + 'px';
-          menu.style.zIndex = '99999';
+          menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - (menu.offsetWidth || 200) - 8)) + 'px';
+          menu.style.zIndex = '999999';
         }
         menu.style.display = 'block';
         menu.classList.add('visible');

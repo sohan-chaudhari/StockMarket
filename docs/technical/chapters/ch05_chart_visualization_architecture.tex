@@ -1,0 +1,56 @@
+\chapter{Chart \& Visualization Architecture}
+\label{ch:chart_visualization}
+
+\section{Frontend Charting Engine}
+The LEVERAGE frontend visualization layer provides ultra-responsive technical charting by pairing TradingView Advanced Charts JS API and native HTML5 Canvas / Lightweight Charts with client-side IndexedDB caching.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{frontend/stock.html}, \code{frontend/stock-logic.js}, \code{frontend/tv-chart.html}, \code{frontend/tv-datafeed.js}, \code{frontend/cache.js}.
+\end{citationbox}
+
+\section{Component Architecture \& Data Flow}
+Figure~\ref{fig:chart_data_flow} illustrates the streaming data flow from backend WebSockets to the client rendering loop.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.95\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=10mm and 12mm,
+    cbox/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=32mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=navyblue},
+    darrow/.style={{Latex[length=2mm]}-{Latex[length=2mm]}, thick, color=accentblue}
+]
+
+\node[cbox] (api) {FastAPI Backend\\(\code{/api/stock-data/chart})};
+\node[cbox, right=14mm of api] (cache) {IndexedDB Cache\\(\code{frontend/cache.js})};
+\node[cbox, right=14mm of cache] (feed) {TradingView Datafeed\\(\code{tv-datafeed.js})};
+
+\node[cbox, below=14mm of api] (ws) {WebSocket Client\\(\code{/ws/dashboard})};
+\node[cbox, below=14mm of feed] (canvas) {Chart Canvas Engine\\(Lightweight / TradingView)};
+
+\draw[arrow] (api) -- node[above, font=\sffamily\scriptsize] {Historical Bars} (cache);
+\draw[arrow] (cache) -- (feed);
+\draw[arrow] (feed) -- (canvas);
+\draw[arrow] (ws) -- node[above, font=\sffamily\scriptsize] {Live Tick / Forming Bar} (canvas);
+\draw[darrow] (ws) -- (api);
+
+\end{tikzpicture}
+}
+\caption{Client-Side Chart Data Flow and Real-Time Update Pipeline}
+\label{fig:chart_data_flow}
+\end{figure}
+
+\section{Multi-Chart Workspace Capabilities}
+The trading workstation (\code{frontend/stock.html}) supports modular multi-pane analysis:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Independent Timeframe \& Symbol Selection}: Multiple chart panes can render different symbols or timeframes simultaneously while sharing a single underlying WebSocket connection.
+    \item \textbf{Sub-16ms Frame Render Loop}: Forming candles stream updates directly to active series with throttled RAF (RequestAnimationFrame) batching, maintaining a stable 60 FPS rendering rate.
+    \item \textbf{Interactive Drawing Tools}: Support for trendlines, Fibonacci retracements, horizontal support/resistance zones, and text annotations (\code{frontend/drawings.js}, \code{frontend/drawing-core.js}).
+\end{itemize}
+
+\section{IndexedDB Client Cache Mechanics}
+To minimize network overhead on page reloads, \code{frontend/cache.js} implements a structured client-side IndexedDB database:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item Completed historical bars are stored locally with a TTL invalidation timestamp.
+    \item On chart load, historical bars are read from IndexedDB in $<10\text{ms}$, while an incremental API request fetches only the missing bars since the last stored timestamp.
+\end{itemize}

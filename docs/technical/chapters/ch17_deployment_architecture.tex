@@ -1,0 +1,42 @@
+\chapter{Deployment Architecture}
+\label{ch:deployment_architecture}
+
+\section{Production Topology}
+LEVERAGE is deployed via Docker Compose orchestrating containerized application and reverse-proxy services on an Ubuntu 24.04 LTS host with an external or host-level PostgreSQL database \cite{ref:docker_compose,ref:deploy_guide}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{docker-compose.yml:1-35}, \code{backend/Dockerfile:1-108}, \code{nginx.conf:1-125}, \code{backend/gunicorn.conf.py:1-65}.
+\end{citationbox}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.95\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=10mm and 14mm,
+    dbox/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=34mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    dbbox/.style={cylinder, cylinder uses custom fill, cylinder body fill=lightbg, cylinder end fill=accentblue!20, draw=navyblue, shape aspect=0.5, shape border rotate=90, minimum width=26mm, minimum height=14mm, align=center, font=\sffamily\footnotesize, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=navyblue},
+    darrow/.style={{Latex[length=2mm]}-{Latex[length=2mm]}, thick, color=accentblue}
+]
+
+\node[dbox] (internet) {Client Traffic\\(Port 80 HTTP / WS)};
+\node[dbox, right=14mm of internet] (nginx) {\textbf{Nginx Container}\\Reverse Proxy (\code{port 80})\\(\code{nginx:1.27-alpine})};
+\node[dbox, right=14mm of nginx] (app) {\textbf{App Container}\\Gunicorn + 1 Worker\\(\code{python:3.13-slim})};
+\node[dbbox, below=12mm of app] (db) {PostgreSQL 16\\(Host / External DB)};
+
+\draw[darrow] (internet) -- (nginx);
+\draw[darrow] (nginx) -- node[above, font=\sffamily\scriptsize] {HTTP/1.1 \& WS} (app);
+\draw[darrow] (app) -- node[right, font=\sffamily\scriptsize] {Port 5432} (db);
+
+\end{tikzpicture}
+}
+\caption{Containerized Production Deployment Topology (Docker Compose: \code{app} + \code{nginx})}
+\label{fig:deployment_topology}
+\end{figure}
+
+\section{Container Specifications \& Lifecycle}
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Single-Stage Dockerfile}: Uses \code{python:3.13-slim}, installs \code{libpq5} runtime libraries, runs as non-root \code{appuser}, and sets \code{MALLOC_ARENA_MAX=2} (\code{backend/Dockerfile:15-89}).
+    \item \textbf{Gunicorn Master Configuration}: Binds to \code{0.0.0.0:8000} with \code{workers = 1}, \code{worker_class = "uvicorn.workers.UvicornWorker"}, \code{timeout = 120}, and \code{max_requests = 8000} (\code{backend/gunicorn.conf.py:19-44}).
+    \item \textbf{Container Healthcheck}: Evaluates endpoint \code{/api/health} via Python standard library \code{urllib} with a 90-second startup grace period (\code{backend/Dockerfile:101-102}).
+\end{itemize}

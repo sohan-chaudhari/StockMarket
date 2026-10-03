@@ -2378,3 +2378,29 @@ img.card-icon {
   }
 }
 
+
+/* Range Dropdown and Menu */
+.range-dropdown {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  z-index: 1001;
+}
+.range-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 120px;
+  background: #1e222d;
+  border: 1px solid #2a2e39;
+  border-radius: 6px;
+  z-index: 999999 !important;
+  display: none;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+}
+.range-menu.visible {
+  display: block;
+}

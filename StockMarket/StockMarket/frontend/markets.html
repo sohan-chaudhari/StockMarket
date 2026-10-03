@@ -109,12 +109,55 @@
           margin-top: 1rem;
           width: 100%;
         }
-        
-        /* By-Sector container overrides grid completely to prevent overlapping */
+
+        /* By-Sector container overrides grid completely to stack sector blocks vertically */
         .market-heatmap-grid.by-sector {
           display: flex !important;
           flex-direction: column !important;
           gap: 14px !important;
+        }
+        
+        /* Heatmap Header & Tabs */
+        .heatmap-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 0.75rem;
+          margin-bottom: 0.85rem;
+        }
+        .heatmap-tabs {
+          margin: 0 !important;
+          padding: 3px !important;
+          display: inline-flex !important;
+          flex-wrap: nowrap !important;
+          gap: 4px !important;
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 8px;
+        }
+        .heatmap-tabs .tab {
+          white-space: nowrap !important;
+          padding: 6px 14px !important;
+          font-size: 0.8rem !important;
+          border-radius: 6px;
+        }
+        @media(max-width: 640px){
+          .heatmap-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 0.6rem !important;
+            margin-bottom: 0.6rem !important;
+          }
+          .heatmap-tabs {
+            width: 100% !important;
+            display: flex !important;
+          }
+          .heatmap-tabs .tab {
+            flex: 1 !important;
+            text-align: center !important;
+            padding: 7px 10px !important;
+          }
         }
 
         .heatmap-box {
@@ -149,13 +192,13 @@
         .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-md { grid-column: span 2; grid-row: span 1; }
         .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-sm { grid-column: span 1; grid-row: span 1; }
         
-        .heatmap-box.hm-size-xl .hm-sym { font-size: 1.1rem; }
-        .heatmap-box.hm-size-xl .hm-pct { font-size: 1.05rem; }
-        .heatmap-box.hm-size-lg .hm-sym { font-size: 0.95rem; }
+        .heatmap-box.hm-size-xl .hm-sym { font-size: 1.05rem; }
+        .heatmap-box.hm-size-xl .hm-pct { font-size: 1rem; }
+        .heatmap-box.hm-size-lg .hm-sym { font-size: 0.92rem; }
         .heatmap-box.hm-size-sm .hm-price { display: none; }
         
         .heatmap-box .hm-sym {
-          font-size: 0.85rem;
+          font-size: 0.82rem;
           font-weight: 700;
           color: #fff;
           margin-bottom: 2px;
@@ -163,13 +206,23 @@
           overflow: hidden;
           text-overflow: ellipsis;
           max-width: 100%;
-          letter-spacing: 0.02em;
+          letter-spacing: 0.01em;
+          line-height: 1.15;
+        }
+        .heatmap-box .hm-sym.hm-sym-med {
+          font-size: 0.74rem;
+          letter-spacing: -0.01em;
+        }
+        .heatmap-box .hm-sym.hm-sym-long {
+          font-size: 0.67rem;
+          letter-spacing: -0.025em;
         }
         .heatmap-box .hm-pct {
           font-family: 'Space Grotesk', monospace;
-          font-size: 0.82rem;
+          font-size: 0.8rem;
           font-weight: 700;
           white-space: nowrap;
+          line-height: 1.15;
         }
 
         /* Sector-grouped mode: isolated card block per sector */
@@ -246,18 +299,10 @@
         }
 
         @media(max-width:768px){
-          .market-heatmap-grid:not(.by-sector) { grid-template-columns: repeat(4, 1fr); }
-          .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-xl { grid-column: span 2; }
-          .hm-sector-tiles {
-            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-            gap: 6px;
-          }
-        }
-        @media(max-width:480px){
           .market-heatmap-grid:not(.by-sector) { 
             grid-template-columns: repeat(3, 1fr) !important;
-            grid-auto-rows: 62px !important;
-            gap: 6px !important;
+            grid-auto-rows: 64px !important;
+            gap: 7px !important;
           }
           .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-xl,
           .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-lg,
@@ -265,6 +310,48 @@
           .market-heatmap-grid:not(.by-sector) .heatmap-box.hm-size-sm { 
             grid-column: span 1 !important; 
             grid-row: span 1 !important; 
+          }
+          .heatmap-box.hm-size-xl .hm-sym,
+          .heatmap-box.hm-size-lg .hm-sym {
+            font-size: 0.82rem !important;
+          }
+          .heatmap-box.hm-size-xl .hm-sym.hm-sym-med,
+          .heatmap-box.hm-size-lg .hm-sym.hm-sym-med {
+            font-size: 0.74rem !important;
+          }
+          .heatmap-box.hm-size-xl .hm-sym.hm-sym-long,
+          .heatmap-box.hm-size-lg .hm-sym.hm-sym-long {
+            font-size: 0.67rem !important;
+          }
+          .heatmap-box.hm-size-xl .hm-pct,
+          .heatmap-box.hm-size-lg .hm-pct {
+            font-size: 0.8rem !important;
+          }
+          .hm-sector-tiles {
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 6px;
+          }
+        }
+        @media(max-width:480px){
+          .market-heatmap-grid:not(.by-sector) { 
+            grid-template-columns: repeat(3, 1fr) !important;
+            grid-auto-rows: 64px !important;
+            gap: 6px !important;
+          }
+          .heatmap-box {
+            padding: 6px 3px !important;
+          }
+          .heatmap-box .hm-sym {
+            font-size: 0.78rem !important;
+          }
+          .heatmap-box .hm-sym.hm-sym-med {
+            font-size: 0.71rem !important;
+          }
+          .heatmap-box .hm-sym.hm-sym-long {
+            font-size: 0.64rem !important;
+          }
+          .heatmap-box .hm-pct {
+            font-size: 0.78rem !important;
           }
           .hm-sector-block {
             padding: 8px 10px !important;
@@ -277,12 +364,9 @@
           }
           .hm-sector-tiles .heatmap-box {
             min-height: 56px !important;
-            padding: 6px 4px !important;
+            padding: 6px 3px !important;
           }
-          .hm-sector-tiles .heatmap-box .hm-sym {
-            font-size: 0.76rem !important;
-            font-weight: 700 !important;
-          }
+        }
           .hm-sector-tiles .heatmap-box .hm-pct {
             font-size: 0.72rem !important;
             font-weight: 600 !important;
@@ -331,7 +415,6 @@
             <button class="tab active" onclick="switchMarketTab('NSE',this)">NSE</button>
             <button class="tab" onclick="switchMarketTab('BSE',this)">BSE</button>
             <button class="tab" onclick="switchMarketTab('Global',this)">Global</button>
-            <button class="tab" onclick="switchMarketTab('Crypto',this)">Crypto</button>
         </div>
 
         <div id="marketTabNSE" class="tab-content active">
@@ -400,12 +483,15 @@
                         <div class="fii-row"><span class="fii-label">Net Total</span><span class="fii-value" id="fiiNetVal">-- Cr</span></div>
                         <div class="fii-row"><span class="fii-label">India VIX</span><span class="fii-value"><span id="vixValue" style="color:#ff9800;">--</span> <span id="vixChange" style="font-size:0.75rem;"></span></span></div>
                         <div id="fiiFlowBlock" style="display:none;margin-top:1rem;padding-top:0.85rem;border-top:1px solid rgba(255,255,255,0.06);">
-                            <div class="chart-caption">Net Cash Flow &ndash; Last 5 Sessions (&#8377; Cr)</div>
-                            <svg id="fiiFlowChart" viewBox="0 0 320 120" style="width:100%;height:120px;display:block;"></svg>
-                            <div class="chart-legend">
+                            <div class="chart-caption" style="display:flex;justify-content:space-between;align-items:center;">
+                                <span>Net Cash Flow &ndash; Last 5 Sessions (&#8377; Cr)</span>
+                                <span style="font-size:0.7rem;color:#4A90E2;cursor:pointer;font-weight:600;" onclick="resetFiiToToday()">Today</span>
+                            </div>
+                            <svg id="fiiFlowChart" viewBox="0 0 320 120" style="width:100%;height:120px;display:block;touch-action:manipulation;"></svg>
+                            <div class="chart-legend" style="margin-top:0.35rem;">
                                 <div><span class="key" style="background:#4A90E2;"></span>FII</div>
                                 <div><span class="key" style="background:#ff9800;"></span>DII</div>
-                                <div style="margin-left:auto;">Above line = buying</div>
+                                <div style="margin-left:auto;color:var(--text-secondary);font-size:0.72rem;">Tap any day to view data</div>
                             </div>
                         </div>
                         <div style="margin-top:0.75rem;padding:0.5rem;background:rgba(255,255,255,0.03);border-radius:8px;font-size:0.75rem;color:var(--text-secondary);text-align:center;" id="fiiSource"></div>
@@ -432,9 +518,9 @@
                 </div>
             </div>
                 <div class="markets-card full" style="margin-top: 1.5rem;">
-                    <div class="card-header">
+                    <div class="card-header heatmap-header">
                         <h3>Live Market Heatmap</h3>
-                        <div class="tabs" style="margin: 0; padding: 2px;">
+                        <div class="tabs heatmap-tabs">
                             <button class="tab active" onclick="switchHeatmapMode('movers', this)">Top Movers</button>
                             <button class="tab" onclick="switchHeatmapMode('sector', this)">By Sector</button>
                         </div>
@@ -462,19 +548,13 @@
             <div class="markets-card" style="max-width:600px;margin:0 auto;">
                 <div class="card-header"><h3>Global Indices</h3><span class="badge badge-blue">LIVE</span></div>
                 <div id="globalContainer">
-                    <div class="global-row"><span><span class="global-flag">ðŸ‡ºðŸ‡¸</span><span class="global-name">S&P 500</span></span><span class="fii-value" id="sp500Val">--</span><span class="index-change" id="sp500Chg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">ðŸ‡ºðŸ‡¸</span><span class="global-name">NASDAQ</span></span><span class="fii-value" id="nasdaqVal">--</span><span class="index-change" id="nasdaqChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">ðŸ‡¯ðŸ‡µ</span><span class="global-name">Nikkei 225</span></span><span class="fii-value" id="nikkeiVal">--</span><span class="index-change" id="nikkeiChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">ðŸ‡­ðŸ‡°</span><span class="global-name">Hang Seng</span></span><span class="fii-value" id="hsiVal">--</span><span class="index-change" id="hsiChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">ðŸ‡&copy;ðŸ‡ª</span><span class="global-name">DAX</span></span><span class="fii-value" id="daxVal">--</span><span class="index-change" id="daxChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">ðŸ‡¬ðŸ‡§</span><span class="global-name">FTSE 100</span></span><span class="fii-value" id="ftseVal">--</span><span class="index-change" id="ftseChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇺🇸</span><span class="global-name">S&P 500</span></span><span class="fii-value" id="sp500Val">--</span><span class="index-change" id="sp500Chg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇺🇸</span><span class="global-name">NASDAQ</span></span><span class="fii-value" id="nasdaqVal">--</span><span class="index-change" id="nasdaqChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇯🇵</span><span class="global-name">Nikkei 225</span></span><span class="fii-value" id="nikkeiVal">--</span><span class="index-change" id="nikkeiChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇭🇰</span><span class="global-name">Hang Seng</span></span><span class="fii-value" id="hsiVal">--</span><span class="index-change" id="hsiChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇩🇪</span><span class="global-name">DAX</span></span><span class="fii-value" id="daxVal">--</span><span class="index-change" id="daxChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">🇬🇧</span><span class="global-name">FTSE 100</span></span><span class="fii-value" id="ftseVal">--</span><span class="index-change" id="ftseChg"></span></div>
                 </div>
-            </div>
-        </div>
-        <div id="marketTabCrypto" class="tab-content">
-            <div class="markets-card" style="max-width:600px;margin:0 auto;">
-                <div class="card-header"><h3>Cryptocurrencies</h3><span class="badge badge-blue">LIVE</span></div>
-                <div id="cryptoContainer"><div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Loading crypto prices...</div></div>
             </div>
         </div>
     </main>
@@ -707,7 +787,7 @@
                         var cEl = document.getElementById('bse-markets-change-' + t);
                         if (pEl && cEl) {
                             var oldStr = pEl.textContent;
-                            var newStr = '&#8377;' + price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+                            var newStr = '\u20B9' + price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
                             if (oldStr !== newStr) {
                                 pEl.style.transition = 'none';
                                 pEl.style.color = diff >= 0 ? '#10b981' : '#ef4444';
@@ -930,16 +1010,18 @@
                 var cls = pct >= 0 ? 'text-green' : 'text-red';
                 var sign = pct >= 0 ? '+' : '';
                 var tier = _sizeTierFor(Math.abs(pct));
+                var symLen = stock.ticker ? stock.ticker.length : 0;
+                var symCls = symLen >= 9 ? 'hm-sym-long' : (symLen >= 7 ? 'hm-sym-med' : '');
                 return '<div class="heatmap-box hm-size-' + tier + '" style="background:' + bg + ';border-color:' + borderColor + ';" onclick="window.location.href=\'overview.html?ticker=' + encodeURIComponent(stock.ticker) + '\'">' +
-                    '<div class="hm-sym">' + stock.ticker + '</div>' +
+                    '<div class="hm-sym ' + symCls + '" title="' + stock.ticker + '">' + stock.ticker + '</div>' +
                     '<div class="hm-pct ' + cls + '">' + sign + pct.toFixed(2) + '%</div>' +
                     '</div>';
             }
 
             window.switchHeatmapMode = function(mode, btn) {
                 heatmapMode = mode;
-                document.querySelectorAll('.markets-card.full .tabs .tab').forEach(function(t){ t.classList.remove('active'); });
-                btn.classList.add('active');
+                document.querySelectorAll('.heatmap-tabs .tab, .markets-card.full .tabs .tab').forEach(function(t){ t.classList.remove('active'); });
+                if (btn) btn.classList.add('active');
                 renderHeatmap();
             };
 
@@ -1025,12 +1107,12 @@
                     container.className = 'market-heatmap-grid';
                     if (toggleContainer) {
                         var flatCount = _flattenLeaderStocks().length;
-                        toggleContainer.style.display = (isMobile && flatCount > 8) ? 'block' : 'none';
+                        toggleContainer.style.display = (isMobile && flatCount > 9) ? 'block' : 'none';
                         var btn = document.getElementById('btnHeatmapToggle');
                         if (btn) btn.textContent = heatmapExpanded ? 'Show Less' : 'Show All ' + flatCount + ' Stocks';
                     }
                     var flat = _flattenLeaderStocks().sort(function(a, b){ return Math.abs(b.pct) - Math.abs(a.pct); });
-                    if (isMobile && !heatmapExpanded) flat = flat.slice(0, 8);
+                    if (isMobile && !heatmapExpanded) flat = flat.slice(0, 9);
                     container.innerHTML = flat.map(_heatmapBoxHtml).join('');
                 }
             }
@@ -1145,12 +1227,12 @@
             function _applyGlobalIndices(data) {
                 if (!data) return;
                 var globals = [
-                    {id:'sp500',flag:'ðŸ‡ºðŸ‡¸',name:'S&P 500',key:'^GSPC'},
-                    {id:'nasdaq',flag:'ðŸ‡ºðŸ‡¸',name:'NASDAQ',key:'^IXIC'},
-                    {id:'nikkei',flag:'ðŸ‡¯ðŸ‡µ',name:'Nikkei 225',key:'^N225'},
-                    {id:'hsi',flag:'ðŸ‡­ðŸ‡°',name:'Hang Seng',key:'^HSI'},
-                    {id:'dax',flag:'ðŸ‡&copy;ðŸ‡ª',name:'DAX',key:'^GDAXI'},
-                    {id:'ftse',flag:'ðŸ‡¬ðŸ‡§',name:'FTSE 100',key:'^FTSE'}
+                    {id:'sp500',flag:'🇺🇸',name:'S&P 500',key:'^GSPC'},
+                    {id:'nasdaq',flag:'🇺🇸',name:'NASDAQ',key:'^IXIC'},
+                    {id:'nikkei',flag:'🇯🇵',name:'Nikkei 225',key:'^N225'},
+                    {id:'hsi',flag:'🇭🇰',name:'Hang Seng',key:'^HSI'},
+                    {id:'dax',flag:'🇩🇪',name:'DAX',key:'^GDAXI'},
+                    {id:'ftse',flag:'🇬🇧',name:'FTSE 100',key:'^FTSE'}
                 ];
                 globals.forEach(function(g){
                     var d = data[g.key]||{};
@@ -1182,14 +1264,99 @@
                 }, 60000, _applyGlobalIndices);
             }
 
-            // Grouped FII vs DII cash-flow bars. /api/fii-dii already returns several sessions,
-            // but the page previously read only entries[0] and discarded the rest &ndash; this charts them.
+            // Grouped FII vs DII cash-flow bars with interactive session selection on touch / click.
             var _fiiEntries = null;
+            var _selectedFiiDate = null;
+            var _fiiDataRaw = null;
+
+            function fmtFii(val){
+                var n = parseFloat(val) || 0;
+                return (n >= 0 ? '+' : '-') + '&#8377;' + Math.abs(n).toFixed(2) + ' Cr';
+            }
+
+            function selectFiiSession(entry) {
+                if (!entry) return;
+                _selectedFiiDate = entry.date;
+
+                var fiiCash = parseFloat(entry.fii_cash_cr) || 0;
+                var fiiFo = parseFloat(entry.fii_fo_cr) || 0;
+                var diiCash = parseFloat(entry.dii_cash_cr) || 0;
+                var netTotal = parseFloat(entry.net_total_cr) || (fiiCash + diiCash);
+
+                var elFiiCash = document.getElementById('fiiCashVal');
+                if (elFiiCash) {
+                    elFiiCash.innerHTML = fmtFii(fiiCash);
+                    elFiiCash.style.color = fiiCash >= 0 ? '#089981' : '#f23645';
+                }
+                var elFiiFo = document.getElementById('fiiFoVal');
+                if (elFiiFo) {
+                    elFiiFo.innerHTML = fmtFii(fiiFo);
+                    elFiiFo.style.color = fiiFo >= 0 ? '#089981' : '#f23645';
+                }
+                var elDiiCash = document.getElementById('diiCashVal');
+                if (elDiiCash) {
+                    elDiiCash.innerHTML = fmtFii(diiCash);
+                    elDiiCash.style.color = diiCash >= 0 ? '#089981' : '#f23645';
+                }
+                var elFiiNet = document.getElementById('fiiNetVal');
+                if (elFiiNet) {
+                    elFiiNet.innerHTML = fmtFii(netTotal);
+                    elFiiNet.style.color = netTotal >= 0 ? '#089981' : '#f23645';
+                }
+
+                var badgeEl = document.getElementById('fiiBadge');
+                if (badgeEl) {
+                    var isLatest = (_fiiEntries && _fiiEntries[0] && _fiiEntries[0].date === entry.date);
+                    badgeEl.textContent = isLatest ? 'Today' : (entry.date || 'Selected');
+                    badgeEl.className = isLatest ? 'badge badge-blue' : 'badge badge-green';
+                }
+
+                var sourceEl = document.getElementById('fiiSource');
+                if (sourceEl && _fiiDataRaw) {
+                    sourceEl.textContent = 'Source: ' + (_fiiDataRaw.source || 'NSE') + ' | ' + (entry.date || '');
+                }
+
+                // Update active highlight on SVG day columns
+                var svg = document.getElementById('fiiFlowChart');
+                if (svg) {
+                    var cols = svg.querySelectorAll('.fii-day-col');
+                    cols.forEach(function(col) {
+                        var bg = col.querySelector('.fii-col-bg');
+                        var txt = col.querySelector('text');
+                        if (col.getAttribute('data-date') === entry.date) {
+                            col.classList.add('active');
+                            if (bg) {
+                                bg.setAttribute('fill', 'rgba(74, 144, 226, 0.22)');
+                                bg.setAttribute('stroke', 'rgba(74, 144, 226, 0.7)');
+                            }
+                            if (txt) {
+                                txt.setAttribute('fill', '#ffffff');
+                                txt.setAttribute('font-weight', '700');
+                            }
+                        } else {
+                            col.classList.remove('active');
+                            if (bg) {
+                                bg.setAttribute('fill', 'transparent');
+                                bg.setAttribute('stroke', 'transparent');
+                            }
+                            if (txt) {
+                                txt.setAttribute('fill', '#a1a1aa');
+                                txt.setAttribute('font-weight', 'normal');
+                            }
+                        }
+                    });
+                }
+            }
+
+            function resetFiiToToday() {
+                if (_fiiEntries && _fiiEntries.length > 0) {
+                    selectFiiSession(_fiiEntries[0]);
+                }
+            }
+
             function renderFiiFlowChart(entries) {
                 var svg = document.getElementById('fiiFlowChart');
                 var block = document.getElementById('fiiFlowBlock');
-                // Starts hidden and is only revealed once there is data &ndash; otherwise the card
-                // showed a caption and legend wrapped around an empty chart area.
                 if (!svg || !entries || !entries.length) {
                     if (block) block.style.display = 'none';
                     return;
@@ -1197,9 +1364,8 @@
                 if (block) block.style.display = 'block';
                 _fiiEntries = entries;
                 var days = entries.slice(0, 5).reverse();   // oldest &rarr; newest, left &rarr; right
-                // viewBox matched to the real pixel width so 1 unit == 1 px: without this the
-                // SVG scales uniformly with the card and the labels come out oversized on
-                // desktop and too small to read on a phone.
+                var selectedDate = _selectedFiiDate || (entries[0] ? entries[0].date : null);
+
                 var W = Math.round(svg.clientWidth) || 320, H = 120;
                 svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
                 var TOP = 8, BOT = 26, LEFT = 4, RIGHT = 4;
@@ -1218,6 +1384,17 @@
                 parts.push('<line x1="'+LEFT+'" y1="'+zeroY.toFixed(1)+'" x2="'+(W-RIGHT)+'" y2="'+zeroY.toFixed(1)+'" stroke="rgba(255,255,255,0.22)" stroke-width="1"/>');
                 days.forEach(function(d, i){
                     var cx = LEFT + groupW * i + groupW / 2;
+                    var colLeft = LEFT + groupW * i;
+                    var isSelected = (d.date === selectedDate);
+                    var bgFill = isSelected ? 'rgba(74, 144, 226, 0.22)' : 'transparent';
+                    var bgStroke = isSelected ? 'rgba(74, 144, 226, 0.7)' : 'transparent';
+                    var textFill = isSelected ? '#ffffff' : '#a1a1aa';
+                    var textWeight = isSelected ? '700' : 'normal';
+
+                    parts.push('<g class="fii-day-col '+(isSelected?'active':'')+'" data-idx="'+i+'" data-date="'+d.date+'" style="cursor:pointer;">');
+                    // Large hit-target background for smooth touch and click selection
+                    parts.push('<rect class="fii-col-bg" x="'+(colLeft+1).toFixed(1)+'" y="2" width="'+(groupW-2).toFixed(1)+'" height="'+(H-4)+'" rx="5" fill="'+bgFill+'" stroke="'+bgStroke+'" stroke-width="1"/>');
+
                     [[parseFloat(d.fii_cash_cr)||0, '#4A90E2', -1], [parseFloat(d.dii_cash_cr)||0, '#ff9800', 1]].forEach(function(pair){
                         var v = pair[0], color = pair[1], side = pair[2];
                         var h = Math.abs(v) / maxAbs * half;
@@ -1227,33 +1404,39 @@
                         parts.push('<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+barW.toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+color+'" rx="1.5"><title>'+(side===-1?'FII':'DII')+' '+d.date+': '+(v>=0?'+':'')+v.toFixed(0)+' Cr</title></rect>');
                     });
                     var label = (d.date || '').slice(5).replace('-', '/');   // YYYY-MM-DD &rarr; MM/DD
-                    parts.push('<text x="'+cx.toFixed(1)+'" y="'+(H - BOT + 14)+'" text-anchor="middle" font-size="9" fill="#a1a1aa">'+label+'</text>');
+                    parts.push('<text x="'+cx.toFixed(1)+'" y="'+(H - BOT + 14)+'" text-anchor="middle" font-size="9" fill="'+textFill+'" font-weight="'+textWeight+'">'+label+'</text>');
+                    parts.push('</g>');
                 });
                 svg.innerHTML = parts.join('');
+
+                // Attach touch and click listeners for immediate selection
+                svg.querySelectorAll('.fii-day-col').forEach(function(col){
+                    var idx = parseInt(col.getAttribute('data-idx'), 10);
+                    var entry = days[idx];
+                    if (!entry) return;
+
+                    var handleSelect = function(e) {
+                        e.stopPropagation();
+                        selectFiiSession(entry);
+                    };
+
+                    col.addEventListener('click', handleSelect);
+                    col.addEventListener('touchend', handleSelect, { passive: true });
+                });
             }
 
             function _applyFiiDii(data) {
                 if (!data) return;
+                _fiiDataRaw = data;
                 var entries = data.entries;
                 if(entries && entries.length > 0) {
                     var latest = entries[0];
-                    renderFiiFlowChart(entries);
-                    function fmt(val){
-                        var n = parseFloat(val) || 0;
-                        return (n >= 0 ? '+' : '-') + '&#8377;' + Math.abs(n).toFixed(2) + ' Cr';
+                    if (!_selectedFiiDate) {
+                        _selectedFiiDate = latest.date;
                     }
-                    document.getElementById('fiiCashVal').innerHTML = fmt(latest.fii_cash_cr);
-                    document.getElementById('fiiCashVal').style.color = (parseFloat(latest.fii_cash_cr)||0) >= 0 ? '#089981' : '#f23645';
-                    document.getElementById('fiiFoVal').innerHTML = fmt(latest.fii_fo_cr);
-                    document.getElementById('fiiFoVal').style.color = (parseFloat(latest.fii_fo_cr)||0) >= 0 ? '#089981' : '#f23645';
-                    document.getElementById('diiCashVal').innerHTML = fmt(latest.dii_cash_cr);
-                    document.getElementById('diiCashVal').style.color = (parseFloat(latest.dii_cash_cr)||0) >= 0 ? '#089981' : '#f23645';
-                    document.getElementById('fiiNetVal').innerHTML = fmt(latest.net_total_cr);
-                    document.getElementById('fiiNetVal').style.color = (parseFloat(latest.net_total_cr)||0) >= 0 ? '#089981' : '#f23645';
-                    var badgeDate = latest.date || 'Today';
-                    var badgeEl = document.getElementById('fiiBadge');
-                    if(badgeEl) badgeEl.textContent = badgeDate;
-                    document.getElementById('fiiSource').textContent = 'Source: ' + (data.source||'NSE') + ' | ' + badgeDate;
+                    var activeEntry = entries.find(function(e) { return e.date === _selectedFiiDate; }) || latest;
+                    renderFiiFlowChart(entries);
+                    selectFiiSession(activeEntry);
                 } else {
                     ['fiiCashVal','fiiFoVal','diiCashVal','fiiNetVal'].forEach(function(id){
                         var el = document.getElementById(id);
@@ -1268,22 +1451,47 @@
             }
 
             async function fetchBSEIndices(){
-                try {
-                    var res = await fetch('/api/live-prices', {
-                        method:'POST', headers:{'Content-Type':'application/json'},
-                        body: JSON.stringify({tickers: BSE_INDICES})
-                    });
-                    var data = await res.json();
+                PageCache.fetch('/api/live-prices', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({tickers: BSE_INDICES})
+                }, 15000, function(data) {
+                    if (!data) return;
                     var mainContainer = document.getElementById('bseIndicesContainer');
-                    mainContainer.innerHTML = BSE_INDICES.map(function(t){
-                        var d = data[t]||{}; var price=d.current||0; var prev=d.prev_close||d.open||price;
-                        var diff=price-prev; var pct=prev>0?(diff/prev)*100:0;
-                        var cls=diff>=0?'text-green':'text-red'; var sign=diff>=0?'+':'';
-                        return '<div class="index-row"><span class="index-name">'+t+'</span><span class="index-price" id="bse-markets-price-'+t+'" style="color:#fff; transition: color 0.15s;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'" id="bse-markets-change-'+t+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
-                    }).join('');
-                } catch(e) {
-                    document.getElementById('bseIndicesContainer').innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Start backend server</div>';
-                }
+                    if (!mainContainer) return;
+
+                    BSE_INDICES.forEach(function(t){
+                        var d = data[t] || {};
+                        var price = d.current;
+                        if (!price || price <= 0) return;
+
+                        var prev = d.prev_close || d.open || price;
+                        var diff = price - prev;
+                        var pct = prev > 0 ? (diff / prev) * 100 : 0;
+                        var cls = diff >= 0 ? 'text-green' : 'text-red';
+                        var sign = diff >= 0 ? '+' : '';
+
+                        var pEl = document.getElementById('bse-markets-price-' + t);
+                        var cEl = document.getElementById('bse-markets-change-' + t);
+
+                        if (pEl && cEl) {
+                            var oldStr = pEl.textContent;
+                            var newStr = '\u20B9' + price.toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
+                            if (oldStr !== newStr) {
+                                pEl.style.transition = 'none';
+                                pEl.style.color = diff >= 0 ? '#10b981' : '#ef4444';
+                                pEl.textContent = newStr;
+                                setTimeout(function() {
+                                    pEl.style.transition = 'color 0.15s';
+                                    pEl.style.color = '#fff';
+                                }, 50);
+                            }
+                            cEl.className = 'index-change ' + cls;
+                            cEl.textContent = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
+                        } else {
+                            mainContainer.innerHTML = '<div class="index-row"><span class="index-name">'+t+'</span><span class="index-price" id="bse-markets-price-'+t+'" style="color:#fff; transition: color 0.15s;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'" id="bse-markets-change-'+t+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                        }
+                    });
+                });
             }
 
             async function fetchIndiaVIX(){
@@ -1309,21 +1517,6 @@
                 // Removed per user request
             }
 
-            async function fetchCrypto(){
-                PageCache.fetch('/api/crypto-prices', null, 60000, function(data) {
-                    var container = document.getElementById('cryptoContainer');
-                    if(!data || data.length === 0){
-                        container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;">Crypto data temporarily unavailable</div>';
-                        return;
-                    }
-                    container.innerHTML = data.map(function(c){
-                        var cls = c.change_24h >= 0 ? 'text-green' : 'text-red';
-                        var sign = c.change_24h >= 0 ? '+' : '';
-                        return '<div class="global-row"><span><span style="font-weight:600;color:#fff;">'+c.symbol+'</span><span style="color:var(--text-secondary);font-size:0.8rem;margin-left:8px;">'+c.name+'</span></span><span style="font-family:\'Roboto Mono\',monospace;font-weight:600;">$'+c.price.toLocaleString('en-US')+'</span><span class="index-change '+cls+'">'+sign+c.change_24h.toFixed(2)+'%</span></div>';
-                    }).join('');
-                });
-            }
-
             function refreshAll(){
                 fetchAllMarketData();
                 fetchSectorIndices();
@@ -1333,7 +1526,6 @@
                 fetchFiiDii();
                 fetchBSEIndices();
                 fetchIndiaVIX();
-                fetchCrypto();
                 updateLastUpdated();
             }
 
@@ -1376,6 +1568,26 @@
                             var diff = d.current - base; var pct = base > 0 ? (diff / base) * 100 : 0;
                             chgEl.textContent = (diff >= 0 ? '+' : '') + pct.toFixed(2) + '%';
                             chgEl.style.color = diff >= 0 ? '#089981' : '#f23645';
+                        }
+                    });
+
+                    // Seed BSE (SENSEX)
+                    BSE_INDICES.forEach(function(t) {
+                        var d = data[t];
+                        if (!d || !d.current) return;
+                        var price = d.current;
+                        var prev = d.prev_close || d.open || price;
+                        var diff = price - prev; var pct = prev > 0 ? (diff / prev) * 100 : 0;
+                        var cls = diff >= 0 ? 'text-green' : 'text-red'; var sign = diff >= 0 ? '+' : '';
+                        var mainContainer = document.getElementById('bseIndicesContainer');
+                        var pEl = document.getElementById('bse-markets-price-' + t);
+                        var cEl = document.getElementById('bse-markets-change-' + t);
+                        if (!pEl && mainContainer) {
+                            mainContainer.innerHTML = '<div class="index-row"><span class="index-name">'+t+'</span><span class="index-price" id="bse-markets-price-'+t+'" style="color:#fff; transition: color 0.15s;">\u20B9'+price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+'</span><span class="index-change '+cls+'" id="bse-markets-change-'+t+'">'+sign+diff.toFixed(2)+' ('+sign+pct.toFixed(2)+'%)</span></div>';
+                        } else if (pEl && cEl) {
+                            pEl.textContent = '\u20B9' + price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+                            cEl.className = 'index-change ' + cls;
+                            cEl.textContent = sign + diff.toFixed(2) + ' (' + sign + pct.toFixed(2) + '%)';
                         }
                     });
                 } catch(e) {}

@@ -1,0 +1,16 @@
+\chapter{Future Architecture}
+\label{ch:future_architecture}
+
+\section{Roadmap Architecture \& Scale-Out Vectors}
+The following roadmap capabilities represent planned architectural enhancements beyond the initial 1 GB RAM single-node target:
+
+\begin{enumerate}[leftmargin=6mm,itemsep=2mm]
+    \item \textbf{Phase 2: Redis Pub/Sub Distributed Multi-Worker Scaling} \tag{PLANNED}:
+    Introduction of a Redis cluster to synchronize broker WebSocket tick broadcasts and candle buffers across multiple horizontal ASGI worker processes and container instances.
+    \item \textbf{Phase 3: Multi-Broker Ingestion Adapters} \tag{PLANNED}:
+    Pluggable broker abstraction adapters supporting Zerodha Kite Connect, Dhan, and Upstox with unified tick normalization.
+    \item \textbf{Phase 4: TimescaleDB Compression Policies} \tag{PLANNED}:
+    Activation of production TimescaleDB chunk compression policies for historical intraday candle tables, reducing storage footprint by up to 90\%.
+    \item \textbf{Phase 5: Machine Learning Intraday Volatility Forecast Engine} \tag{PLANNED}:
+    On-device ONNX runtime inference for short-term volatility and liquidity breakout forecasting.
+\end{enumerate}

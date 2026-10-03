@@ -1,0 +1,64 @@
+\chapter{Historical Candle \& Time-Series Architecture}
+\label{ch:candle_architecture}
+
+\section{Multi-Timeframe Candle Hierarchy}
+LEVERAGE maintains a unified multi-timeframe candlestick generation and storage engine supporting discrete timeframes: \code{1m}, \code{5m}, \code{15m}, \code{1h}, and \code{1d}.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.95\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=8mm and 12mm,
+    tfbox/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=32mm, minimum height=11mm, align=center, font=\sffamily\footnotesize, thick},
+    basebox/.style={rectangle, draw=primaryblue, fill=primaryblue!10, rounded corners=2mm, minimum width=36mm, minimum height=12mm, align=center, font=\sffamily\footnotesize\bfseries, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=primaryblue}
+]
+
+\node[basebox] (tick) {Live Market Tick\\(Price, Volume, TS)};
+\node[basebox, right=14mm of tick] (1m) {1-Minute Base Bar\\(\code{CandleAggregator})};
+
+\node[tfbox, above right=2mm and 14mm of 1m] (5m) {\textbf{5-Minute Bar}\\Resampled from 1m};
+\node[tfbox, right=14mm of 1m] (15m) {\textbf{15-Minute Bar}\\Resampled from 1m};
+\node[tfbox, below right=2mm and 14mm of 1m] (1h) {\textbf{1-Hour Bar}\\Rollover Aggregation};
+\node[tfbox, below=8mm of 1h] (1d) {\textbf{1-Day Daily Bar}\\09:15--15:30 Alignment};
+
+\draw[arrow] (tick) -- (1m);
+\draw[arrow] (1m) |- (5m);
+\draw[arrow] (1m) -- (15m);
+\draw[arrow] (1m) |- (1h);
+\draw[arrow] (1m) |- (1d);
+
+\end{tikzpicture}
+}
+\caption{Candlestick Resampling and Aggregation Hierarchy}
+\label{fig:candle_hierarchy}
+\end{figure}
+
+\section{Candle Storage Schema \& Uniqueness Constraints}
+Candle data is stored in the PostgreSQL \code{candles} table (\code{backend/models.py:30-68}):
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Unique Constraint}: \code{UniqueConstraint('ticker', 'timeframe', 'timestamp', name='uix_candle_key')} ensures strict idempotency during bulk inserts and gap-filling.
+    \item \textbf{Composite Index}: \code{ix_candle_ticker_tf_ts} on \code{(ticker, timeframe, timestamp DESC)} optimizes range queries for chart rendering.
+    \item \textbf{Data Integrity Validation}: Before flushing to disk, \code{validation_service.py} enforces OHLC physical sanity rules:
+    \begin{equation}
+        \mathrm{High} \ge \max(\mathrm{Open}, \mathrm{Close}), \quad \mathrm{Low} \le \min(\mathrm{Open}, \mathrm{Close}), \quad \mathrm{Volume} \ge 0
+    \end{equation}
+\end{itemize}
+
+\section{In-Memory Caching Hierarchy}
+\begin{enumerate}[leftmargin=6mm,itemsep=2mm]
+    \item \textbf{L1 Forming Candle Buffer (\code{LiveTimeframeManager})}:
+    \begin{itemize}[leftmargin=4mm]
+        \item Maintains in-flight, uncompleted higher-timeframe bars in RAM (\code{MAX_BUILDERS = 5000}).
+        \item Swept every 15 seconds by a background daemon to evict idle symbols (\code{live_timeframe_manager.py:270}).
+    \end{itemize}
+    \item \textbf{L2 Historical Query Cache (\code{CandleCache})}:
+    \begin{itemize}[leftmargin=4mm]
+        \item LRU in-memory store caching recent historical query results (\code{MAX_L2_ENTRIES = 5000}).
+        \item Background sweep thread purges expired entries every 60 seconds (\code{candle_cache.py:126}).
+    \end{itemize}
+    \item \textbf{Pre-Serialized Byte-Stream Cache}:
+    \begin{itemize}[leftmargin=4mm]
+        \item The \code{/api/all-stocks} endpoint maintains a pre-serialized UTF-8 byte stream (~1.34 MB) with a 60-second TTL, serving full universe requests with sub-5ms latency and zero ORM overhead.
+    \end{itemize}
+\end{enumerate}

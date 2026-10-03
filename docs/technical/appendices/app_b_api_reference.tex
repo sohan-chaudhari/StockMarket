@@ -1,0 +1,123 @@
+\chapter{Complete API Route Inventory}
+\label{app:api_reference}
+
+\section{Endpoint Inventory Summary}
+The LEVERAGE platform provides \textbf{70 active endpoints} (68 REST endpoints and 2 WebSocket channels) cataloged across Table~\ref{tab:complete_api_inventory}.
+
+\small
+\sffamily
+\begin{longtable}{p{14mm} p{40mm} p{62mm} p{18mm}}
+\caption{Complete LEVERAGE API Route Catalog (70 Endpoints)} \label{tab:complete_api_inventory} \\
+\toprule
+\textbf{Method} & \textbf{Endpoint Path} & \textbf{Functionality / Scope} & \textbf{Source} \\
+\midrule
+\endfirsthead
+\caption[]{Complete LEVERAGE API Route Catalog (Continued)} \\
+\toprule
+\textbf{Method} & \textbf{Endpoint Path} & \textbf{Functionality / Scope} & \textbf{Source} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+\multicolumn{4}{l}{\textbf{1. Authentication \& User Session Management (7 Routes)}} \\
+\midrule
+\code{POST} & \code{/api/auth/register} & User account registration with verification token & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/login} & Password authentication \& RFC 7519 JWT issue & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/logout} & Invalidate JWT jti into token blacklist & \code{auth_router.py} \\
+\code{GET}  & \code{/api/auth/me} & Active profile, permissions, and virtual balance & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/forgot-password} & Issue password reset link and token & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/reset-password} & Reset user password with token & \code{auth_router.py} \\
+\code{POST} & \code{/api/auth/verify-email} & Verify user email address with OTP & \code{auth_router.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{2. Paper Trading \& Order Management (4 Routes)}} \\
+\midrule
+\code{POST} & \code{/api/trade/order} & Open Long/Short position with TP/SL & \code{trade_router.py} \\
+\code{GET}  & \code{/api/trade/positions} & Active OPEN and historical CLOSED positions & \code{trade_router.py} \\
+\code{POST} & \code{/api/trade/positions/\{id\}/close} & Manually close position at market price & \code{trade_router.py} \\
+\code{PUT}  & \code{/api/trade/positions/\{id\}/tpsl} & Update TP/SL price triggers (max 3 edits) & \code{trade_router.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{3. Core Stock Universe \& Quote Endpoints (7 Routes)}} \\
+\midrule
+\code{GET}  & \code{/api/all-stocks} & Pre-serialized full universe byte stream & \code{main.py} \\
+\code{GET}  & \code{/api/stocks/version} & Universe cache version identifier & \code{main.py} \\
+\code{POST} & \code{/api/live-prices} & Batch live quote and change resolution & \code{main.py} \\
+\code{GET}  & \code{/api/live-price/\{ticker\}} & Single symbol live price resolution & \code{main.py} \\
+\code{GET}  & \code{/api/search} & Full-text equity search and symbol resolution & \code{main.py} \\
+\code{GET}  & \code{/api/time} & Synchronized server UTC and IST timestamps & \code{main.py} \\
+\code{GET}  & \code{/logos/\{filename\}} & Dynamic SVG stock logo generator & \code{main.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{4. Candlestick Time-Series \& Chart Data (10 Routes)}} \\
+\midrule
+\code{GET}  & \code{/api/stock-data/chart} & Stored candles + live forming overlay & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/intraday/paginated} & Historical intraday candles with backfill & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/range/paginated} & Historical daily candles with date bounds & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/candle/latest} & Latest bar for WS reconnect catch-up & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/intraday/since} & Intraday bars since timestamp & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/1d/\{ticker\}} & Dedicated daily timeframe candle query & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/1h/\{ticker\}} & Dedicated 1-hour timeframe candle query & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/15m/\{ticker\}} & Dedicated 15-minute timeframe candle query & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/5m/\{ticker\}} & Dedicated 5-minute timeframe candle query & \code{main.py} \\
+\code{GET}  & \code{/api/stock-data/1m/\{ticker\}} & Dedicated 1-minute base candle query & \code{main.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{5. Market Intelligence, Screeners \& Indices (9 Routes)}} \\
+\midrule
+\code{GET}  & \code{/api/stock-data/overview/\{ticker\}} & Company fundamentals and price summary & \code{main.py} \\
+\code{GET}  & \code{/api/market-movers} & Top gainers, losers, and volume leaders & \code{main.py} \\
+\code{GET}  & \code{/api/watchlist} & Pre-calculated watchlist quotes & \code{main.py} \\
+\code{GET}  & \code{/api/screener} & Multi-factor technical screener engine & \code{main.py} \\
+\code{GET}  & \code{/api/sectors} & Sector breakdown and aggregate metrics & \code{main.py} \\
+\code{GET}  & \code{/api/sectors/\{sector\}} & Constituents of specific market sector & \code{main.py} \\
+\code{GET}  & \code{/api/market-cap-categories} & Large, Mid, and Smallcap category lists & \code{main.py} \\
+\code{GET}  & \code{/api/indices} & Major Indian market index summary & \code{main.py} \\
+\code{GET}  & \code{/api/holidays} & NSE exchange trading calendar holidays & \code{main.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{6. Technical Indicators \& Drawings (11 Routes)}} \\
+\midrule
+\code{GET}  & \code{/api/indicators/\{ticker\}} & Vectorized RSI, MACD, BB, ATR, Supertrend & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/rsi/\{ticker\}} & Dedicated Relative Strength Index series & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/macd/\{ticker\}} & Dedicated MACD Line, Signal, Histogram & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/bb/\{ticker\}} & Dedicated Bollinger Bands series & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/atr/\{ticker\}} & Dedicated Average True Range series & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/supertrend/\{ticker\}} & Dedicated Supertrend bands and polarity & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/stochastic/\{ticker\}} & Dedicated Stochastic Oscillator & \code{main.py} \\
+\code{GET}  & \code{/api/indicators/vwap/\{ticker\}} & Dedicated Volume-Weighted Average Price & \code{main.py} \\
+\code{GET}  & \code{/api/drawing/load/\{ticker\}} & Load persistent user chart annotations & \code{main.py} \\
+\code{POST} & \code{/api/drawing/save/\{ticker\}} & Save user drawing objects and lines & \code{main.py} \\
+\code{DELETE}& \code{/api/drawing/\{id\}} & Delete specific chart drawing annotation & \code{main.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{7. Diagnostics, Monitoring \& Operations (18 Routes)}} \\
+\midrule
+\code{GET}  & \code{/api/health} & Main application health summary & \code{main.py} \\
+\code{GET}  & \code{/api/health/deep} & Deep subsystem connectivity diagnostic & \code{main.py} \\
+\code{GET}  & \code{/api/health/db} & Database connection pool health check & \code{main.py} \\
+\code{GET}  & \code{/api/health/angelone} & Angel One SmartAPI connection status & \code{main.py} \\
+\code{GET}  & \code{/api/health/ws} & Active WebSocket client statistics & \code{main.py} \\
+\code{GET}  & \code{/api/health/memory} & Process heap RSS memory audit & \code{main.py} \\
+\code{GET}  & \code{/api/health/cache} & In-memory candle cache occupancy & \code{main.py} \\
+\code{GET}  & \code{/api/health/schedulers} & Active background async task runners & \code{main.py} \\
+\code{GET}  & \code{/api/monitoring/candle-system} & Subsystem health matrix & \code{main.py} \\
+\code{GET}  & \code{/api/monitoring/events} & Application event bus telemetry & \code{main.py} \\
+\code{GET}  & \code{/api/monitoring/lag} & Event loop lag measurement & \code{main.py} \\
+\code{GET}  & \code{/api/validation/run} & Execute data integrity validation suite & \code{main.py} \\
+\code{GET}  & \code{/api/validation/report} & Retrieve latest data validation report & \code{main.py} \\
+\code{GET}  & \code{/api/validation/status} & Data validator background status & \code{main.py} \\
+\code{POST} & \code{/api/recovery/trigger} & Trigger manual gap backfill recovery & \code{main.py} \\
+\code{GET}  & \code{/api/recovery/status} & Recovery queue active status & \code{main.py} \\
+\code{GET}  & \code{/api/stats/poller} & PricePoller REST latency statistics & \code{main.py} \\
+\code{GET}  & \code{/api/stats/viewed-tickers} & Active viewed tickers in memory & \code{main.py} \\
+\midrule
+
+\multicolumn{4}{l}{\textbf{8. Real-Time WebSocket Streaming Channels (2 Routes)}} \\
+\midrule
+\code{WS}   & \code{/ws/dashboard} & High-throughput tick and candle broadcast & \code{main.py} \\
+\code{WS}   & \code{/ws/user} & Authenticated user trade fill channel & \code{main.py} \\
+\bottomrule
+\end{longtable}
+\normalsize

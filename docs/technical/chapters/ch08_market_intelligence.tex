@@ -1,0 +1,26 @@
+\chapter{Market Intelligence \& Discovery}
+\label{ch:market_intelligence}
+
+\section{Stock Universe \& Fast Resolution}
+LEVERAGE tracks a universe of 5,543 listed Indian equities across NSE and BSE \cite{ref:main_py}.
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Universe Ingestion}: Metadata (ticker, company name, exchange, sector, base price) is loaded into \code{stock_metadata} on startup and refreshed periodically.
+    \item \textbf{High-Performance Search (\code{/api/all-stocks})}: Pre-serialized UTF-8 memory buffer served in $<5\text{ms}$ with client-side fuzzy search in the navigation bar.
+\end{itemize}
+
+\section{Market Movers \& Screener Architecture}
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Top Gainers, Losers \& Volume Leaders (\code{/api/market-movers})}:
+    Computed by ranking active symbols against daily percentage change:
+    \begin{equation}
+        \Delta\% = \frac{\mathrm{LTP} - \mathrm{BasePrice}}{\mathrm{BasePrice}} \times 100
+    \end{equation}
+    \item \textbf{Multi-Factor Screener (\code{frontend/screener.html})}:
+    Supports multi-attribute filtering by sector, market cap tier (Largecap, Midcap, Smallcap), price range, percentage momentum, and volume spikes.
+\end{itemize}
+
+\section{Index Strip \& Market Heatmap}
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Major Indices Strip}: Real-time ticker banner streaming NIFTY 50, SENSEX, BANK NIFTY, FIN NIFTY, MIDCAP, and SMALLCAP (\code{frontend/index.html:33}).
+    \item \textbf{Sector Heatmap (\code{frontend/markets.html})}: Displays market breadth and sector performance by aggregating constituent market-weighted returns across IT, Banking, Auto, Pharma, FMCG, and Energy sectors.
+\end{itemize}

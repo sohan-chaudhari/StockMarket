@@ -1,0 +1,28 @@
+\chapter{Authentication \& Security Architecture}
+\label{ch:auth_security}
+
+\section{Cryptographic Standards \& Token Architecture}
+Authentication in LEVERAGE adheres to RFC 7519 JSON Web Token standards implemented via \code{python-jose} with HMAC-SHA256 (\code{HS256}) signatures \cite{ref:auth_py}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/auth.py:1-657}, \code{backend/routers/auth_router.py:1-120}, \code{backend/models.py:70-130}.
+\end{citationbox}
+
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Timestamp Normalization}: Token issuance (\code{iat}) and expiration (\code{exp}) are strictly evaluated in UTC Standard Time (\code{datetime.now(timezone.utc)} in \code{backend/auth.py:142}), eliminating timezone skew vulnerabilities \tag{VERIFIED}.
+    \item \textbf{Password Hashing}: Native \code{bcrypt} is utilized directly with dynamic salt generation (\code{bcrypt.gensalt()}) for all user credentials (\code{backend/auth.py:123}). \code{passlib} is \tag{NOT FOUND IN REPOSITORY}.
+\end{itemize}
+
+\section{Account Protection \& Brute-Force Defense}
+\begin{enumerate}[leftmargin=6mm,itemsep=2mm]
+    \item \textbf{Account Lockout Gate (\tag{GATE-02})}:
+    Failed authentication attempts increment \code{user.failed_login_attempts}. When failures reach $\ge 5$, the account is locked for 30 minutes:
+    \begin{equation}
+        \mathrm{user.locked\_until} = \mathrm{CurrentIST} + 30\text{ minutes}
+    \end{equation}
+    Successful login resets the failure counter to 0 (\code{backend/auth.py:214-226}).
+    \item \textbf{Security Audit Trail}:
+    Every login event is logged to the \code{login_attempts} table, recording the target email, client IP address, User-Agent header, outcome boolean, and failure reason (\code{backend/auth.py:180-188}) \tag{VERIFIED}.
+    \item \textbf{Stateless Token Revocation}:
+    On logout, the token's unique \code{jti} identifier is inserted into \code{token_blacklist}. Subsequent requests presenting blacklisted \code{jti} tokens are rejected with \code{401 Unauthorized} (\code{backend/auth.py:602-608}) \tag{VERIFIED}.
+\end{enumerate}

@@ -1,0 +1,64 @@
+\chapter{Smart Money Concepts \& Price Action}
+\label{ch:smc_price_action}
+
+\section{Implementation Status \& Scope}
+In the current production codebase of LEVERAGE, price-action and structural market analytics are implemented through a combination of algorithmic swing-high/swing-low identification, dynamic support and resistance detection, and client-side technical overlay tools.
+
+\begin{citationbox}
+\textbf{Status Classification:} \tag{VERIFIED} in \code{frontend/drawings.js}, \code{frontend/drawing-core.js}, and \code{backend/indicator_service.py}.
+\end{citationbox}
+
+\section{Swing Structure Detection (HH / HL / LH / LL)}
+Swing high and swing low pivot points are computed using a localized fractal window of $k$ bars (default $k=5$):
+\begin{align}
+    \mathrm{PivotHigh}_t &= \mathrm{High}_t > \max(\mathrm{High}_{t-k}, \dots, \mathrm{High}_{t-1}) \land \mathrm{High}_t > \max(\mathrm{High}_{t+1}, \dots, \mathrm{High}_{t+k}) \\
+    \mathrm{PivotLow}_t &= \mathrm{Low}_t < \min(\mathrm{Low}_{t-k}, \dots, \mathrm{Low}_{t-1}) \land \mathrm{Low}_t < \min(\mathrm{Low}_{t+1}, \dots, \mathrm{Low}_{t+k})
+\end{align}
+When consecutive pivot levels are identified:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Higher High (HH)}: $\mathrm{PivotHigh}_t > \mathrm{PivotHigh}_{\mathrm{prev}}$
+    \item \textbf{Higher Low (HL)}: $\mathrm{PivotLow}_t > \mathrm{PivotLow}_{\mathrm{prev}}$
+    \item \textbf{Lower High (LH)}: $\mathrm{PivotHigh}_t < \mathrm{PivotHigh}_{\mathrm{prev}}$
+    \item \textbf{Lower Low (LL)}: $\mathrm{PivotLow}_t < \mathrm{PivotLow}_{\mathrm{prev}}$
+\end{itemize}
+
+\section{Market Structure Shifts (MSS) \& Break of Structure (BOS)}
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Break of Structure (BOS)}: Triggered when candle $\mathrm{Close}_t$ breaches the most recent pivot high during an uptrend or closes below the most recent pivot low during a downtrend \tag{VERIFIED}.
+    \item \textbf{Order Blocks \& Fair Value Gaps (FVG)}: Institutional order-block tagging and 3-candle FVG zone rendering are identified in the roadmap but not active in production core \tag{PLANNED}.
+\end{itemize}
+
+\section{Trade Validation \& Architectural Hardening Gates}
+To maintain trade integrity and system stability under high market load, LEVERAGE enforces 10 architectural safety gates categorized into Access Control, Trade Validation, and Runtime Hardening. Note that \code{GATE-01} through \code{GATE-10} represent our documentation taxonomy for architectural controls in the code, rather than literal variable identifiers.
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{LEVERAGE Master Safety Gates Specification}
+\label{tab:safety_gates_master}
+\begin{tabularx}{\linewidth}{p{16mm} p{32mm} Y p{28mm} p{20mm}}
+\toprule
+\textbf{Gate ID} & \textbf{Control Name} & \textbf{Enforced Invariant / Rule} & \textbf{Source File:Line} & \textbf{Status} \\
+\midrule
+\multicolumn{5}{l}{\textbf{Group A: Access Control Gates}} \\
+\midrule
+\textbf{GATE-01} & Auth Rate Limiting & 5 login attempts / min per client IP & \code{auth_router.py:48} & \tag{VERIFIED} \\
+\textbf{GATE-02} & JWT Verification & Active HMAC-SHA256 token, non-blacklisted & \code{auth.py:585} & \tag{VERIFIED} \\
+\midrule
+\multicolumn{5}{l}{\textbf{Group B: Trade Validation Gates}} \\
+\midrule
+\textbf{GATE-03} & Virtual Balance Gate & Cash balance $\ge$ order value (INR 100k init) & \code{trade_service.py:120} & \tag{VERIFIED} \\
+\textbf{GATE-04} & Quantity Sanity & Positive integer order qty $>0$ & \code{trade_service.py:145} & \tag{VERIFIED} \\
+\textbf{GATE-05} & TP/SL Bounds Check & $\mathrm{TP} > \mathrm{Entry} > \mathrm{SL}$ (Buy) or reverse & \code{trade_service.py:180} & \tag{VERIFIED} \\
+\textbf{GATE-06} & AMO Window Check & After-market orders accepted only outside 09:15--15:30 & \code{trade_service.py:215} & \tag{VERIFIED} \\
+\midrule
+\multicolumn{5}{l}{\textbf{Group C: Runtime Hardening Gates}} \\
+\midrule
+\textbf{GATE-07} & Viewed Ticker Cap & Active WS subscriptions $\le 2,000$ tickers & \code{main.py:220} & \tag{VERIFIED} \\
+\textbf{GATE-08} & LRU L2 Cache Cap & Historical query cache bounded to 5,000 items & \code{candle_cache.py:35} & \tag{VERIFIED} \\
+\textbf{GATE-09} & AnyIO Thread Limiter & Capped to 64 tokens for sync DB execution & \code{main.py:8298} & \tag{VERIFIED} \\
+\textbf{GATE-10} & Heap Arena Restriction & \code{MALLOC_ARENA_MAX=2} in Docker container & \code{Dockerfile:18} & \tag{VERIFIED} \\
+\bottomrule
+\end{tabularx}
+\end{table}

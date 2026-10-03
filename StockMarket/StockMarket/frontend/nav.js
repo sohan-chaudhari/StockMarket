@@ -133,11 +133,8 @@
       '          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
       '          <span class="notification-badge" id="notificationBadge">3</span>' +
       '        </button>' +
-      '        <button class="nav-icon-btn" title="Toggle Theme" aria-label="Toggle theme" id="themeToggle">' +
-      '          <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>' +
-      '        </button>' +
       '        <div class="auth-buttons" id="authButtons">' +
-      '          <a href="login.html" class="auth-btn">Login / Register</a>' +
+      '          <a href="login.html" class="auth-btn" onclick="try{sessionStorage.setItem(\'auth_return_url\',window.location.href);}catch(e){}">Login / Register</a>' +
       '        </div>' +
       '        <div class="user-info" id="userInfo" style="display:none; align-items: center; gap: 15px;">' +
       '          <div style="text-align: right;">' +
@@ -577,20 +574,98 @@
     var btn = document.getElementById('notificationBtn');
     if (!btn || btn.dataset.init) return;
     btn.dataset.init = '1';
+
+    var existing = document.getElementById('notificationPanel');
+    if (existing) existing.remove();
+
     var panel = document.createElement('div');
     panel.id = 'notificationPanel';
-    panel.style.cssText = 'display:none;position:absolute;top:100%;right:0;background:#15171a;border:1px solid rgba(255,255,255,0.08);border-radius:10px;min-width:280px;max-height:360px;overflow-y:auto;z-index:300;box-shadow:0 8px 32px rgba(0,0,0,0.5);padding:8px 0;';
-    panel.innerHTML = '<div style="padding:12px 16px;font-size:0.85rem;font-weight:600;color:#fff;border-bottom:1px solid rgba(255,255,255,0.06);">Notifications</div>' +
-      '<div style="padding:24px 16px;text-align:center;color:var(--text-secondary);font-size:0.8rem;">No new notifications</div>' +
-      '<div style="padding:8px 16px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;"><a href="settings.html" style="color:#4A90E2;font-size:0.8rem;text-decoration:none;">Notification Settings</a></div>';
-    btn.style.position = 'relative';
-    btn.appendChild(panel);
+    panel.className = 'app-notification-panel';
+    panel.innerHTML = 
+      '<div class="notif-header">' +
+      '  <div class="notif-header-title">&#128276; Notifications <span class="notif-header-badge">3</span></div>' +
+      '  <button type="button" class="notif-close-btn" id="notifCloseBtn" aria-label="Close">&times;</button>' +
+      '</div>' +
+      '<div class="notif-body">' +
+      '  <div class="notif-item unread">' +
+      '    <div class="notif-icon-circle">&#128200;</div>' +
+      '    <div class="notif-content">' +
+      '      <div class="notif-title">Market Live Tracking</div>' +
+      '      <div class="notif-desc">NIFTY 50 and Bank Nifty active streaming.</div>' +
+      '      <div class="notif-time">Just now</div>' +
+      '    </div>' +
+      '  </div>' +
+      '  <div class="notif-item">' +
+      '    <div class="notif-icon-circle">&#128176;</div>' +
+      '    <div class="notif-content">' +
+      '      <div class="notif-title">Virtual Trading Account</div>' +
+      '      <div class="notif-desc">₹10,00,000 practice balance active.</div>' +
+      '      <div class="notif-time">1 hr ago</div>' +
+      '    </div>' +
+      '  </div>' +
+      '  <div class="notif-item">' +
+      '    <div class="notif-icon-circle">&#9889;</div>' +
+      '    <div class="notif-content">' +
+      '      <div class="notif-title">Watchlist Alerts Ready</div>' +
+      '      <div class="notif-desc">Configure price alerts and trigger conditions.</div>' +
+      '      <div class="notif-time">Today</div>' +
+      '    </div>' +
+      '  </div>' +
+      '</div>' +
+      '<div class="notif-footer">' +
+      '  <a href="watchlist.html" class="notif-footer-link">View Watchlist Alerts &rarr;</a>' +
+      '</div>';
+
+    document.body.appendChild(panel);
+
+    function positionPanel() {
+      if (window.innerWidth <= 640) {
+        panel.style.top = '52px';
+        panel.style.left = '10px';
+        panel.style.right = '10px';
+        panel.style.width = 'auto';
+        panel.style.maxWidth = 'calc(100vw - 20px)';
+      } else {
+        var rect = btn.getBoundingClientRect();
+        panel.style.top = (rect.bottom + 8) + 'px';
+        panel.style.right = Math.max(12, window.innerWidth - rect.right) + 'px';
+        panel.style.left = 'auto';
+        panel.style.width = '330px';
+        panel.style.maxWidth = '360px';
+      }
+    }
+
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
-      panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+      var isVisible = panel.classList.contains('show');
+      if (isVisible) {
+        panel.classList.remove('show');
+      } else {
+        positionPanel();
+        panel.classList.add('show');
+      }
     });
+
+    var closeBtn = panel.querySelector('#notifCloseBtn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        panel.classList.remove('show');
+      });
+    }
+
+    panel.addEventListener('click', function(e) {
+      e.stopPropagation();
+    });
+
     document.addEventListener('click', function (e) {
-      if (!btn.contains(e.target)) panel.style.display = 'none';
+      if (!btn.contains(e.target) && !panel.contains(e.target)) {
+        panel.classList.remove('show');
+      }
+    });
+
+    window.addEventListener('resize', function() {
+      if (panel.classList.contains('show')) positionPanel();
     });
   }
 

@@ -18,6 +18,46 @@ body {
 .container {
     width: 100%;
     max-width: 450px;
+    position: relative;
+}
+
+.auth-close-btn {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #0a0a0a;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #a0a0a0;
+    font-size: 18px;
+    font-weight: 300;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 100;
+    line-height: 1;
+    padding: 0;
+}
+
+.auth-close-btn:hover {
+    background: #181b22;
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.35);
+    transform: scale(1.08);
+}
+
+@media (max-width: 480px) {
+    .auth-close-btn {
+        top: 12px;
+        right: 12px;
+        width: 30px;
+        height: 30px;
+        font-size: 16px;
+    }
 }
 
 .header {
@@ -56,6 +96,7 @@ body {
     border-radius: 16px;
     padding: 40px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    position: relative;
 }
 
 .card-title {

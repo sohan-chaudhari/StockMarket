@@ -690,7 +690,7 @@
             const token = sessionStorage.getItem('token') || localStorage.getItem('token');
             const userStr = sessionStorage.getItem('user') || localStorage.getItem('user');
             if (!token || !userStr) {
-                window.location.href = 'login.html';
+                window.location.href = 'login.html?from=profile.html';
                 return;
             }
 
@@ -717,7 +717,7 @@
 
             } catch (e) {
                 console.error("Error loading user data", e);
-                window.location.href = 'login.html';
+                window.location.href = 'login.html?from=profile.html';
             }
         })();
         

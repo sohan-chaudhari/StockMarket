@@ -1,0 +1,43 @@
+\chapter{Database Architecture}
+\label{ch:database_architecture}
+
+\section{Database Engine \& Connection Pool}
+LEVERAGE uses PostgreSQL 16 managed by SQLAlchemy 2.0.45 declarative ORM models and Alembic migration scripts \cite{ref:database_py}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/database.py:35-98}, \code{backend/models.py:1-300}, \code{backend/alembic/}.
+\end{citationbox}
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{SQLAlchemy Engine \& Connection Pool Parameters}
+\label{tab:db_pool_parameters}
+\begin{tabularx}{\linewidth}{p{32mm} p{26mm} Y p{22mm}}
+\toprule
+\textbf{Parameter} & \textbf{Configured Value} & \textbf{Architectural Rationale} & \textbf{Status} \\
+\midrule
+\code{pool_size} & 20 & Base persistent database connections & \tag{VERIFIED} \\
+\code{max_overflow} & 30 & Burst headroom for concurrent background spikes & \tag{VERIFIED} \\
+\code{pool_timeout} & 10 seconds & Fail-fast timeout preventing infinite request stalls & \tag{VERIFIED} \\
+\code{pool_pre_ping} & \code{True} & Validates connection health before issuing SQL queries & \tag{VERIFIED} \\
+\code{pool_recycle} & 3600 seconds & Recycles idle connections hourly & \tag{VERIFIED} \\
+\code{connect_timeout} & 5 seconds & Prevents TCP handshake hangs & \tag{VERIFIED} \\
+\code{statement_timeout} & 30000 ms (30s) & Server-side query cancellation ceiling (\tag{GATE-10}) & \tag{VERIFIED} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Active Relational Schema Inventory}
+\begin{enumerate}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{\code{stock_metadata}}: Stores equity metadata (ticker, name, exchange, base\_price, is\_active, is\_premium, sector) with unique constraint \code{uix_ticker_exchange} (\code{models.py:15-28}).
+    \item \textbf{\code{candles}}: Unified multi-timeframe OHLCV store with unique constraint \code{uix_candle_key} on \code{(ticker, timeframe, timestamp)} and composite index \code{ix_candle_ticker_tf_ts} on \code{(ticker, timeframe, timestamp DESC)} (\code{models.py:30-68}).
+    \item \textbf{\code{users}}: User accounts, hashed passwords, virtual balance (INR 100,000 default), verification status, failed login counters, and lockout timestamps (\code{models.py:70-128}).
+    \item \textbf{\code{positions}}: Paper trading positions (\code{LONG} / \code{SHORT}) with entry/closing prices, realized P\&L, TP/SL levels, and edit counters (\code{models.py:130-160}).
+    \item \textbf{\code{orders}}: Trigger orders linked to positions; \code{order_type} values constrained to \code{'TP'}, \code{'SL'}, and \code{'AMO_ENTRY'} (\code{models.py:165-190}).
+    \item \textbf{\code{transactions}}: Immutable financial ledger auditing every buy, sell, TP, and SL operation (\code{models.py:195-210}).
+    \item \textbf{\code{token_blacklist}}: Revoked JWT identifiers (\code{token_jti}) (\code{models.py:215-220}).
+    \item \textbf{\code{login_attempts}}: Security audit trail of login attempts (\code{models.py:225-240}).
+    \item \textbf{\code{verification_tokens}}: Cryptographic email verification tokens and OTP codes (\code{models.py:245-260}).
+\end{enumerate}

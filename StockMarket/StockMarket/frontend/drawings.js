@@ -123,6 +123,19 @@ try {
             this._lastDragPos = null;
             this.isDraggingChart = false;
 
+            // Mobile Drawing Buffer State (Angel One / TradingView Parity)
+            this.mobileReticle = {
+                visible: false,
+                x: 0,
+                y: 0,
+                snapped: false,
+                snapLabel: '',
+                price: null,
+                logical: null
+            };
+            this._isTouchMovingReticle = false;
+            this._mobileDrawingBarEl = null;
+
             this.stylePanel = null;
 
             // Wire engine events to redraw
@@ -310,14 +323,44 @@ try {
                     chartContainer.addEventListener('dblclick', (e) => this.handleContainerDoubleClick(e), { capture: true });
                     chartContainer.addEventListener('contextmenu', (e) => this.handleContainerContextMenu(e), { capture: true });
 
-                    // Mobile Touch Interceptors: Prevent chart scrolling/panning during tool drawing or tool dragging
+                    // Mobile Touch Interceptors: Allow pinch-to-zoom and axis scaling while handling drawing interactions
                     var handleTouchCapture = (e) => {
+                        // Allow multi-touch gestures (pinch-to-zoom date gap & price scale)
+                        if (e.touches && e.touches.length >= 2) {
+                            this._isScalingChart = true;
+                            this._enableChartScroll();
+                            return;
+                        }
+                        // Check if touch is on bottom time scale or right price scale
+                        var chart = window.bigChart || window.chart;
+                        var plotWidth = (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') ? chart.timeScale().width() : (this.canvas ? this.canvas.width / (window.devicePixelRatio || 1) : 0);
+                        var plotHeight = (chart && typeof chart.paneSize === 'function') ? (chart.paneSize() ? chart.paneSize().height : 0) : (this.canvas ? this.canvas.height / (window.devicePixelRatio || 1) : 0);
+                        var parentElem = this.chartContainer || (this.container ? this.container.parentElement : null) || document.getElementById('chart-container');
+                        if (parentElem && plotWidth > 0 && plotHeight > 0) {
+                            var parentRect = parentElem.getBoundingClientRect();
+                            var touch = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+                            if (touch) {
+                                var tx = touch.clientX - parentRect.left;
+                                var ty = touch.clientY - parentRect.top;
+                                if (tx >= (plotWidth - 5) || ty >= (plotHeight - 5)) {
+                                    this._isScalingChart = true;
+                                    this._enableChartScroll();
+                                    return;
+                                }
+                            }
+                        }
+                        if (e.type === 'touchstart') {
+                            this._isScalingChart = false;
+                        }
+                        if (this._isScalingChart) {
+                            return;
+                        }
+
                         var isDragging = this.isDrawing || this.isDraggingHandle || this.isDraggingDrawing;
                         var isDrawingToolActive = this.activeTool && this.activeTool.type !== 'cursor';
                         if (isDragging || isDrawingToolActive) {
                             if (e.cancelable) e.preventDefault();
                             e.stopPropagation();
-                            e.stopImmediatePropagation();
                         }
                     };
                     chartContainer.addEventListener('touchstart', handleTouchCapture, { capture: true, passive: false });
@@ -327,12 +370,12 @@ try {
 
                     // Also add window-level safety pointerup to ensure drag termination (C-2)
                     window.addEventListener('pointerup', (e) => {
-                        if (this.isDraggingHandle || this.isDraggingDrawing) {
+                        if (this.isDraggingHandle || this.isDraggingDrawing || this._isTouchMovingReticle) {
                             this.handleContainerMouseUp(e);
                         }
                     }, { capture: true });
                     window.addEventListener('touchend', (e) => {
-                        if (this.isDraggingHandle || this.isDraggingDrawing) {
+                        if (this.isDraggingHandle || this.isDraggingDrawing || this._isTouchMovingReticle) {
                             this.handleContainerMouseUp(e);
                         }
                     }, { capture: true });
@@ -354,7 +397,55 @@ try {
                 return;
             }
 
+            var isTouch = (e.pointerType === 'touch' || e.type === 'touchstart' || (e.touches && e.touches.length > 0) || this.isMobileTouchMode());
             const isDrawingToolActive = this.activeTool && this.activeTool.type !== 'cursor';
+
+            // Check if touch is on scale or multi-touch gesture — allow chart zoom and scale
+            var chart = window.bigChart || window.chart;
+            var plotWidth = (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') ? chart.timeScale().width() : (this.canvas ? this.canvas.width / (window.devicePixelRatio || 1) : 0);
+            var plotHeight = (chart && typeof chart.paneSize === 'function') ? (chart.paneSize() ? chart.paneSize().height : 0) : (this.canvas ? this.canvas.height / (window.devicePixelRatio || 1) : 0);
+            var parentElem = this.chartContainer || (this.container ? this.container.parentElement : null) || document.getElementById('chart-container');
+            if (isTouch && parentElem && plotWidth > 0 && plotHeight > 0) {
+                var parentRect = parentElem.getBoundingClientRect();
+                var cx = (e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : 0)));
+                var cy = (e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : 0)));
+                var tx = cx - parentRect.left;
+                var ty = cy - parentRect.top;
+                var isMultiTouch = (e.touches && e.touches.length >= 2);
+                if (isMultiTouch || tx >= (plotWidth - 5) || ty >= (plotHeight - 5)) {
+                    this._isScalingChart = true;
+                    this._enableChartScroll();
+                    return;
+                }
+            }
+            this._isScalingChart = false;
+
+            // Mobile Touch Interception: Use precision crosshair reticle buffer
+            if (isDrawingToolActive && isTouch) {
+                e.stopPropagation();
+                if (e.cancelable) e.preventDefault();
+                this._disableChartScroll();
+                this._isTouchMovingReticle = true;
+                var cx0 = (e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : 0)));
+                var cy0 = (e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : 0)));
+                this._touchStartPos = { x: cx0, y: cy0 };
+                this._touchStartTime = Date.now();
+                this._touchHasMoved = false;
+
+                // Ensure reticle has an initial position (if not already set, place in center)
+                var dpr = window.devicePixelRatio || 1;
+                var plotWidth = this.canvas ? (this.canvas.width / dpr) : 300;
+                var plotHeight = this.canvas ? (this.canvas.height / dpr) : 300;
+                if (!this.mobileReticle || !this.mobileReticle.visible || this.mobileReticle.x == null) {
+                    this.mobileReticle.x = Math.round(plotWidth / 2);
+                    this.mobileReticle.y = Math.round(plotHeight / 2);
+                    this.mobileReticle.visible = true;
+                }
+                // Reticle stays in its current place and moves relative to finger drag
+                this._reticleStartPos = { x: this.mobileReticle.x, y: this.mobileReticle.y };
+                return;
+            }
+
             const pos = isDrawingToolActive ? this.getMousePos(e, true) : this.getMousePos(e, false);
             this.logDrawingState('handleContainerMouseDown');
             const chartState = this.getChartState();
@@ -452,7 +543,51 @@ try {
         }
 
         handleContainerMouseMove(e) {
+            if (e.target && e.target.closest && e.target.closest('.toolbar-item, .drawing-submenu, .drawing-toolbar, .left-toolbar, .submenu-item, #drawing-toolbar, #left-toolbar, .style-panel, .floating-panel')) {
+                return;
+            }
+
+            var isTouch = (e.pointerType === 'touch' || e.type === 'touchmove' || (e.touches && e.touches.length > 0) || this.isMobileTouchMode());
             const isDrawingToolActive = this.activeTool && this.activeTool.type !== 'cursor';
+
+            if (this._isScalingChart) {
+                return;
+            }
+
+            // If touching on scale or multi-touch, allow chart scaling
+            var chart = window.bigChart || window.chart;
+            var plotWidth = (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') ? chart.timeScale().width() : (this.canvas ? this.canvas.width / (window.devicePixelRatio || 1) : 0);
+            var plotHeight = (chart && typeof chart.paneSize === 'function') ? (chart.paneSize() ? chart.paneSize().height : 0) : (this.canvas ? this.canvas.height / (window.devicePixelRatio || 1) : 0);
+            var parentElem = this.chartContainer || (this.container ? this.container.parentElement : null) || document.getElementById('chart-container');
+            if (isTouch && parentElem && plotWidth > 0 && plotHeight > 0) {
+                var parentRect = parentElem.getBoundingClientRect();
+                var cx = (e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : 0)));
+                var cy = (e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : 0)));
+                var tx = cx - parentRect.left;
+                var ty = cy - parentRect.top;
+                var isMultiTouch = (e.touches && e.touches.length >= 2);
+                if (isMultiTouch || tx >= (plotWidth - 5) || ty >= (plotHeight - 5)) {
+                    return;
+                }
+            }
+
+            if (isDrawingToolActive && (isTouch || this._isTouchMovingReticle)) {
+                e.stopPropagation();
+                if (e.cancelable) e.preventDefault();
+                this._disableChartScroll();
+                if (this._touchStartPos && this._reticleStartPos) {
+                    var curX = (e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : 0)));
+                    var curY = (e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : (e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientY : 0)));
+                    var dx = curX - this._touchStartPos.x;
+                    var dy = curY - this._touchStartPos.y;
+                    if (Math.hypot(dx, dy) > 4) {
+                        this._touchHasMoved = true;
+                    }
+                    this._updateMobileReticleDelta(this._reticleStartPos.x + dx, this._reticleStartPos.y + dy);
+                }
+                return;
+            }
+
             const isDragging = this.isDrawing || this.isDraggingHandle || this.isDraggingDrawing;
             var useSnap = (isDrawingToolActive || isDragging);
             if (this.isDraggingHandle && this.dragDrawing && (this.dragDrawing instanceof LongPosition || this.dragDrawing instanceof ShortPosition)) {
@@ -621,6 +756,29 @@ try {
 
         handleContainerMouseUp(e) {
             this.engine.stopAutoScroll();
+            if (this._isScalingChart) {
+                this._isScalingChart = false;
+                return;
+            }
+            if (this._isTouchMovingReticle) {
+                e.stopPropagation();
+                if (e.cancelable) e.preventDefault();
+                this._isTouchMovingReticle = false;
+                var wasTap = !this._touchHasMoved;
+                this._touchStartPos = null;
+                this._reticleStartPos = null;
+                this._touchHasMoved = false;
+
+                if (wasTap) {
+                    // Quick tap commits the point at the current crosshair position!
+                    this.commitMobileTouchPoint();
+                } else {
+                    // Drag moved the crosshair to the desired place: keep it there ready for user to tap!
+                    this.mobileReticle.visible = true;
+                    this.redraw();
+                }
+                return;
+            }
             if (this._justFinishedDrawing) {
                 this._justFinishedDrawing = false;
                 this.containerMouseDownPos = null;
@@ -890,40 +1048,16 @@ try {
 
         resizeCanvas() {
             if (this.container && this.canvas) {
-                var chart = window.bigChart || window.chart;
                 var dpr = window.devicePixelRatio || 1;
                 var parentElem = this.chartContainer || (this.container ? this.container.parentElement : null) || document.getElementById('chart-container');
                 var parentRect = parentElem ? parentElem.getBoundingClientRect() : null;
 
-                var plotWidth = 0;
-                var plotHeight = 0;
-
-                if (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') {
-                    plotWidth = chart.timeScale().width();
-                }
-                if (chart && typeof chart.paneSize === 'function') {
-                    var ps = chart.paneSize();
-                    if (ps && ps.height > 0) plotHeight = ps.height;
-                }
-
-                var priceScaleWidth = (window.innerWidth <= 480 ? 54 : (window.innerWidth <= 768 ? 58 : 68));
-                var timeScaleHeight = 28;
-
-                if (parentRect) {
-                    if (plotWidth <= 0) plotWidth = Math.max(0, parentRect.width - priceScaleWidth);
-                    if (plotHeight <= 0) plotHeight = Math.max(0, parentRect.height - timeScaleHeight);
-                }
-
-                if (plotWidth > 0) {
-                    this.container.style.width = plotWidth + 'px';
-                }
-                if (plotHeight > 0) {
-                    this.container.style.height = plotHeight + 'px';
-                }
+                this.container.style.width = '100%';
+                this.container.style.height = '100%';
                 this.container.style.overflow = 'hidden';
 
-                var w = plotWidth || (parentRect ? parentRect.width - priceScaleWidth : 800);
-                var h = plotHeight || (parentRect ? parentRect.height - timeScaleHeight : 500);
+                var w = (parentRect && parentRect.width > 0) ? parentRect.width : 800;
+                var h = (parentRect && parentRect.height > 0) ? parentRect.height : 500;
 
                 this.canvas.width = Math.round(w * dpr);
                 this.canvas.height = Math.round(h * dpr);
@@ -941,30 +1075,51 @@ try {
             if (!chart) return false;
             var lr = chart.timeScale().getVisibleLogicalRange();
             if (!lr) return false;
-            var width = chart.timeScale().width() || 500;
-            var height = this.canvas ? this.canvas.height / (window.devicePixelRatio || 1) : 500;
 
-            if (this.container && width > 0) {
-                var currentW = parseFloat(this.container.style.width) || 0;
-                if (Math.abs(currentW - width) > 1) {
-                    this.container.style.width = width + 'px';
-                    var dpr = window.devicePixelRatio || 1;
-                    this.canvas.width = Math.round(width * dpr);
-                    this.canvas.style.width = width + 'px';
+            var dpr = window.devicePixelRatio || 1;
+            var parentElem = this.chartContainer || (this.container ? this.container.parentElement : null) || document.getElementById('chart-container');
+            var parentRect = parentElem ? parentElem.getBoundingClientRect() : null;
+            var totalW = (parentRect && parentRect.width > 0) ? parentRect.width : 800;
+            var totalH = (parentRect && parentRect.height > 0) ? parentRect.height : 500;
+
+            if (this.container) {
+                this.container.style.width = '100%';
+                this.container.style.height = '100%';
+            }
+            var curW = this.canvas ? this.canvas.width / dpr : 0;
+            var curH = this.canvas ? this.canvas.height / dpr : 0;
+            if (Math.abs(curW - totalW) > 1 || Math.abs(curH - totalH) > 1) {
+                if (this.canvas) {
+                    this.canvas.width = Math.round(totalW * dpr);
+                    this.canvas.height = Math.round(totalH * dpr);
+                    this.canvas.style.width = totalW + 'px';
+                    this.canvas.style.height = totalH + 'px';
                     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 }
             }
 
+            var width = chart.timeScale().width() || (totalW - 65);
+            var timeScaleHeight = 26;
+            if (typeof chart.timeScale().height === 'function') {
+                var th = chart.timeScale().height();
+                if (th > 0 && th < 100) timeScaleHeight = th;
+            }
+            var plotHeight = totalH - timeScaleHeight;
+            if (typeof chart.paneSize === 'function') {
+                var ps = chart.paneSize();
+                if (ps && ps.height > 0) plotHeight = ps.height;
+            }
+
             if (series) {
                 var priceTop = series.coordinateToPrice(0);
-                var priceBottom = series.coordinateToPrice(height);
+                var priceBottom = series.coordinateToPrice(plotHeight);
                 if (priceTop !== null && priceBottom !== null) {
                     // Detect whether the viewport has actually changed to decide if a redraw is needed
                     var vp = window.coordinateMapper.viewport;
                     var changed = (vp.logicalFrom !== lr.from || vp.logicalTo !== lr.to ||
                                    vp.priceTop !== priceTop || vp.priceBottom !== priceBottom ||
-                                   vp.width !== width || vp.height !== height);
-                    window.coordinateMapper.updateViewport(lr.from, lr.to, priceTop, priceBottom, width, height);
+                                   vp.width !== width || vp.height !== plotHeight);
+                    window.coordinateMapper.updateViewport(lr.from, lr.to, priceTop, priceBottom, width, plotHeight);
                     return changed;
                 }
             }
@@ -977,13 +1132,20 @@ try {
             if (chart && typeof chart.applyOptions === 'function') {
                 try {
                     chart.applyOptions({
-                        handleScroll: false,
-                        handleScale: false
+                        handleScroll: {
+                            horzTouchDrag: false,
+                            vertTouchDrag: false,
+                            mouseWheel: false,
+                            pressedMouseMove: false
+                        },
+                        handleScale: {
+                            axisPressedMouseMove: { time: true, price: true },
+                            axisDoubleClickReset: { time: true, price: true },
+                            pinch: true,
+                            mouseWheel: true
+                        }
                     });
                 } catch(e) {}
-            }
-            if (this.chartContainer) {
-                this.chartContainer.style.touchAction = 'none';
             }
         }
 
@@ -1003,22 +1165,13 @@ try {
         }
 
         updatePointerEvents() {
-            var active = false;
-            if (this.activeTool && this.activeTool.type !== 'cursor') {
-                active = true;
-            } else if (this.isDrawing) {
-                active = true;
-            } else if (this.isDraggingDrawing || this.isDraggingHandle) {
-                active = true;
-            } else if (this.hoveredDrawing) {
-                active = true;
+            // Keep drawing overlay pointer-events permanently 'none' so that chart axes (X and Y scales)
+            // and native gesture listeners always receive events without being obstructed.
+            if (this.canvas && this.canvas.style.pointerEvents !== 'none') {
+                this.canvas.style.pointerEvents = 'none';
             }
-            var val = active ? 'auto' : 'none';
-            if (this.canvas && this.canvas.style.pointerEvents !== val) {
-                this.canvas.style.pointerEvents = val;
-            }
-            if (this.container && this.container.style.pointerEvents !== val) {
-                this.container.style.pointerEvents = val;
+            if (this.container && this.container.style.pointerEvents !== 'none') {
+                this.container.style.pointerEvents = 'none';
             }
 
             if (this.isDrawing || this.isDraggingDrawing || this.isDraggingHandle || (this.activeTool && this.activeTool.type !== 'cursor')) {
@@ -1043,6 +1196,14 @@ try {
 
             this.activeTool = toolDef;
 
+            // Clear any old native chart crosshairs / buffer leftover from previous touches
+            if (window.bigChart && typeof window.bigChart.clearCrosshairPosition === 'function') {
+                try { window.bigChart.clearCrosshairPosition(); } catch(e) {}
+            }
+            if (window.chart && typeof window.chart.clearCrosshairPosition === 'function') {
+                try { window.chart.clearCrosshairPosition(); } catch(e) {}
+            }
+
             // Ensure canvas is sized correctly before activating tool
             this.resizeCanvas();
 
@@ -1061,11 +1222,23 @@ try {
             // Listeners are registered once in the constructor — no duplicate registration here.
 
             // Set cursor based on tool type
+            var chart = window.bigChart || window.chart;
             if (toolDef.type === 'cursor' || toolDef.key === 'eraser') {
                 this.setCursor('default');
+                if (this.mobileReticle) this.mobileReticle.visible = false;
                 if (chartContainer) {
                     chartContainer.classList.remove('drawing-mode-active');
                     chartContainer.classList.add('selection-mode-active');
+                }
+                if (chart && typeof chart.applyOptions === 'function') {
+                    try {
+                        chart.applyOptions({
+                            crosshair: {
+                                vertLine: { color: '#758696', labelVisible: true },
+                                horzLine: { color: '#758696', labelVisible: true }
+                            }
+                        });
+                    } catch(e) {}
                 }
             } else {
                 if (toolDef.type === 'text') {
@@ -1077,11 +1250,234 @@ try {
                     chartContainer.classList.add('drawing-mode-active');
                     chartContainer.classList.remove('selection-mode-active');
                 }
+                // Hide native white/gray chart crosshair lines so ONLY the blue dotted buffer line is visible
+                if (chart && typeof chart.applyOptions === 'function') {
+                    try {
+                        chart.applyOptions({
+                            crosshair: {
+                                vertLine: { color: 'transparent', labelVisible: true },
+                                horzLine: { color: 'transparent', labelVisible: true }
+                            }
+                        });
+                    } catch(e) {}
+                }
+                // Immediately display mobile precision crosshair buffer on chart page
+                if (this.isMobileTouchMode()) {
+                    var dpr = window.devicePixelRatio || 1;
+                    var plotWidth = this.canvas ? (this.canvas.width / dpr) : 300;
+                    var plotHeight = this.canvas ? (this.canvas.height / dpr) : 300;
+                    this.mobileReticle.x = Math.round(plotWidth / 2);
+                    this.mobileReticle.y = Math.round(plotHeight / 2);
+                    var chartState = this.getChartState();
+                    if (chartState) {
+                        var snapped = this.engine.snapping.snap(this.mobileReticle.x, this.mobileReticle.y, chartState);
+                        if (snapped && snapped.snapped) {
+                            this.mobileReticle.x = snapped.x;
+                            this.mobileReticle.y = snapped.y;
+                            this.mobileReticle.snapped = true;
+                            this.mobileReticle.snapLabel = (snapped.label || 'Wick') + ': ' + this._formatPrice(snapped.value);
+                            this.mobileReticle.price = snapped.value;
+                        } else {
+                            this.mobileReticle.snapped = false;
+                            this.mobileReticle.snapLabel = '';
+                            var coord = chartState.pixelToCoord(this.mobileReticle.x, this.mobileReticle.y);
+                            if (coord) this.mobileReticle.price = coord.price;
+                        }
+                    }
+                    this.mobileReticle.visible = true;
+                }
             }
 
             this.updatePointerEvents();
+            this.redraw();
             console.log(`Tool activated: ${toolDef.name}`);
             this.logDrawingState('setTool_End');
+        }
+
+        isMobileTouchMode() {
+            return (window.innerWidth <= 768) || ('ontouchstart' in window && window.innerWidth <= 1024) || (navigator.maxTouchPoints > 0 && window.innerWidth <= 1024);
+        }
+
+        _formatPrice(price) {
+            if (price == null || isNaN(price)) return '';
+            return '₹' + Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        _formatTime(time) {
+            if (!time) return '';
+            if (typeof time === 'string') return time;
+            if (typeof time === 'number') {
+                var epochSec = time > 1e11 ? Math.floor(time / 1000) : time;
+                var d = new Date(epochSec * 1000 + 5.5 * 3600 * 1000);
+                if (!isNaN(d.getTime())) {
+                    var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                    var dd = String(d.getUTCDate()).padStart(2, '0');
+                    var mon = MON[d.getUTCMonth()];
+                    var hh = String(d.getUTCHours()).padStart(2, '0');
+                    var mm = String(d.getUTCMinutes()).padStart(2, '0');
+                    return dd + ' ' + mon + ' ' + hh + ':' + mm;
+                }
+            }
+            return String(time);
+        }
+
+        commitMobileTouchPoint() {
+            const chartState = this.getChartState();
+            if (!chartState || !this.activeTool || this.activeTool.type === 'cursor') return;
+
+            const pos = { x: this.mobileReticle.x, y: this.mobileReticle.y };
+            this._disableChartScroll();
+
+            if (!this.isDrawing) {
+                this.isDrawing = true;
+                this.updatePointerEvents();
+                var options = this.activeTool.options || {};
+                options.points = this.activeTool.points;
+                this.currentDrawing = new this.activeTool.class(pos, chartState, options);
+
+                if (typeof this.currentDrawing.begin === 'function') {
+                    this.currentDrawing.begin();
+                }
+
+                if (this.currentDrawing.isComplete && this.currentDrawing.isComplete()) {
+                    this.finishDrawing();
+                    this.mobileReticle.visible = false;
+                } else {
+                    if (typeof this.currentDrawing.updatePreview === 'function') {
+                        this.currentDrawing.updatePreview(pos, chartState);
+                    } else if (typeof this.currentDrawing.update === 'function') {
+                        this.currentDrawing.update(pos, chartState);
+                    }
+                    this.mobileReticle.visible = true;
+                    this.redraw();
+                }
+            } else {
+                if (this.activeTool && this.activeTool.dragBased && typeof this.currentDrawing.update === 'function') {
+                    this.currentDrawing.update(pos, chartState);
+                }
+                this.currentDrawing.addPoint(pos, chartState);
+                if (this.currentDrawing.isComplete && this.currentDrawing.isComplete()) {
+                    this.finishDrawing();
+                    this.mobileReticle.visible = false;
+                } else {
+                    this.mobileReticle.visible = true;
+                    this.redraw();
+                }
+            }
+        }
+
+        _updateMobileReticleDelta(targetX, targetY) {
+            const chartState = this.getChartState();
+            if (!chartState || !this.canvas) return;
+
+            var dpr = window.devicePixelRatio || 1;
+            var plotWidth = this.canvas.width / dpr;
+            var plotHeight = this.canvas.height / dpr;
+
+            var x = Math.max(0, Math.min(plotWidth, targetX));
+            var y = Math.max(0, Math.min(plotHeight, targetY));
+
+            // Snap to candle wick / body if magnet is active
+            var snapped = this.engine.snapping.snap(x, y, chartState);
+            if (snapped && snapped.snapped) {
+                this.mobileReticle.x = snapped.x;
+                this.mobileReticle.y = snapped.y;
+                this.mobileReticle.snapped = true;
+                this.mobileReticle.snapLabel = (snapped.label || 'Wick') + ': ' + this._formatPrice(snapped.value);
+                this.mobileReticle.price = snapped.value;
+            } else {
+                this.mobileReticle.x = x;
+                this.mobileReticle.y = y;
+                this.mobileReticle.snapped = false;
+                this.mobileReticle.snapLabel = '';
+                var coord = chartState.pixelToCoord(x, y);
+                this.mobileReticle.price = coord ? coord.price : null;
+            }
+
+            this.mobileReticle.visible = true;
+
+            // Sync with chart native crosshair to display official price on right Y-axis and date on bottom X-axis
+            var chart = window.bigChart || window.chart;
+            var candleSeries = window.bigCandleSeries || window.mainSeries || (chart && chart._candleSeries);
+            var coord = chartState.pixelToCoord(this.mobileReticle.x, this.mobileReticle.y);
+            if (chart && candleSeries && this.mobileReticle.price != null && coord && coord.time != null) {
+                try {
+                    chart.setCrosshairPosition(this.mobileReticle.price, coord.time, candleSeries);
+                } catch(e) {}
+            }
+
+            // Update live preview if drawing in progress
+            if (this.isDrawing && this.currentDrawing) {
+                var rPos = { x: this.mobileReticle.x, y: this.mobileReticle.y };
+                if (typeof this.currentDrawing.updatePreview === 'function') {
+                    this.currentDrawing.updatePreview(rPos, chartState);
+                } else if (typeof this.currentDrawing.update === 'function') {
+                    this.currentDrawing.update(rPos, chartState);
+                }
+            }
+
+            this.redraw();
+        }
+
+        _updateMobileReticleFromTouch(e) {
+            const chartState = this.getChartState();
+            if (!chartState || !this.canvas) return;
+
+            const rect = this.canvas.getBoundingClientRect();
+            let clientX = e.clientX;
+            let clientY = e.clientY;
+            if ((clientX === undefined || clientX === null) && e.touches && e.touches.length > 0) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else if ((clientX === undefined || clientX === null) && e.changedTouches && e.changedTouches.length > 0) {
+                clientX = e.changedTouches[0].clientX;
+                clientY = e.changedTouches[0].clientY;
+            }
+
+            if (clientX === undefined || clientX === null || clientY === undefined || clientY === null) return;
+
+            var rawX = clientX - rect.left;
+            var rawY = clientY - rect.top;
+
+            this._updateMobileReticleDelta(rawX, rawY);
+        }
+
+        _drawMobileReticle(ctx, chartState, plotWidth, plotHeight) {
+            if (!this.mobileReticle || !this.mobileReticle.visible) return;
+            var rx = Math.max(0, Math.min(plotWidth, this.mobileReticle.x));
+            var ry = Math.max(0, Math.min(plotHeight, this.mobileReticle.y));
+            var isSnapped = this.mobileReticle.snapped;
+
+            ctx.save();
+
+            // 1. Clean Blue Dotted Crosshair Lines across entire plotting canvas
+            ctx.strokeStyle = isSnapped ? 'rgba(0, 242, 254, 0.95)' : 'rgba(41, 98, 255, 0.9)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+
+            // Horizontal Line
+            ctx.beginPath();
+            ctx.moveTo(0, ry);
+            ctx.lineTo(plotWidth, ry);
+            ctx.stroke();
+
+            // Vertical Line
+            ctx.beginPath();
+            ctx.moveTo(rx, 0);
+            ctx.lineTo(rx, plotHeight);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 2. Clean Center Intersection Dot
+            ctx.beginPath();
+            ctx.arc(rx, ry, 3.5, 0, Math.PI * 2);
+            ctx.fillStyle = isSnapped ? '#00f2fe' : '#2962ff';
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            ctx.restore();
         }
 
         setCursor(type) {
@@ -1190,6 +1586,13 @@ try {
             if (!this.stayMode) {
                 this.enterSelectionMode();
             }
+            if (this.mobileReticle) {
+                this.mobileReticle.visible = false;
+            }
+            var chart = window.bigChart || window.chart;
+            if (chart && typeof chart.clearCrosshairPosition === 'function') {
+                try { chart.clearCrosshairPosition(); } catch(e) {}
+            }
             this._justFinishedDrawing = true;
             this.redraw();
         }
@@ -1200,6 +1603,13 @@ try {
             this.currentDrawing = null;
             this._justFinishedDrawing = false;
             this.updatePointerEvents();
+            if (this.mobileReticle) {
+                this.mobileReticle.visible = false;
+            }
+            var chart = window.bigChart || window.chart;
+            if (chart && typeof chart.clearCrosshairPosition === 'function') {
+                try { chart.clearCrosshairPosition(); } catch(e) {}
+            }
             this.redraw();
         }
 
@@ -1295,6 +1705,23 @@ try {
             this.isDrawing = false;
             this.currentDrawing = null;
             this.activeTool = null;
+            if (this.mobileReticle) {
+                this.mobileReticle.visible = false;
+            }
+            var chart = window.bigChart || window.chart;
+            if (chart && typeof chart.clearCrosshairPosition === 'function') {
+                try { chart.clearCrosshairPosition(); } catch(e) {}
+            }
+            if (chart && typeof chart.applyOptions === 'function') {
+                try {
+                    chart.applyOptions({
+                        crosshair: {
+                            vertLine: { color: '#758696', labelVisible: true },
+                            horzLine: { color: '#758696', labelVisible: true }
+                        }
+                    });
+                } catch(e) {}
+            }
             const chartContainer = document.getElementById('chart-container');
 
             if (chartContainer) {
@@ -1362,18 +1789,9 @@ try {
         redraw() {
             if (!this.ctx) return;
             var dpr = window.devicePixelRatio || 1;
-            var chart = window.bigChart || window.chart;
-            var plotWidth = this.canvas.width / dpr;
-            var plotHeight = this.canvas.height / dpr;
-
-            if (chart && typeof chart.timeScale === 'function' && typeof chart.timeScale().width === 'function') {
-                var tw = chart.timeScale().width();
-                if (tw > 0) plotWidth = tw;
-            }
-            if (chart && typeof chart.paneSize === 'function') {
-                var ps = chart.paneSize();
-                if (ps && ps.height > 0) plotHeight = ps.height;
-            }
+            var dims = BaseDrawing.prototype._getPlotDimensions(this.canvas);
+            var plotWidth = dims.plotWidth;
+            var plotHeight = dims.plotHeight;
 
             this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             this.ctx.clearRect(0, 0, this.canvas.width / dpr, this.canvas.height / dpr);
@@ -1402,6 +1820,11 @@ try {
                 this.currentDrawing.draw(this.ctx, chartState, false, false);
             }
 
+            // Draw Mobile Precision Crosshair Reticle & Wick/Body Snap Indicator
+            if (this.mobileReticle && this.mobileReticle.visible && this.activeTool && this.activeTool.type !== 'cursor') {
+                this._drawMobileReticle(this.ctx, chartState, plotWidth, plotHeight);
+            }
+
             // Draw marquee rectangle if active
             var marquee = this.engine.getMarqueeRect();
             if (marquee) {
@@ -1418,6 +1841,22 @@ try {
             }
 
             this.ctx.restore();
+
+            // Phase 2: Render axis badges directly on the Y-Axis price scale and X-Axis time scale (unclipped)
+            var allDrawings = this.drawings || [];
+            for (var bi = 0; bi < allDrawings.length; bi++) {
+                var d = allDrawings[bi];
+                if (!d) continue;
+                var dId = d.model ? d.model.id : null;
+                var isSel = !!(dId && (dId === selectedId || (this.engine.selection && this.engine.selection.isSelected(dId))));
+                var isHov = !!(dId && dId === hoveredId);
+                if (typeof d.drawAxisBadges === 'function') {
+                    d.drawAxisBadges(this.ctx, chartState, isSel, isHov);
+                }
+            }
+            if (this.currentDrawing && typeof this.currentDrawing.drawAxisBadges === 'function') {
+                this.currentDrawing.drawAxisBadges(this.ctx, chartState, true, false);
+            }
         }
 
         logDrawingState(context) {
@@ -2311,33 +2750,150 @@ try {
             }
         }
 
+        _getPlotDimensions(canvas) {
+            var dpr = window.devicePixelRatio || 1;
+            var totalWidth = (canvas ? canvas.width / dpr : 0) ||
+                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) ||
+                             (window.coordinateMapper && window.coordinateMapper.viewport ? window.coordinateMapper.viewport.width : 800);
+            var totalHeight = (canvas ? canvas.height / dpr : 0) ||
+                              (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) ||
+                              (window.coordinateMapper && window.coordinateMapper.viewport ? window.coordinateMapper.viewport.height : 500);
+
+            var chart = window.bigChart || window.chart;
+            var timeScale = chart && typeof chart.timeScale === 'function' ? chart.timeScale() : null;
+
+            var plotWidth = null;
+            if (timeScale && typeof timeScale.width === 'function') {
+                var tw = timeScale.width();
+                if (tw > 0) plotWidth = tw;
+            }
+            if (plotWidth === null && window.coordinateMapper && window.coordinateMapper.viewport && window.coordinateMapper.viewport.width) {
+                plotWidth = window.coordinateMapper.viewport.width;
+            }
+            if (plotWidth === null || plotWidth <= 0 || plotWidth >= totalWidth) {
+                plotWidth = Math.max(100, totalWidth - 65);
+            }
+
+            var timeScaleHeight = 26;
+            if (timeScale && typeof timeScale.height === 'function') {
+                var th = timeScale.height();
+                if (th > 0 && th < 100) timeScaleHeight = th;
+            }
+
+            var plotHeight = totalHeight - timeScaleHeight;
+            if (chart && typeof chart.paneSize === 'function') {
+                var ps = chart.paneSize();
+                if (ps && ps.height > 0 && ps.height < totalHeight) plotHeight = ps.height;
+            }
+            if (plotHeight <= 0) {
+                plotHeight = Math.max(100, totalHeight - 26);
+            }
+
+            return {
+                totalWidth: totalWidth,
+                totalHeight: totalHeight,
+                plotWidth: plotWidth,
+                plotHeight: plotHeight,
+                timeScaleHeight: timeScaleHeight,
+                priceScaleWidth: Math.max(40, totalWidth - plotWidth)
+            };
+        }
+
         // Draw price badge on the canvas (TradingView-style)
-        getPriceLabel(idx) {
+        getPriceLabel(idx, pixel, chartState) {
             if (this.coords && this.coords[idx] && this.coords[idx].price != null) {
                 return this.coords[idx].price.toFixed(2);
+            }
+            if (pixel && chartState && typeof chartState.pixelToCoord === 'function') {
+                var c = chartState.pixelToCoord(pixel.x, pixel.y);
+                if (c && c.price != null && !isNaN(c.price)) {
+                    return c.price.toFixed(2);
+                }
+            }
+            if (pixel && chartState && typeof chartState.yToPrice === 'function') {
+                var p = chartState.yToPrice(pixel.y);
+                if (p != null && !isNaN(p)) return p.toFixed(2);
+            }
+            return null;
+        }
+
+        getTimeLabel(idx, pixel, chartState) {
+            if (this.coords && this.coords[idx] && this.coords[idx].logical != null) {
+                return this._formatTime(this.coords[idx].logical, chartState);
+            }
+            if (pixel && chartState && typeof chartState.pixelToCoord === 'function') {
+                var c = chartState.pixelToCoord(pixel.x, pixel.y);
+                if (c && c.logical != null) {
+                    return this._formatTime(c.logical, chartState);
+                }
+            }
+            if (pixel && chartState && typeof chartState.xToLogical === 'function') {
+                var lg = chartState.xToLogical(pixel.x);
+                if (lg != null) return this._formatTime(lg, chartState);
             }
             return null;
         }
 
         drawPriceBadge(ctx, x, y, text, color) {
-            if (text == null) return;
-            ctx.font = 'bold 11px -apple-system, Roboto, sans-serif';
+            if (text == null || y == null) return;
+            var dims = this._getPlotDimensions(ctx.canvas);
+            var plotWidth = dims.plotWidth;
+            var priceScaleWidth = dims.priceScaleWidth;
+
+            ctx.save();
+            ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             var tw = ctx.measureText(text).width;
             var pad = 6, bh = 18;
-            var bx = x, by = y - bh - 4;
-            var bw = tw + pad * 2;
+            var bw = Math.min(Math.round(tw + pad * 2), priceScaleWidth - 4);
+            var rx = plotWidth + 2;
 
             // Badge background
             ctx.fillStyle = color || '#2962ff';
             ctx.beginPath();
-            ctx.roundRect(bx, by, bw, bh, 3);
+            if (typeof ctx.roundRect === 'function') {
+                ctx.roundRect(rx, y - bh / 2, bw, bh, 3);
+            } else {
+                ctx.rect(rx, y - bh / 2, bw, bh);
+            }
             ctx.fill();
 
             // Badge text
-            ctx.fillStyle = '#fff';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText(text, bx + pad, by + bh - 3);
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, rx + bw / 2, y);
+            ctx.restore();
+        }
+
+        // Draw axis badges on the Y-Axis price scale and X-Axis time scale (unclipped phase)
+        drawAxisBadges(ctx, chartState, isSelected, isHovered) {
+            if (!chartState) return;
+
+            // 1. If drawing has permanent price label style (e.g. horizontal line)
+            if (this.style && this.style.showLabel && typeof this.getPriceLabel === 'function') {
+                var pLabel = this.getPriceLabel(0);
+                if (pLabel && typeof this.getPixels === 'function') {
+                    var pxs = this.getPixels(chartState);
+                    if (pxs && pxs.length > 0 && pxs[0]) {
+                        this.drawPriceBadge(ctx, 0, pxs[0].y, pLabel, this.style.color);
+                    }
+                }
+            }
+
+            // 2. When selected, hovered, or in-progress: draw axis badges for all points
+            if (isSelected || isHovered) {
+                var pixels = [];
+                if (typeof this.getPixels === 'function') {
+                    pixels = this.getPixels(chartState) || [];
+                }
+                // If in progress and second point hasn't been finalized yet, include currentPos
+                if (pixels.length === 1 && this.currentPos) {
+                    pixels = [pixels[0], this.currentPos];
+                }
+                if (pixels && pixels.length > 0) {
+                    this.drawAxisLabels(ctx, pixels, chartState);
+                }
+            }
         }
 
         // Axis coordinate readout (shared — every line-type tool uses this)
@@ -2364,11 +2920,11 @@ try {
         }
 
         drawAxisLabels(ctx, pixels, chartState) {
-            if (!ctx || !pixels) return;
-            var viewport = (window.coordinateMapper && window.coordinateMapper.viewport) || {};
-            var ch = viewport.height || 500;
-            var cw = viewport.width || 800;
-            var color = (this.style && this.style.color) || '#3366FF';
+            if (!ctx || !pixels || pixels.length === 0) return;
+            var dims = this._getPlotDimensions(ctx.canvas);
+            var plotWidth = dims.plotWidth;
+            var plotHeight = dims.plotHeight;
+            var color = (this.style && this.style.color) || '#2962ff';
 
             // Range highlights (drawn behind labels): one connecting band per
             // highlight group, spanning that group's min→max price (Y axis)
@@ -2394,68 +2950,77 @@ try {
 
                 ctx.save();
                 ctx.fillStyle = color + '35';
-                ctx.fillRect(cw - 3, yMin, 3, yMax - yMin);
-                ctx.fillRect(xMin, ch - 3, xMax - xMin, 3);
+                ctx.fillRect(plotWidth, yMin, 3, yMax - yMin);
+                ctx.fillRect(xMin, plotHeight, xMax - xMin, 3);
                 ctx.restore();
             }
 
             for (var i = 0; i < pixels.length; i++) {
                 if (!pixels[i]) continue;
-                this._drawAxisLabel(ctx, pixels[i], i, chartState, ch, cw);
+                this._drawAxisLabel(ctx, pixels[i], i, chartState, dims);
             }
         }
 
-        _drawAxisLabel(ctx, pixel, idx, chartState, canvasHeight, canvasWidth) {
+        _drawAxisLabel(ctx, pixel, idx, chartState, dims) {
             if (!pixel) return;
-            var color = (this.style && this.style.color) || '#3366FF';
+            if (!dims) dims = this._getPlotDimensions(ctx.canvas);
+            var color = (this.style && this.style.color) || '#2962ff';
+            var plotWidth = dims.plotWidth;
+            var plotHeight = dims.plotHeight;
+            var priceScaleWidth = dims.priceScaleWidth;
+            var timeScaleHeight = dims.timeScaleHeight;
 
-            // Price axis label (RIGHT edge — where price scale is)
-            var priceText = this.getPriceLabel(idx);
+            // Price axis label (on RIGHT Y-axis price scale)
+            var priceText = this.getPriceLabel(idx, pixel, chartState);
             if (priceText != null) {
                 ctx.save();
-                ctx.font = 'bold 11px -apple-system, Roboto, sans-serif';
+                ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
                 var tw = ctx.measureText(priceText).width;
                 var pad = 6, bh = 18;
-                var bw = tw + pad * 2;
-                var rx = canvasWidth - bw;
+                var bw = Math.min(Math.round(tw + pad * 2), priceScaleWidth - 4);
+                var rx = plotWidth + 2;
 
                 ctx.fillStyle = color;
                 ctx.beginPath();
-                ctx.roundRect(rx, pixel.y - bh / 2, bw, bh, 3);
+                if (typeof ctx.roundRect === 'function') {
+                    ctx.roundRect(rx, pixel.y - bh / 2, bw, bh, 3);
+                } else {
+                    ctx.rect(rx, pixel.y - bh / 2, bw, bh);
+                }
                 ctx.fill();
 
-                ctx.fillStyle = '#fff';
-                ctx.textAlign = 'left';
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(priceText, rx + pad, pixel.y + 1);
+                ctx.fillText(priceText, rx + bw / 2, pixel.y);
                 ctx.restore();
             }
 
-            // Time axis label (bottom edge of drawing area)
-            if (this.coords && this.coords[idx]) {
-                var timeText = this._formatTime(this.coords[idx].logical, chartState);
-                if (timeText != null) {
-                    ctx.save();
-                    ctx.font = 'bold 11px -apple-system, Roboto, sans-serif';
-                    var tw2 = ctx.measureText(timeText).width;
-                    var pad2 = 6, bh2 = 18;
-                    var bw2 = tw2 + pad2 * 2;
+            // Time axis label (on BOTTOM X-axis time scale)
+            var timeText = this.getTimeLabel(idx, pixel, chartState);
+            if (timeText != null) {
+                ctx.save();
+                ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+                var tw2 = ctx.measureText(timeText).width;
+                var pad2 = 6, bh2 = Math.min(20, Math.max(16, timeScaleHeight - 4));
+                var bw2 = tw2 + pad2 * 2;
+                var bx2 = Math.max(2, Math.min(plotWidth - bw2 - 2, pixel.x - bw2 / 2));
+                var by2 = plotHeight + 2;
 
-                    var bx2 = pixel.x - bw2 / 2;
-                    if (bx2 < 0) bx2 = 0;
-                    if (bx2 + bw2 > canvasWidth) bx2 = canvasWidth - bw2;
-
-                    ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.roundRect(bx2, canvasHeight - bh2 - 2, bw2, bh2, 3);
-                    ctx.fill();
-
-                    ctx.fillStyle = '#fff';
-                    ctx.textAlign = 'left';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(timeText, bx2 + pad2, canvasHeight - bh2 / 2 - 2);
-                    ctx.restore();
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                if (typeof ctx.roundRect === 'function') {
+                    ctx.roundRect(bx2, by2, bw2, bh2, 3);
+                } else {
+                    ctx.rect(bx2, by2, bw2, bh2);
                 }
+                ctx.fill();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(timeText, bx2 + bw2 / 2, by2 + bh2 / 2);
+                ctx.restore();
             }
         }
 
@@ -2486,18 +3051,11 @@ try {
             var p1 = pixels[0];
             var p2 = pixels.length > 1 ? pixels[1] : this.currentPos;
             if (!p1 || !p2) return;
-
             this.renderShape(ctx, p1, p2, isHovered);
 
-            // Axis labels only for tools that opt in (Ray, ExtendedLine, etc.)
-            if (isSelected && pixels.length >= 2 && this.showAxisLabels) {
-                this.drawAxisLabels(ctx, pixels, chartState);
-            }
-
-            // In-progress drawing (not yet finalized): draw preview handles inline
-            if (pixels.length < 2 && this.showAxisLabels) {
+            // In-progress drawing (not yet finalized): draw preview handle inline
+            if (pixels.length < 2) {
                 this.drawHandle(ctx, p1, false);
-                this.drawAxisLabels(ctx, [p1], chartState);
             }
 
             // Hover affordance: "+" prompt near midpoint for adding text labels
@@ -11936,16 +12494,42 @@ try {
 
 
 
-    // Single-click Long Position - TradingView style spanning 5 candles
+    // Single-click Long Position - TradingView style spanning candles
     class LongPosition extends BaseDrawing {
         constructor(startPos, chartState, options = {}) {
             super(startPos, chartState, options);
             this.quantity = options.quantity || 10;
             this.riskRewardRatio = options.riskRewardRatio || 2;
 
-            this.initialHalfSize = 40; // Fixed pixel half-size for initial compact square
+            this.initialHalfSize = 40; // Fixed pixel half-size fallback
 
-            // Asymmetric width offsets (from entry point)
+            var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
+
+            // Bar-based horizontal width so it stays pinned to candles and scales properly when zooming/panning
+            var defaultBars = 4;
+            if (options.leftBars !== undefined) {
+                this.leftBars = options.leftBars;
+            } else if (options.leftOffset && cs && typeof cs.coordToPixel === 'function') {
+                var p0 = cs.coordToPixel({ logical: 100, price: this.coords[0] ? this.coords[0].price : 100 });
+                var p1 = cs.coordToPixel({ logical: 101, price: this.coords[0] ? this.coords[0].price : 100 });
+                var spacing = (p0 && p1 && typeof p0.x === 'number' && typeof p1.x === 'number') ? Math.abs(p1.x - p0.x) : 8;
+                this.leftBars = Math.max(1, Math.round(options.leftOffset / (spacing || 8)));
+            } else {
+                this.leftBars = defaultBars;
+            }
+
+            if (options.rightBars !== undefined) {
+                this.rightBars = options.rightBars;
+            } else if (options.rightOffset && cs && typeof cs.coordToPixel === 'function') {
+                var p0 = cs.coordToPixel({ logical: 100, price: this.coords[0] ? this.coords[0].price : 100 });
+                var p1 = cs.coordToPixel({ logical: 101, price: this.coords[0] ? this.coords[0].price : 100 });
+                var spacing = (p0 && p1 && typeof p0.x === 'number' && typeof p1.x === 'number') ? Math.abs(p1.x - p0.x) : 8;
+                this.rightBars = Math.max(1, Math.round(options.rightOffset / (spacing || 8)));
+            } else {
+                this.rightBars = defaultBars;
+            }
+
+            // Asymmetric width offsets fallback (from entry point)
             this.leftOffset = this.initialHalfSize;
             this.rightOffset = this.initialHalfSize;
 
@@ -11957,7 +12541,6 @@ try {
                 if (this.coords.length >= 1) {
                     this.entryPrice = this.coords[0].price || 0;
                 }
-                var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
                 var entryPixelY = null;
                 var entryPixelX = null;
                 if (startPos && typeof startPos.y === 'number') {
@@ -12007,6 +12590,53 @@ try {
             return true; // Always complete immediately
         }
 
+        _getEntryLogical(chartState) {
+            var entryCoord = this.coords && this.coords[0];
+            if (!entryCoord) return null;
+            if (entryCoord.logical !== undefined && entryCoord.logical !== null && !isNaN(entryCoord.logical)) {
+                return entryCoord.logical;
+            }
+            var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
+            if (cs) {
+                if (entryCoord.time !== undefined && entryCoord.time !== null && typeof cs.timeToLogical === 'function') {
+                    var log = cs.timeToLogical(entryCoord.time);
+                    if (log !== null && log !== undefined && !isNaN(log)) {
+                        entryCoord.logical = log;
+                        return log;
+                    }
+                }
+                var p = cs.coordToPixel ? cs.coordToPixel(entryCoord) : null;
+                if (p && typeof cs.pixelToCoord === 'function') {
+                    var c = cs.pixelToCoord(p.x, p.y);
+                    if (c && c.logical !== null && c.logical !== undefined && !isNaN(c.logical)) {
+                        entryCoord.logical = c.logical;
+                        return c.logical;
+                    }
+                }
+            }
+            return null;
+        }
+
+        _getHorizontalBounds(chartState, entryPixel) {
+            var entryLogical = this._getEntryLogical(chartState);
+            var leftBars = (typeof this.leftBars === 'number' && this.leftBars > 0) ? this.leftBars : 4;
+            var rightBars = (typeof this.rightBars === 'number' && this.rightBars > 0) ? this.rightBars : 4;
+
+            if (entryLogical !== null && chartState && typeof chartState.coordToPixel === 'function') {
+                var leftP = chartState.coordToPixel({ logical: entryLogical - leftBars, price: this.entryPrice });
+                var rightP = chartState.coordToPixel({ logical: entryLogical + rightBars, price: this.entryPrice });
+                if (leftP && rightP && typeof leftP.x === 'number' && typeof rightP.x === 'number' && !isNaN(leftP.x) && !isNaN(rightP.x)) {
+                    var leftX = Math.min(leftP.x, rightP.x);
+                    var rightX = Math.max(leftP.x, rightP.x);
+                    return { left: leftX, right: rightX, width: Math.max(10, rightX - leftX) };
+                }
+            }
+
+            var lOff = this.leftOffset || 40;
+            var rOff = this.rightOffset || 40;
+            return { left: entryPixel.x - lOff, right: entryPixel.x + rOff, width: lOff + rOff };
+        }
+
         _ensurePrices() {
             if (this.entryPrice === undefined || this.entryPrice === null || this.entryPrice === 0) {
                 if (this.coords && this.coords.length >= 1) {
@@ -12038,9 +12668,10 @@ try {
             const entryPixel = chartState.coordToPixel(entryCoord);
             if (!entryPixel) return null;
 
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
             const entryY = entryPixel.y;
-            const left = entryPixel.x - this.leftOffset;
-            const right = entryPixel.x + this.rightOffset;
+            const left = bounds.left;
+            const right = bounds.right;
 
             const targetPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
             const stopPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.stopPrice });
@@ -12100,10 +12731,11 @@ try {
             const isHighlighted = !!(isSelected || isHovered);
             const fillOpacity = isHighlighted ? 0.28 : 0.20;
 
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
             const entryY = entryPixel.y;
-            const left = entryPixel.x - this.leftOffset;
-            const right = entryPixel.x + this.rightOffset;
-            const width = this.leftOffset + this.rightOffset;
+            const left = bounds.left;
+            const right = bounds.right;
+            const width = bounds.width;
 
             // Convert prices to pixels
             const targetPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
@@ -12137,12 +12769,7 @@ try {
             ctx.lineWidth = isHighlighted ? 1.5 : 1;
             ctx.stroke();
 
-            // Always draw 3 price badges on the Y-Axis price scale (Target, Entry, Stop)
-            this._drawPriceScaleBadge(ctx, targetY, this.targetPrice, '#089981', chartState);
-            this._drawPriceScaleBadge(ctx, entryY, this.entryPrice, '#787b86', chartState);
-            this._drawPriceScaleBadge(ctx, stopLossY, this.stopPrice, '#f23645', chartState);
-
-            // When selected or hovered, show tooltips, center PnL badge, handles, and X-axis time tags
+            // When selected or hovered, show tooltips, center PnL badge, handles
             if (isHighlighted) {
                 const targetDiff = this.targetPrice - this.entryPrice;
                 const targetPct = ((targetDiff / this.entryPrice) * 100).toFixed(3);
@@ -12171,8 +12798,34 @@ try {
                 this._drawHandle(ctx, right, entryY);
                 this._drawHandle(ctx, left, stopLossY);
                 this._drawHandle(ctx, right, stopLossY);
+            }
+        }
 
-                // X-Axis Time Badges
+        drawAxisBadges(ctx, chartState, isSelected, isHovered) {
+            this._ensurePrices();
+            if (!chartState || this.coords.length < 1) return;
+
+            const entryCoord = this.coords[0];
+            const entryPixel = chartState.coordToPixel(entryCoord);
+            if (!entryPixel) return;
+
+            const isHighlighted = !!(isSelected || isHovered);
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
+            const entryY = entryPixel.y;
+            const left = bounds.left;
+            const right = bounds.right;
+
+            const targetCoord = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
+            const stopCoord = chartState.coordToPixel({ time: entryCoord.time, price: this.stopPrice });
+            const targetY = targetCoord ? targetCoord.y : entryY - this.initialHalfSize;
+            const stopLossY = stopCoord ? stopCoord.y : entryY + this.initialHalfSize;
+
+            // Always draw 3 price badges on the Y-Axis price scale (Target, Entry, Stop)
+            this._drawPriceScaleBadge(ctx, targetY, this.targetPrice, '#089981', chartState);
+            this._drawPriceScaleBadge(ctx, entryY, this.entryPrice, '#787b86', chartState);
+            this._drawPriceScaleBadge(ctx, stopLossY, this.stopPrice, '#f23645', chartState);
+
+            if (isHighlighted) {
                 const startTimeStr = this._formatTimeBadge(left, entryY, chartState);
                 const endTimeStr = this._formatTimeBadge(right, entryY, chartState);
                 if (startTimeStr) this._drawTimeScaleBadge(ctx, left, startTimeStr, '#2962ff', chartState);
@@ -12183,32 +12836,16 @@ try {
         _drawPriceScaleBadge(ctx, y, price, bgColor, chartState) {
             if (y === null || y === undefined || isNaN(y) || price === null || price === undefined) return;
             var text = typeof price === 'number' ? price.toFixed(2) : String(price);
-
-            var dpr = window.devicePixelRatio || 1;
-            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
-                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
-
-            var plotWidth = null;
-            var chart = window.bigChart || window.chart;
-            if (chart && chart.timeScale && typeof chart.timeScale().width === 'function') {
-                plotWidth = chart.timeScale().width();
-            }
-            if (plotWidth === null && window.coordinateMapper && window.coordinateMapper.viewport && window.coordinateMapper.viewport.width) {
-                plotWidth = window.coordinateMapper.viewport.width;
-            }
-            if (plotWidth === null && chartState && chartState.viewport && chartState.viewport.width) {
-                plotWidth = chartState.viewport.width;
-            }
-            if (plotWidth === null || plotWidth <= 0 || plotWidth >= totalWidth) {
-                plotWidth = totalWidth - 65;
-            }
+            var dims = this._getPlotDimensions(ctx.canvas);
+            var plotWidth = dims.plotWidth;
+            var priceScaleWidth = dims.priceScaleWidth;
 
             ctx.save();
             ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             var tw = ctx.measureText(text).width;
             var pad = 6, bh = 18;
-            var bw = Math.min(Math.round(tw + pad * 2), Math.max(40, totalWidth - plotWidth - 2));
-            var rx = plotWidth + 1;
+            var bw = Math.min(Math.round(tw + pad * 2), priceScaleWidth - 4);
+            var rx = plotWidth + 2;
 
             ctx.fillStyle = bgColor;
             ctx.beginPath();
@@ -12228,19 +12865,18 @@ try {
 
         _drawTimeScaleBadge(ctx, x, text, bgColor, chartState) {
             if (x === null || x === undefined || isNaN(x) || !text) return;
-            var dpr = window.devicePixelRatio || 1;
-            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
-                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
-            var totalHeight = (ctx.canvas ? ctx.canvas.height / dpr : 0) ||
-                              (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) || 500;
+            var dims = this._getPlotDimensions(ctx.canvas);
+            var plotWidth = dims.plotWidth;
+            var plotHeight = dims.plotHeight;
+            var timeScaleHeight = dims.timeScaleHeight;
 
             ctx.save();
             ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             var tw = ctx.measureText(text).width;
-            var pad = 8, bh = 20;
+            var pad = 6, bh = Math.min(20, Math.max(16, timeScaleHeight - 4));
             var bw = tw + pad * 2;
-            var bx = Math.max(2, Math.min(totalWidth - bw - 2, x - bw / 2));
-            var by = totalHeight - bh - 2;
+            var bx = Math.max(2, Math.min(plotWidth - bw - 2, x - bw / 2));
+            var by = plotHeight + 2;
 
             ctx.fillStyle = bgColor || '#2962ff';
             ctx.beginPath();
@@ -12487,9 +13123,10 @@ try {
             const entryPixel = chartState.coordToPixel(entryCoord);
             if (!entryPixel) return null;
 
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
             const entryY = entryPixel.y;
-            const left = entryPixel.x - this.leftOffset;
-            const right = entryPixel.x + this.rightOffset;
+            const left = bounds.left;
+            const right = bounds.right;
 
             const targetPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
             const stopPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.stopPrice });
@@ -12554,6 +13191,14 @@ try {
                 const entryCoord = this.coords[0];
                 const entryPixel = chartState.coordToPixel(entryCoord);
                 if (entryPixel) {
+                    var entryLogical = this._getEntryLogical(chartState);
+                    if (entryLogical !== null && chartState && typeof chartState.pixelToCoord === 'function') {
+                        var c = chartState.pixelToCoord(pixelX, entryPixel.y);
+                        if (c && c.logical !== null && c.logical !== undefined && !isNaN(c.logical)) {
+                            var diff = entryLogical - c.logical;
+                            if (diff >= 0.5) this.leftBars = diff;
+                        }
+                    }
                     const newLeftOffset = entryPixel.x - pixelX;
                     if (newLeftOffset >= 15) {
                         this.leftOffset = newLeftOffset;
@@ -12564,6 +13209,14 @@ try {
                 const entryCoord = this.coords[0];
                 const entryPixel = chartState.coordToPixel(entryCoord);
                 if (entryPixel) {
+                    var entryLogical = this._getEntryLogical(chartState);
+                    if (entryLogical !== null && chartState && typeof chartState.pixelToCoord === 'function') {
+                        var c = chartState.pixelToCoord(pixelX, entryPixel.y);
+                        if (c && c.logical !== null && c.logical !== undefined && !isNaN(c.logical)) {
+                            var diff = c.logical - entryLogical;
+                            if (diff >= 0.5) this.rightBars = diff;
+                        }
+                    }
                     const newRightOffset = pixelX - entryPixel.x;
                     if (newRightOffset >= 15) {
                         this.rightOffset = newRightOffset;
@@ -12629,16 +13282,42 @@ try {
         }
     }
 
-    // Single-click Short Position - TradingView style spanning 5 candles
+    // Single-click Short Position - TradingView style spanning candles
     class ShortPosition extends BaseDrawing {
         constructor(startPos, chartState, options = {}) {
             super(startPos, chartState, options);
             this.quantity = options.quantity || 10;
             this.riskRewardRatio = options.riskRewardRatio || 2;
 
-            this.initialHalfSize = 40; // Fixed pixel half-size for initial compact square
+            this.initialHalfSize = 40; // Fixed pixel half-size fallback
 
-            // Asymmetric width offsets (from entry point)
+            var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
+
+            // Bar-based horizontal width so it stays pinned to candles and scales properly when zooming/panning
+            var defaultBars = 4;
+            if (options.leftBars !== undefined) {
+                this.leftBars = options.leftBars;
+            } else if (options.leftOffset && cs && typeof cs.coordToPixel === 'function') {
+                var p0 = cs.coordToPixel({ logical: 100, price: this.coords[0] ? this.coords[0].price : 100 });
+                var p1 = cs.coordToPixel({ logical: 101, price: this.coords[0] ? this.coords[0].price : 100 });
+                var spacing = (p0 && p1 && typeof p0.x === 'number' && typeof p1.x === 'number') ? Math.abs(p1.x - p0.x) : 8;
+                this.leftBars = Math.max(1, Math.round(options.leftOffset / (spacing || 8)));
+            } else {
+                this.leftBars = defaultBars;
+            }
+
+            if (options.rightBars !== undefined) {
+                this.rightBars = options.rightBars;
+            } else if (options.rightOffset && cs && typeof cs.coordToPixel === 'function') {
+                var p0 = cs.coordToPixel({ logical: 100, price: this.coords[0] ? this.coords[0].price : 100 });
+                var p1 = cs.coordToPixel({ logical: 101, price: this.coords[0] ? this.coords[0].price : 100 });
+                var spacing = (p0 && p1 && typeof p0.x === 'number' && typeof p1.x === 'number') ? Math.abs(p1.x - p0.x) : 8;
+                this.rightBars = Math.max(1, Math.round(options.rightOffset / (spacing || 8)));
+            } else {
+                this.rightBars = defaultBars;
+            }
+
+            // Asymmetric width offsets fallback (from entry point)
             this.leftOffset = this.initialHalfSize;
             this.rightOffset = this.initialHalfSize;
 
@@ -12650,7 +13329,6 @@ try {
                 if (this.coords.length >= 1) {
                     this.entryPrice = this.coords[0].price || 0;
                 }
-                var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
                 var entryPixelY = null;
                 var entryPixelX = null;
                 if (startPos && typeof startPos.y === 'number') {
@@ -12700,6 +13378,53 @@ try {
             return true; // Always complete immediately
         }
 
+        _getEntryLogical(chartState) {
+            var entryCoord = this.coords && this.coords[0];
+            if (!entryCoord) return null;
+            if (entryCoord.logical !== undefined && entryCoord.logical !== null && !isNaN(entryCoord.logical)) {
+                return entryCoord.logical;
+            }
+            var cs = chartState || (window.toolManager && typeof window.toolManager.getChartState === 'function' ? window.toolManager.getChartState() : null) || window.coordinateMapper;
+            if (cs) {
+                if (entryCoord.time !== undefined && entryCoord.time !== null && typeof cs.timeToLogical === 'function') {
+                    var log = cs.timeToLogical(entryCoord.time);
+                    if (log !== null && log !== undefined && !isNaN(log)) {
+                        entryCoord.logical = log;
+                        return log;
+                    }
+                }
+                var p = cs.coordToPixel ? cs.coordToPixel(entryCoord) : null;
+                if (p && typeof cs.pixelToCoord === 'function') {
+                    var c = cs.pixelToCoord(p.x, p.y);
+                    if (c && c.logical !== null && c.logical !== undefined && !isNaN(c.logical)) {
+                        entryCoord.logical = c.logical;
+                        return c.logical;
+                    }
+                }
+            }
+            return null;
+        }
+
+        _getHorizontalBounds(chartState, entryPixel) {
+            var entryLogical = this._getEntryLogical(chartState);
+            var leftBars = (typeof this.leftBars === 'number' && this.leftBars > 0) ? this.leftBars : 4;
+            var rightBars = (typeof this.rightBars === 'number' && this.rightBars > 0) ? this.rightBars : 4;
+
+            if (entryLogical !== null && chartState && typeof chartState.coordToPixel === 'function') {
+                var leftP = chartState.coordToPixel({ logical: entryLogical - leftBars, price: this.entryPrice });
+                var rightP = chartState.coordToPixel({ logical: entryLogical + rightBars, price: this.entryPrice });
+                if (leftP && rightP && typeof leftP.x === 'number' && typeof rightP.x === 'number' && !isNaN(leftP.x) && !isNaN(rightP.x)) {
+                    var leftX = Math.min(leftP.x, rightP.x);
+                    var rightX = Math.max(leftP.x, rightP.x);
+                    return { left: leftX, right: rightX, width: Math.max(10, rightX - leftX) };
+                }
+            }
+
+            var lOff = this.leftOffset || 40;
+            var rOff = this.rightOffset || 40;
+            return { left: entryPixel.x - lOff, right: entryPixel.x + rOff, width: lOff + rOff };
+        }
+
         _ensurePrices() {
             if (this.entryPrice === undefined || this.entryPrice === null || this.entryPrice === 0) {
                 if (this.coords && this.coords.length >= 1) {
@@ -12731,9 +13456,10 @@ try {
             const entryPixel = chartState.coordToPixel(entryCoord);
             if (!entryPixel) return null;
 
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
             const entryY = entryPixel.y;
-            const left = entryPixel.x - this.leftOffset;
-            const right = entryPixel.x + this.rightOffset;
+            const left = bounds.left;
+            const right = bounds.right;
 
             const targetPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
             const stopPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.stopPrice });
@@ -12793,10 +13519,11 @@ try {
             const isHighlighted = !!(isSelected || isHovered);
             const fillOpacity = isHighlighted ? 0.28 : 0.20;
 
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
             const entryY = entryPixel.y;
-            const left = entryPixel.x - this.leftOffset;
-            const right = entryPixel.x + this.rightOffset;
-            const width = this.leftOffset + this.rightOffset;
+            const left = bounds.left;
+            const right = bounds.right;
+            const width = bounds.width;
 
             // Convert prices to pixels
             const targetPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
@@ -12830,12 +13557,7 @@ try {
             ctx.lineWidth = isHighlighted ? 1.5 : 1;
             ctx.stroke();
 
-            // Always draw 3 price badges on the Y-Axis price scale (Target, Entry, Stop)
-            this._drawPriceScaleBadge(ctx, targetY, this.targetPrice, '#089981', chartState);
-            this._drawPriceScaleBadge(ctx, entryY, this.entryPrice, '#787b86', chartState);
-            this._drawPriceScaleBadge(ctx, stopLossY, this.stopPrice, '#f23645', chartState);
-
-            // When selected or hovered, show tooltips, center PnL badge, handles, and X-axis time tags
+            // When selected or hovered, show tooltips, center PnL badge, handles
             if (isHighlighted) {
                 const stopDiff = this.stopPrice - this.entryPrice;
                 const stopPct = ((stopDiff / this.entryPrice) * 100).toFixed(3);
@@ -12864,8 +13586,34 @@ try {
                 this._drawHandle(ctx, right, entryY);
                 this._drawHandle(ctx, left, targetY);
                 this._drawHandle(ctx, right, targetY);
+            }
+        }
 
-                // X-Axis Time Badges
+        drawAxisBadges(ctx, chartState, isSelected, isHovered) {
+            this._ensurePrices();
+            if (!chartState || this.coords.length < 1) return;
+
+            const entryCoord = this.coords[0];
+            const entryPixel = chartState.coordToPixel(entryCoord);
+            if (!entryPixel) return;
+
+            const isHighlighted = !!(isSelected || isHovered);
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
+            const entryY = entryPixel.y;
+            const left = bounds.left;
+            const right = bounds.right;
+
+            const targetCoord = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
+            const stopCoord = chartState.coordToPixel({ time: entryCoord.time, price: this.stopPrice });
+            const targetY = targetCoord ? targetCoord.y : entryY + this.initialHalfSize;
+            const stopLossY = stopCoord ? stopCoord.y : entryY - this.initialHalfSize;
+
+            // Always draw 3 price badges on the Y-Axis price scale (Target, Entry, Stop)
+            this._drawPriceScaleBadge(ctx, targetY, this.targetPrice, '#089981', chartState);
+            this._drawPriceScaleBadge(ctx, entryY, this.entryPrice, '#787b86', chartState);
+            this._drawPriceScaleBadge(ctx, stopLossY, this.stopPrice, '#f23645', chartState);
+
+            if (isHighlighted) {
                 const startTimeStr = this._formatTimeBadge(left, entryY, chartState);
                 const endTimeStr = this._formatTimeBadge(right, entryY, chartState);
                 if (startTimeStr) this._drawTimeScaleBadge(ctx, left, startTimeStr, '#2962ff', chartState);
@@ -12876,32 +13624,16 @@ try {
         _drawPriceScaleBadge(ctx, y, price, bgColor, chartState) {
             if (y === null || y === undefined || isNaN(y) || price === null || price === undefined) return;
             var text = typeof price === 'number' ? price.toFixed(2) : String(price);
-
-            var dpr = window.devicePixelRatio || 1;
-            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
-                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
-
-            var plotWidth = null;
-            var chart = window.bigChart || window.chart;
-            if (chart && chart.timeScale && typeof chart.timeScale().width === 'function') {
-                plotWidth = chart.timeScale().width();
-            }
-            if (plotWidth === null && window.coordinateMapper && window.coordinateMapper.viewport && window.coordinateMapper.viewport.width) {
-                plotWidth = window.coordinateMapper.viewport.width;
-            }
-            if (plotWidth === null && chartState && chartState.viewport && chartState.viewport.width) {
-                plotWidth = chartState.viewport.width;
-            }
-            if (plotWidth === null || plotWidth <= 0 || plotWidth >= totalWidth) {
-                plotWidth = totalWidth - 65;
-            }
+            var dims = this._getPlotDimensions(ctx.canvas);
+            var plotWidth = dims.plotWidth;
+            var priceScaleWidth = dims.priceScaleWidth;
 
             ctx.save();
             ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             var tw = ctx.measureText(text).width;
             var pad = 6, bh = 18;
-            var bw = Math.min(Math.round(tw + pad * 2), Math.max(40, totalWidth - plotWidth - 2));
-            var rx = plotWidth + 1;
+            var bw = Math.min(Math.round(tw + pad * 2), priceScaleWidth - 4);
+            var rx = plotWidth + 2;
 
             ctx.fillStyle = bgColor;
             ctx.beginPath();
@@ -12921,19 +13653,18 @@ try {
 
         _drawTimeScaleBadge(ctx, x, text, bgColor, chartState) {
             if (x === null || x === undefined || isNaN(x) || !text) return;
-            var dpr = window.devicePixelRatio || 1;
-            var totalWidth = (ctx.canvas ? ctx.canvas.width / dpr : 0) ||
-                             (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientWidth : 0) || 800;
-            var totalHeight = (ctx.canvas ? ctx.canvas.height / dpr : 0) ||
-                              (window.toolManager && window.toolManager.canvas ? window.toolManager.canvas.clientHeight : 0) || 500;
+            var dims = this._getPlotDimensions(ctx.canvas);
+            var plotWidth = dims.plotWidth;
+            var plotHeight = dims.plotHeight;
+            var timeScaleHeight = dims.timeScaleHeight;
 
             ctx.save();
             ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
             var tw = ctx.measureText(text).width;
-            var pad = 8, bh = 20;
+            var pad = 6, bh = Math.min(20, Math.max(16, timeScaleHeight - 4));
             var bw = tw + pad * 2;
-            var bx = Math.max(2, Math.min(totalWidth - bw - 2, x - bw / 2));
-            var by = totalHeight - bh - 2;
+            var bx = Math.max(2, Math.min(plotWidth - bw - 2, x - bw / 2));
+            var by = plotHeight + 2;
 
             ctx.fillStyle = bgColor || '#2962ff';
             ctx.beginPath();
@@ -13180,9 +13911,10 @@ try {
             const entryPixel = chartState.coordToPixel(entryCoord);
             if (!entryPixel) return null;
 
+            const bounds = this._getHorizontalBounds(chartState, entryPixel);
             const entryY = entryPixel.y;
-            const left = entryPixel.x - this.leftOffset;
-            const right = entryPixel.x + this.rightOffset;
+            const left = bounds.left;
+            const right = bounds.right;
 
             const targetPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.targetPrice });
             const stopPixel = chartState.coordToPixel({ time: entryCoord.time, price: this.stopPrice });
@@ -13238,6 +13970,14 @@ try {
                 const entryCoord = this.coords[0];
                 const entryPixel = chartState.coordToPixel(entryCoord);
                 if (entryPixel) {
+                    var entryLogical = this._getEntryLogical(chartState);
+                    if (entryLogical !== null && chartState && typeof chartState.pixelToCoord === 'function') {
+                        var c = chartState.pixelToCoord(pixelX, entryPixel.y);
+                        if (c && c.logical !== null && c.logical !== undefined && !isNaN(c.logical)) {
+                            var diff = entryLogical - c.logical;
+                            if (diff >= 0.5) this.leftBars = diff;
+                        }
+                    }
                     const newLeftOffset = entryPixel.x - pixelX;
                     if (newLeftOffset >= 15) this.leftOffset = newLeftOffset;
                 }
@@ -13245,6 +13985,14 @@ try {
                 const entryCoord = this.coords[0];
                 const entryPixel = chartState.coordToPixel(entryCoord);
                 if (entryPixel) {
+                    var entryLogical = this._getEntryLogical(chartState);
+                    if (entryLogical !== null && chartState && typeof chartState.pixelToCoord === 'function') {
+                        var c = chartState.pixelToCoord(pixelX, entryPixel.y);
+                        if (c && c.logical !== null && c.logical !== undefined && !isNaN(c.logical)) {
+                            var diff = c.logical - entryLogical;
+                            if (diff >= 0.5) this.rightBars = diff;
+                        }
+                    }
                     const newRightOffset = pixelX - entryPixel.x;
                     if (newRightOffset >= 15) this.rightOffset = newRightOffset;
                 }

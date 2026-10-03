@@ -1,0 +1,46 @@
+\chapter{WebSocket \& Real-Time Architecture}
+\label{ch:websocket_realtime}
+
+\section{Real-Time WebSocket Invariant}
+LEVERAGE manages two distinct real-time WebSocket endpoints configured with dedicated connection managers: \code{/ws/dashboard} and \code{/ws/user} \cite{ref:websocket_manager}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/main.py:5980-6120}, \code{backend/websocket_manager.py:1-150}, \code{nginx.conf:78-95}.
+\end{citationbox}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{0.95\linewidth}{!}{
+\begin{tikzpicture}[
+    node distance=10mm and 12mm,
+    wbox/.style={rectangle, draw=navyblue, fill=lightbg, rounded corners=2mm, minimum width=32mm, minimum height=12mm, align=center, font=\sffamily\footnotesize, thick},
+    arrow/.style={-{Latex[length=2.5mm]}, thick, color=navyblue},
+    darrow/.style={{Latex[length=2mm]}-{Latex[length=2mm]}, thick, color=accentblue}
+]
+
+\node[wbox] (client) {Client Browser\\(\code{dashboard.js})};
+\node[wbox, right=16mm of client] (nginx) {Nginx Proxy\\(Port 80 Upgrade)};
+\node[wbox, right=16mm of nginx] (mgr) {FastAPI WS Manager\\(\code{/ws/dashboard})};
+\node[wbox, below=14mm of mgr] (angel) {Angel One WS V2\\(Live Market Ticks)};
+
+\draw[darrow] (client) -- node[above, font=\sffamily\scriptsize] {HTTP Upgrade} (nginx);
+\draw[darrow] (nginx) -- node[above, font=\sffamily\scriptsize] {Proxy Pass} (mgr);
+\draw[arrow] (angel) -- node[right, font=\sffamily\scriptsize] {Live Tick Dispatch} (mgr);
+\draw[arrow] (mgr) |- node[near end, above, font=\sffamily\scriptsize] {Broadcast LTP / Forming Bars} ([yshift=-4mm]client.east);
+
+\end{tikzpicture}
+}
+\caption{Real-Time WebSocket Subscription and Broadcast Sequence}
+\label{fig:websocket_sequence}
+\end{figure}
+
+\section{Connection Lifecycle \& Error Handling}
+\begin{enumerate}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Handshake \& Upgrade}: Nginx intercepts the WebSocket handshake and proxies with headers \code{Upgrade: $http_upgrade} and \code{Connection: "upgrade"} with a 3600-second read timeout (\code{nginx.conf:90}).
+    \item \textbf{Client-Side Exponential Backoff}:
+    When a network disconnect occurs, \code{frontend/stock-logic.js:1618} and \code{frontend/dashboard.js:64} initiate reconnect attempts with exponential backoff:
+    \begin{equation}
+        \mathrm{Delay} = \min\left( 30000\text{ ms}, \, 5000 \times 1.5^{\mathrm{attempts}}\text{ ms} \right)
+    \end{equation}
+    \item \textbf{Disconnect Cleanup}: Client disconnections cleanly remove connection handles from \code{ConnectionManager.active_connections}, preventing memory leaks.
+\end{enumerate}

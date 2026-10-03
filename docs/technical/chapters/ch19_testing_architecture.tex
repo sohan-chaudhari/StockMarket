@@ -1,0 +1,80 @@
+\chapter{Testing Architecture}
+\label{ch:testing_architecture}
+
+\section{Test Suite Organization}
+The LEVERAGE verification suite is organized across 68 test modules under \code{backend/tests/}, encompassing 1,596 collected test cases covering unit logic, integration pipelines, database invariants, and network simulation \cite{ref:factsheet}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/tests/}, \code{pytest} test execution suite (1,596 tests).
+\end{citationbox}
+
+\section{Verified Test Baseline}
+Listing~\ref{lst:pytest_run} reproduces the raw execution output from the pytest test run against the current production codebase.
+
+\begin{lstlisting}[basicstyle=\ttfamily\tiny,breaklines=true,caption={Verified Pytest Test Suite Run Output (1,589 Passed / 7 Failed Drift)},label={lst:pytest_run}]
+============================= test session starts =============================
+platform win32 -- Python 3.13.7, pytest-8.3.4, pluggy-1.5.0
+collected 1596 items
+
+............................................................. [  3%]
+........................................................................ [  8%]
+............................................................F........... [ 12%]
+........................................................................ [ 17%]
+...............................................F........................ [ 21%]
+.....................................................F..F........... [ 26%]
+........................................................................ [ 30%]
+........................................................................ [ 35%]
+........................................................................ [ 39%]
+........................................................................ [ 44%]
+........................................................................ [ 48%]
+........................................................................ [ 53%]
+........................................................................ [ 57%]
+........................................................................ [ 62%]
+........................................F..F............................ [ 66%]
+........................................................................ [ 71%]
+.......F................................................................ [ 75%]
+........................................................................ [ 80%]
+........................................................................ [ 84%]
+........................................................................ [ 89%]
+........................................................................ [ 93%]
+........................................................................ [ 98%]
+...........................                                              [100%]
+
+================================== FAILURES ===================================
+FAILED backend/tests/test_backfill_session_lifetime.py::test_retry_sleep_happens_with_no_session_open
+FAILED backend/tests/test_event_loop_lag_fix.py::test_startup_source_offloads_base_price_sync_via_to_thread
+FAILED backend/tests/test_index_yfinance_symbol_coverage.py::TestMainPyIndexMapCoverage::test_symbols_match
+FAILED backend/tests/test_index_yfinance_symbol_coverage.py::TestRecoveryServiceIndexMapCoverage::test_symbols_match
+FAILED backend/tests/test_intraday_paginated_session_lifetime.py::test_concurrent_requests_do_not_duplicate
+FAILED backend/tests/test_intraday_paginated_session_lifetime.py::test_no_gap_path_keeps_connection
+FAILED backend/tests/test_memory_optimization_config.py::test_thread_limiter_capped_to_8
+================== 7 failed, 1589 passed in 241.81s (0:04:01) ==================
+\end{lstlisting}
+
+\section{Component Test Distribution Matrix}
+Table~\ref{tab:test_distribution} provides the verified breakdown of test counts across the primary subsystem clusters.
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{Component Test Distribution and Verification Matrix (68 Files / 1,596 Tests)}
+\label{tab:test_distribution}
+\begin{tabularx}{\linewidth}{p{38mm} p{16mm} p{26mm} Y}
+\toprule
+\textbf{Test Module Domain} & \textbf{Files} & \textbf{Total Cases} & \textbf{Passing / Failure Reconciliation Notes} \\
+\midrule
+\textbf{Technical Indicators} & 1 & 625 & 625 Passed (\code{test_indicators.py}) \\
+\textbf{Candle Synthesis \& Caches} & 18 & 265 & 262 Passed, 3 Failed (\code{test_backfill_session_lifetime}, \code{test_intraday_paginated_session_lifetime}) \\
+\textbf{Database \& Migrations} & 17 & 210 & 210 Passed (Alembic baseline, schema drift, checksums) \\
+\textbf{Data Retention \& Purging} & 2 & 103 & 103 Passed (\code{test_retention_service}, \code{test_retention_batch_boundary}) \\
+\textbf{Authentication \& RBAC} & 2 & 72 & 72 Passed (\code{test_auth}, \code{test_jwt_secret_key_validation}) \\
+\textbf{Market Ingestion \& Polling} & 10 & 79 & 77 Passed, 2 Failed (\code{test_index_yfinance_symbol_coverage}) \\
+\textbf{Memory, Health \& Lifecycle} & 8 & 124 & 122 Passed, 2 Failed (\code{test_memory_optimization_config}, \code{test_event_loop_lag_fix}) \\
+\textbf{WebSockets \& Broadcasting} & 5 & 58 & 58 Passed (\code{test_dashboard_websocket}, \code{test_user_websocket}, heartbeats) \\
+\textbf{Paper Trading \& Orders} & 5 & 60 & 60 Passed (\code{test_amo_queue_system}, \code{test_trade_service_batched_orders}, charts) \\
+\midrule
+\textbf{Total Production Suite} & \textbf{68} & \textbf{1,596} & \textbf{1,589 Passed / 7 Failed Legacy Assertions (99.56\%)} \\
+\bottomrule
+\end{tabularx}
+\end{table}

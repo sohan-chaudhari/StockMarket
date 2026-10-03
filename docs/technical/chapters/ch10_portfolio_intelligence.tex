@@ -1,0 +1,34 @@
+\chapter{Portfolio Intelligence}
+\label{ch:portfolio_intelligence}
+
+\section{Paper Trading Engine Architecture}
+The LEVERAGE portfolio engine provides a simulated, non-custodial paper-trading environment. Each registered user receives an initial virtual cash balance of INR 100,000 (\code{backend/models.py:85}) upon account verification.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/trade_service.py:1-420}, \code{backend/execution_engine.py:1-120}, \code{backend/models.py:130-220}, \code{frontend/portfolio.html}.
+\end{citationbox}
+
+\section{Order Types \& Schema Discrepancy Resolution}
+A core reconciliation from the repository audit resolves the order model architecture:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Position Creation}: Calling \code{POST /api/trade/order} (\code{PlaceOrderRequest}) immediately creates an \code{OPEN} position at the supplied \code{entry_price}, deducting required capital ($\mathrm{Qty} \times \mathrm{EntryPrice}$) from \code{virtual_balance} \tag{VERIFIED}.
+    \item \textbf{Order Book Structure}: The \code{orders} table functions strictly as a trigger book for child conditional orders. The \code{order_type} column is constrained to:
+    \begin{itemize}[leftmargin=4mm]
+        \item \code{'TP'}: Take Profit trigger order.
+        \item \code{'SL'}: Stop Loss trigger order.
+        \item \code{'AMO_ENTRY'}: After Market Order entry trigger.
+    \end{itemize}
+    \item Standalone ``Market vs Limit'' order entries do not exist in the database; all entries are direct position openings.
+\end{itemize}
+
+\section{Real-Time Automated Execution Engine}
+The execution daemon (\code{backend/execution_engine.py:30-120}) runs continuously every \textbf{2.0 seconds} during active market hours (\code{09:15--15:30 IST}):
+\begin{align}
+    \text{Long Exit (TP Hit)}: &\quad \mathrm{CMP} \ge \mathrm{TargetPrice} \implies \text{Close with } \text{P\&L} = (\mathrm{CMP} - \mathrm{Entry}) \times \mathrm{Qty} \\
+    \text{Long Exit (SL Hit)}: &\quad \mathrm{CMP} \le \mathrm{StopLoss} \implies \text{Close with } \text{P\&L} = (\mathrm{CMP} - \mathrm{Entry}) \times \mathrm{Qty} \\
+    \text{Short Exit (TP Hit)}: &\quad \mathrm{CMP} \le \mathrm{TargetPrice} \implies \text{Close with } \text{P\&L} = (\mathrm{Entry} - \mathrm{CMP}) \times \mathrm{Qty} \\
+    \text{Short Exit (SL Hit)}: &\quad \mathrm{CMP} \ge \mathrm{StopLoss} \implies \text{Close with } \text{P\&L} = (\mathrm{Entry} - \mathrm{CMP}) \times \mathrm{Qty}
+\end{align}
+
+\section{Position Modification Constraints}
+To prevent algorithmic spam and ensure trading discipline, TP/SL adjustments are capped at a maximum of 3 modifications per position (\code{MAX_TP_SL_EDITS = 3} in \code{backend/trade_service.py:283}, \tag{GATE-06}).

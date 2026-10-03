@@ -1046,7 +1046,8 @@ class SnappingEngine {
 
     // Get snapped (x, y) for a given pixel position
     snap(x, y, chartState) {
-        if (!chartState) return { x: x, y: y };
+        if (!this.isActive) return { x: x, y: y, snapped: false };
+        if (!chartState) return { x: x, y: y, snapped: false };
 
         var logical = null;
         var mousePrice = null;
@@ -1086,17 +1087,19 @@ class SnappingEngine {
 
         if (!candle) return { x: x, y: y };
 
-        // Build snap candidates: Open, High, Low, Close (TradingView-parity snaps to wicks & body)
+        // Build snap candidates: High (top wick), Low (bottom wick), Open (body), Close (body)
+        var isBullish = candle.close >= candle.open;
         var candidates = [
-            { price: candle.open, label: 'O' },
-            { price: candle.high, label: 'H' },
-            { price: candle.low, label: 'L' },
-            { price: candle.close, label: 'C' },
+            { price: candle.high, label: 'Wick High (H)', type: 'wick_high' },
+            { price: candle.low, label: 'Wick Low (L)', type: 'wick_low' },
+            { price: candle.open, label: isBullish ? 'Body Open (O)' : 'Body Open (O)', type: 'body_open' },
+            { price: candle.close, label: isBullish ? 'Body Close (C)' : 'Body Close (C)', type: 'body_close' }
         ];
 
         var bestPrice = null;
         var minPriceDiff = Infinity;
         var bestLabel = '';
+        var bestCandidateType = '';
 
         for (var i = 0; i < candidates.length; i++) {
             var val = candidates[i].price;
@@ -1106,12 +1109,11 @@ class SnappingEngine {
                 minPriceDiff = diff;
                 bestPrice = val;
                 bestLabel = candidates[i].label;
+                bestCandidateType = candidates[i].type;
             }
         }
 
-        if (bestPrice == null) return { x: x, y: y };
-
-        console.log('[SnappingEngine.snap] mousePrice:', mousePrice, 'idx:', idx, 'bestPrice:', bestPrice);
+        if (bestPrice == null) return { x: x, y: y, snapped: false };
 
         var snappedY = null;
         if (window.bigCandleSeries && typeof window.bigCandleSeries.priceToCoordinate === 'function') {
@@ -1140,7 +1142,7 @@ class SnappingEngine {
             }
         }
 
-        return { x: snappedX, y: snappedY, snapped: true, value: bestPrice, label: bestLabel };
+        return { x: snappedX, y: snappedY, snapped: true, value: bestPrice, label: bestLabel, candidateType: bestCandidateType, candle: candle, logical: idx };
     }
 
     // Get snap indicator data for rendering (shows the snap circle)

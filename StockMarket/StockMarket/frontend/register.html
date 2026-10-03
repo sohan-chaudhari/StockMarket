@@ -14,6 +14,7 @@
 
 <body>
     <div class="container">
+
         <!-- Header -->
         <div class="header">
             <div class="logo"><img src="logo-white.svg" alt="Leverage"></div>
@@ -62,6 +63,8 @@
 
         <!-- ==================== SIGNUP PAGE ==================== -->
         <div id="signupPage" class="card">
+            <!-- Close / Back button inside card -->
+            <button type="button" class="auth-close-btn" onclick="handleAuthClose()" aria-label="Close" title="Close">&times;</button>
             <h2 class="card-title">Create Account</h2>
             <div id="signupMessage"></div>
             <form onsubmit="handleSignup(event)" method="POST" action="#">
@@ -694,6 +697,25 @@
                 showMessage('resetMessage', 'Connection error');
                 setLoading('resetBtn', 'resetBtnText', false, 'Update Password');
             }
+        }
+
+        function handleAuthClose() {
+            // Priority 1: ?from= or ?redirect= param passed by the page that linked here
+            var params = new URLSearchParams(window.location.search);
+            var from = params.get('from') || params.get('redirect');
+            if (from) {
+                window.location.href = from;
+                return;
+            }
+            // Priority 2: sessionStorage saved before redirect
+            var saved = sessionStorage.getItem('auth_return_url');
+            if (saved) {
+                sessionStorage.removeItem('auth_return_url');
+                window.location.href = saved;
+                return;
+            }
+            // Fallback: home
+            window.location.href = 'index.html';
         }
     </script>
 </body>

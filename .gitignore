@@ -37,3 +37,9 @@ Thumbs.db
 celerybeat-schedule*
 .backfill*
 nul
+
+# Local tools & binaries
+tools/
+*.exe
+*.zip
+

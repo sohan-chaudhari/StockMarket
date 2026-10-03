@@ -1,0 +1,42 @@
+\chapter{Repository File Reference}
+\label{app:file_reference}
+
+\section{Primary Subsystem Files}
+Table~\ref{tab:file_inventory} maps the primary modules and assets comprising the LEVERAGE platform.
+
+\begin{table}[H]
+\centering
+\small
+\sffamily
+\renewcommand{\arraystretch}{0.92}
+\caption{Key Codebase Modules and Architecture Roles}
+\label{tab:file_inventory}
+\begin{tabularx}{\linewidth}{p{44mm} p{30mm} Y p{22mm}}
+\toprule
+\textbf{File Path} & \textbf{Subsystem Domain} & \textbf{Primary Responsibility} & \textbf{Status} \\
+\midrule
+\code{backend/main.py} & Entry Point \& Routing & FastAPI app, lifespan tasks, routes, WS handlers & \tag{VERIFIED} \\
+\code{backend/gunicorn.conf.py} & ASGI Master & Hard-pinned \code{workers=1}, max requests, timeouts & \tag{VERIFIED} \\
+\code{backend/database.py} & Database Layer & Engine initialization, connection pool 20+30, IST & \tag{VERIFIED} \\
+\code{backend/models.py} & Relational Models & SQLAlchemy ORM declarations (Candle, User, etc.) & \tag{VERIFIED} \\
+\code{backend/schemas.py} & Data Validation & Pydantic request/response schemas & \tag{VERIFIED} \\
+\code{backend/auth.py} & Security Core & JWT decoding, bcrypt password hashing, lockout & \tag{VERIFIED} \\
+\code{backend/aggregator.py} & Candle Synthesis & Multi-timeframe bar builder \& flush worker & \tag{VERIFIED} \\
+\code{backend/candle_cache.py} & Caching Tier & L1/L2 LRU candle cache (\code{MAX_L2=5000}) & \tag{VERIFIED} \\
+\code{backend/live_timeframe_manager.py} & Forming Candle Core & Live higher-timeframe forming candle managers & \tag{VERIFIED} \\
+\code{backend/trade_service.py} & Paper Trading & Position creation, validation, manual close, TP/SL & \tag{VERIFIED} \\
+\code{backend/execution_engine.py} & Automated Execution & 2s background async polling loop for TP/SL hits & \tag{VERIFIED} \\
+\code{backend/indicator_service.py} & Quantitative Math & Vectorized RSI, MACD, BB, ATR, Supertrend & \tag{VERIFIED} \\
+\code{backend/price_poller.py} & Market Ingestion & REST fallback polling with exponential backoff & \tag{VERIFIED} \\
+\code{backend/recovery_service.py} & Data Recovery & On-demand gap backfill queue worker & \tag{VERIFIED} \\
+\code{backend/validation_service.py} & Integrity Checks & OHLC sanity validation suite & \tag{VERIFIED} \\
+\code{backend/websocket_manager.py} & Real-Time Broadcast & Client connection managers for dashboard \& user WS & \tag{VERIFIED} \\
+\code{frontend/index.html} & Dashboard UI & Main market overview, index ticker strip & \tag{VERIFIED} \\
+\code{frontend/stock.html} & Workstation UI & Interactive stock chart, trading modal, positions & \tag{VERIFIED} \\
+\code{frontend/tv-datafeed.js} & Chart Datafeed & TradingView JS API Datafeed bridge & \tag{VERIFIED} \\
+\code{frontend/cache.js} & Client Cache & IndexedDB persistent local candle caching & \tag{VERIFIED} \\
+\code{nginx.conf} & Reverse Proxy & Port 80 ingress, static files, WebSocket proxy & \tag{VERIFIED} \\
+\code{docker-compose.yml} & Container Spec & App and Nginx services definition & \tag{VERIFIED} \\
+\bottomrule
+\end{tabularx}
+\end{table}

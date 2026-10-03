@@ -1,4 +1,4 @@
-"""LEVERAGE + SCANX unified launcher.
+﻿"""LEVERAGE + SCANX unified launcher.
 
 Starts both backends and stays in the foreground until Ctrl+C.
 
@@ -28,6 +28,10 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 venv_python = os.path.join(project_root, "venv", "Scripts", "python.exe")
 if not os.path.exists(venv_python):
     venv_python = os.path.join(project_root, "venv", "bin", "python")
+if not os.path.exists(venv_python):
+    inner_venv = os.path.join(project_root, "StockMarket", "venv", "Scripts", "python.exe")
+    if os.path.exists(inner_venv):
+        venv_python = inner_venv
 PYTHON_EXE = venv_python if os.path.exists(venv_python) else sys.executable
 
 
@@ -208,3 +212,4 @@ if __name__ == "__main__":
             except Exception:
                 pass
         log("Services stopped.")
+

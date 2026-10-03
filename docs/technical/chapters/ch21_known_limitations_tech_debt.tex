@@ -1,0 +1,24 @@
+\chapter{Known Limitations \& Technical Debt}
+\label{ch:limitations_debt}
+
+\section{Documented System Limitations}
+In accordance with the absolute accuracy policy, known constraints of the LEVERAGE architecture are explicitly cataloged.
+
+\subsection{Confirmed Limitations}
+\begin{enumerate}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Single-Worker Scaling Ceiling}: Because forming candle state and viewed ticker sets reside in process RAM, horizontal scaling across multiple ASGI workers without an external pub/sub tier (e.g. Redis) is not supported in the current release \tag{VERIFIED}.
+    \item \textbf{In-Memory Subscription Cap}: Total active WebSocket subscriptions are capped at 2,000 concurrent symbols (\tag{GATE-07}). Viewing $>2,000$ tickers simultaneously triggers LRU eviction.
+    \item \textbf{Synchronous Database Driver}: SQLAlchemy models use the synchronous \code{psycopg2-binary} driver running via AnyIO worker threads rather than native \code{asyncpg}, requiring thread pool bounding to manage memory \tag{VERIFIED}.
+\end{enumerate}
+
+\subsection{Areas Requiring Live AWS Validation}
+\begin{enumerate}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{High-Volume Market Open Volatility}: Behavior under 09:15 IST opening burst on a 1 vCPU / 1 GB RAM EC2 instance requires continuous telemetry validation \tag{UNCERTAIN}.
+    \item \textbf{Third-Party Broker Latency}: Angel One SmartAPI WebSocket reconnections and token refresh lifecycles require live production monitoring \tag{UNCERTAIN}.
+\end{enumerate}
+
+\subsection{Planned Technical Debt Remediation}
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item Update the 7 legacy test assertions to align with production thread limiter, index token mappings, and prefill scheduling \tag{PLANNED}.
+    \item Integrate Content Security Policy (CSP) enforcement after migrating inline scripts and styles \tag{PLANNED}.
+\end{itemize}

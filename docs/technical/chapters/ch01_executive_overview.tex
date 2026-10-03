@@ -1,0 +1,60 @@
+\chapter{Executive Overview}
+\label{ch:executive_overview}
+
+\section{Platform Mission \& Operational Scope}
+\textbf{LEVERAGE} is a high-performance, real-time stock-market intelligence, charting, and simulated paper-trading platform purpose-built for the Indian Equity Markets (National Stock Exchange --- NSE and Bombay Stock Exchange --- BSE) \cite{ref:main_py}. The platform serves active retail traders, quantitative market analysts, and proprietary trading desks by combining institutional-grade multi-timeframe candlestick generation, advanced technical screener algorithms, sub-millisecond price delivery, and automated risk-controlled trade simulation.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/main.py:427}, \code{frontend/index.html:8}, \code{backend/gunicorn.conf.py:1}.
+\end{citationbox}
+
+\section{Core Capabilities}
+\begin{enumerate}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Low-Latency Market Ingestion}: Direct integration with Angel One SmartAPI WebSocket V2 for streaming live market ticks, backed by automatic REST polling fallback and historical gap-filling engines.
+    \item \textbf{Multi-Timeframe Streaming Synthesis}: Real-time aggregation of continuous tick streams into discrete timeframe bars (\code{1m}, \code{5m}, \code{15m}, \code{1h}, \code{1d}) with Indian Standard Time (IST, UTC+05:30) trading calendar alignment.
+    \item \textbf{Interactive Workstation \& Multi-Chart Canvas}: TradingView Advanced Charts JS API and native Lightweight Charts canvas rendering with client-side IndexedDB caching.
+    \item \textbf{Quantitative Indicator Engine}: Vectorized calculations of Wilder's RSI, MACD, Bollinger Bands, ATR, Supertrend, Stochastic Oscillators, and intraday VWAP.
+    \item \textbf{Automated Paper Trading \& Risk Gates}: Non-custodial virtual balance trading (INR 100,000 initial allocation) with automated 2.0-second background execution loops enforcing Take Profit (TP) and Stop Loss (SL) triggers.
+    \item \textbf{High-Density Multi-Tier Caching}: L1 in-memory ring buffers, L2 LRU candle caches (5,000 entries), and pre-serialized byte-stream serialization serving 5,500+ equity tickers in $<5\text{ms}$.
+\end{enumerate}
+
+\section{System Coordinates \& Runtime Environment}
+Table~\ref{tab:system_coordinates} specifies the exact verified technologies, package versions, and operational boundaries of the LEVERAGE platform.
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{LEVERAGE System Runtime Coordinates}
+\label{tab:system_coordinates}
+\begin{tabularx}{\linewidth}{p{32mm} p{36mm} Y p{22mm}}
+\toprule
+\textbf{Component} & \textbf{Technology} & \textbf{Purpose \& Architecture} & \textbf{Status} \\
+\midrule
+\textbf{Language Runtime} & Python (CPython) 3.13.7 & Backend API, asynchronous event loop, workers & \tag{VERIFIED} \\
+\textbf{API Framework} & FastAPI 0.133.0 & Async REST routing, Pydantic validation, WS & \tag{VERIFIED} \\
+\textbf{ASGI Toolkit} & Starlette 1.3.1 & Request pipeline, middleware, WebSocket core & \tag{VERIFIED} \\
+\textbf{ASGI Server} & Uvicorn 0.34.0 & High-concurrency async worker engine & \tag{VERIFIED} \\
+\textbf{WSGI Supervisor} & Gunicorn 26.2.0 & Single master process supervising 1 worker & \tag{VERIFIED} \\
+\textbf{ORM Layer} & SQLAlchemy 2.0.45 & Connection pool, relational mapping & \tag{VERIFIED} \\
+\textbf{DB Driver} & psycopg2-binary 2.9.11 & PostgreSQL adapter dynamically linked to libpq5 & \tag{VERIFIED} \\
+\textbf{Database Engine} & PostgreSQL 16 & Relational candle, user, and order store & \tag{VERIFIED} \\
+\textbf{Data Validation} & Pydantic 2.10.6 & Strict request/response schema parsing & \tag{VERIFIED} \\
+\textbf{Broker Ingestion} & smartapi-python 1.3.5 & Angel One SmartAPI REST \& WebSocket V2 client & \tag{VERIFIED} \\
+\textbf{Market Fallback} & yfinance 0.2.50 & Secondary historical candle \& gap recovery & \tag{VERIFIED} \\
+\textbf{Cryptography} & bcrypt 5.0.0 & Salted password hashing & \tag{VERIFIED} \\
+\textbf{Token Standards} & python-jose 3.5.0 & RFC 7519 HS256 JWT access tokens & \tag{VERIFIED} \\
+\textbf{Rate Limiter} & slowapi 0.1.9 & In-memory token-bucket API rate limiter & \tag{VERIFIED} \\
+\textbf{Reverse Proxy} & Nginx 1.27-alpine & Port 80 reverse proxy, WebSocket upgrade & \tag{VERIFIED} \\
+\textbf{Frontend UI} & Native ES6 \& Canvas & Multi-page UI with TradingView JS API integration & \tag{VERIFIED} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Target Deployment Architecture}
+The production deployment profile is specifically calibrated for resource-constrained, single-node cloud environments:
+\begin{itemize}[leftmargin=6mm,itemsep=1.5mm]
+    \item \textbf{Target Infrastructure}: AWS Lightsail or AWS EC2 (\code{t4g.micro} / \code{t3.micro}) with 1 vCPU, 1 GB RAM, and Ubuntu 24.04 LTS \cite{ref:deploy_guide}.
+    \item \textbf{Single-Worker Invariant}: Hard-pinned to 1 Gunicorn Uvicorn worker (\code{workers = 1}) to eliminate inter-process cache divergence and redundant broker WebSocket sessions.
+    \item \textbf{Memory Hardening}: Enforced glibc heap arena restriction (\code{MALLOC_ARENA_MAX=2}) and AnyIO thread pool limiter (\code{total_tokens = 64}) preventing multi-threaded RSS memory bloat.
+\end{itemize}

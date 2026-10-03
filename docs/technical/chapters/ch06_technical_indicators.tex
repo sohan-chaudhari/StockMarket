@@ -1,0 +1,82 @@
+\chapter{Technical Indicators \& Quantitative Analytics}
+\label{ch:technical_indicators}
+
+\section{Indicator Service Mathematical Formulations}
+Technical indicators are calculated server-side in \code{backend/indicator_service.py} using vectorized \code{pandas} and \code{numpy} routines \cite{ref:indicator_service}.
+
+\begin{citationbox}
+\textbf{Source Verification:} \code{backend/indicator_service.py:1-280}, \code{backend/requirements.txt:4-5}.
+\end{citationbox}
+
+\subsection{Relative Strength Index (RSI)}
+Calculated with Wilder's smoothed moving average ($N=14$):
+\begin{align}
+    \Delta P_t &= \mathrm{Close}_t - \mathrm{Close}_{t-1} \\
+    U_t &= \max(\Delta P_t, 0), \quad D_t = \max(-\Delta P_t, 0) \\
+    \overline{U}_t &= \frac{13 \cdot \overline{U}_{t-1} + U_t}{14}, \quad \overline{D}_t = \frac{13 \cdot \overline{D}_{t-1} + D_t}{14} \\
+    \mathrm{RS}_t &= \frac{\overline{U}_t}{\overline{D}_t}, \quad \mathrm{RSI}_t = 100 - \frac{100}{1 + \mathrm{RS}_t}
+\end{align}
+
+\subsection{Moving Average Convergence Divergence (MACD)}
+Calculated with standard 12, 26, 9 exponential moving averages:
+\begin{align}
+    \operatorname{EMA}_k(\mathrm{Close})_t &= \alpha \cdot \mathrm{Close}_t + (1 - \alpha) \cdot \operatorname{EMA}_k(\mathrm{Close})_{t-1}, \quad \alpha = \frac{2}{k+1} \\
+    \mathrm{MACD}_{\mathrm{line}} &= \operatorname{EMA}_{12}(\mathrm{Close}) - \operatorname{EMA}_{26}(\mathrm{Close}) \\
+    \mathrm{Signal}_{\mathrm{line}} &= \operatorname{EMA}_{9}(\mathrm{MACD}_{\mathrm{line}}) \\
+    \mathrm{Histogram} &= \mathrm{MACD}_{\mathrm{line}} - \mathrm{Signal}_{\mathrm{line}}
+\end{align}
+
+\subsection{Bollinger Bands}
+Period $N=20$, standard deviation multiplier $K=2$:
+\begin{align}
+    \mu_t &= \operatorname{SMA}_{20}(\mathrm{Close})_t = \frac{1}{20} \sum_{i=0}^{19} \mathrm{Close}_{t-i} \\
+    \sigma_t &= \sqrt{\frac{1}{20} \sum_{i=0}^{19} (\mathrm{Close}_{t-i} - \mu_t)^2} \\
+    \mathrm{UpperBand}_t &= \mu_t + 2\sigma_t, \quad \mathrm{LowerBand}_t = \mu_t - 2\sigma_t
+\end{align}
+
+\subsection{Average True Range (ATR)}
+Calculated over 14 periods with Wilder's smoothing:
+\begin{align}
+    \mathrm{TR}_t &= \max\left( \mathrm{High}_t - \mathrm{Low}_t, \, |\mathrm{High}_t - \mathrm{Close}_{t-1}|, \, |\mathrm{Low}_t - \mathrm{Close}_{t-1}| \right) \\
+    \mathrm{ATR}_t &= \frac{13 \cdot \mathrm{ATR}_{t-1} + \mathrm{TR}_t}{14}
+\end{align}
+
+\subsection{Supertrend}
+Calculated using 10-period ATR with multiplier $M=3.0$:
+\begin{align}
+    \mathrm{BasicUpper}_t &= \frac{\mathrm{High}_t + \mathrm{Low}_t}{2} + 3.0 \cdot \mathrm{ATR}_{10, t} \\
+    \mathrm{BasicLower}_t &= \frac{\mathrm{High}_t + \mathrm{Low}_t}{2} - 3.0 \cdot \mathrm{ATR}_{10, t}
+\end{align}
+Dynamic trend flipping occurs when $\mathrm{Close}_t$ crosses the active trailing band.
+
+\subsection{Stochastic Oscillator}
+Period $N=14$, $\%K$ smoothing 3, $\%D$ smoothing 3:
+\begin{align}
+    \%K_{\mathrm{raw}, t} &= \frac{\mathrm{Close}_t - \min_{14}(\mathrm{Low})}{\max_{14}(\mathrm{High}) - \min_{14}(\mathrm{Low})} \times 100 \\
+    \%K_t &= \operatorname{SMA}_3(\%K_{\mathrm{raw}})_t, \quad \%D_t = \operatorname{SMA}_3(\%K)_t
+\end{align}
+
+\section{Indicator Inventory \& Verification Matrix}
+Table~\ref{tab:indicator_inventory} catalogs the verified status of all analytical engines in LEVERAGE.
+
+\begin{table}[htbp]
+\centering
+\small
+\sffamily
+\caption{Technical Indicators Inventory and Implementation Status}
+\label{tab:indicator_inventory}
+\begin{tabularx}{\linewidth}{p{26mm} p{24mm} p{28mm} Y p{22mm}}
+\toprule
+\textbf{Indicator} & \textbf{Parameters} & \textbf{Outputs} & \textbf{Source Location} & \textbf{Status} \\
+\midrule
+\textbf{SMA / EMA} & Periods 20, 50, 200 & Single series & \code{indicator_service.py:37} & \tag{VERIFIED} \\
+\textbf{RSI} & $N=14$ & Oscillator (0--100) & \code{indicator_service.py:47} & \tag{VERIFIED} \\
+\textbf{MACD} & 12, 26, 9 & Line, Signal, Hist & \code{indicator_service.py:58} & \tag{VERIFIED} \\
+\textbf{Bollinger Bands} & $N=20, K=2.0$ & Upper, Mid, Lower & \code{indicator_service.py:78} & \tag{VERIFIED} \\
+\textbf{ATR} & $N=14$ & Volatility value & \code{indicator_service.py:120} & \tag{VERIFIED} \\
+\textbf{Supertrend} & $N=10, M=3.0$ & Trend, Band & \code{indicator_service.py:180} & \tag{VERIFIED} \\
+\textbf{Stochastic} & 14, 3, 3 & $\%K, \%D$ & \code{indicator_service.py:240} & \tag{VERIFIED} \\
+\textbf{VWAP} & Cumulative & Volume-weighted line & \code{indicator_service.py:280} & \tag{VERIFIED} \\
+\bottomrule
+\end{tabularx}
+\end{table}
