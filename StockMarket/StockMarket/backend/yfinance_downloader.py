@@ -60,17 +60,17 @@ YF_RETRY_INTERVALS: Dict[YFErrorClass, float] = {
 
 # Maximum retry attempts for transient errors before escalating
 MAX_RETRY_ATTEMPTS = {
-    YFErrorClass.DELISTED:  1,    # Don't retry — immediately mark inactive
-    YFErrorClass.NOT_FOUND: 1,    # Don't retry
-    YFErrorClass.NETWORK:   3,    # Retry 3 times
-    YFErrorClass.RATE_LIMIT: 2,   # Retry twice after waiting
-    YFErrorClass.EMPTY:     2,    # Retry twice
-    YFErrorClass.TIMEOUT:   3,    # Retry 3 times
-    YFErrorClass.UNKNOWN:   2,    # Retry twice
+    YFErrorClass.DELISTED:  0,
+    YFErrorClass.NOT_FOUND: 0,
+    YFErrorClass.NETWORK:   0,
+    YFErrorClass.RATE_LIMIT: 0,
+    YFErrorClass.EMPTY:     0,
+    YFErrorClass.TIMEOUT:   0,
+    YFErrorClass.UNKNOWN:   0,
 }
 
 # Base backoff seconds for exponential backoff
-BASE_BACKOFF = 2.0
+BASE_BACKOFF = 0.5
 
 
 def classify_yfinance_error(exc: Exception, result=None) -> YFErrorClass:
@@ -84,6 +84,8 @@ def classify_yfinance_error(exc: Exception, result=None) -> YFErrorClass:
         return YFErrorClass.TIMEOUT
 
     msg = str(exc).lower()
+    if "expecting value" in msg or "jsondecode" in msg or "blocked" in msg:
+        return YFErrorClass.RATE_LIMIT
     if "possibly delisted" in msg or "delisted" in msg:
         return YFErrorClass.DELISTED
     if "no price data found" in msg or "not found" in msg or "no data" in msg:

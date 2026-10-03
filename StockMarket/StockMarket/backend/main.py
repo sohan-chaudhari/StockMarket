@@ -5259,7 +5259,8 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     # Acquire semaphore (separate pool for background tasks)
     sem = _yf_bg_semaphore if use_bg_semaphore else _yf_semaphore
     _monitoring["yfinance_semaphore_total_waits"] += 1
-    acquired = sem.acquire(blocking=True, timeout=30)
+    sem_timeout = 8 if use_bg_semaphore else 2
+    acquired = sem.acquire(blocking=True, timeout=sem_timeout)
     if not acquired:
         _monitoring["yfinance_semaphore_timeouts"] += 1
         print(f"[YFRateLimit] Timeout fetching {yf_ticker} — returning stale data")
@@ -5267,10 +5268,8 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
             return _yf_intraday_cache[cache_key][1]
         return []
     try:
-        # Increased timeout 3s→10s: a 3s timeout caused valid stocks to be blacklisted
-        # on any day Yahoo Finance was slightly slow, showing "no data" for 2-10 minutes.
         df, error = yf_downloader.download_single(
-            yf_ticker, period=yf_period, interval=interval, timeout=10
+            yf_ticker, period=yf_period, interval=interval, timeout=4
         )
     finally:
         sem.release()
