@@ -43,3 +43,7 @@ tools/
 *.exe
 *.zip
 
+
+*.dump
+*.sql.gz
+*.gz

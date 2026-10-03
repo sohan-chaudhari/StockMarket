@@ -982,8 +982,7 @@ def generate_csrf_token():
     return secrets.token_hex(32)
 
 @app.get("/api/csrf-token")
-
-def get_csrf_token_endpoint(response: Response):
+async def get_csrf_token_endpoint(response: Response):
 
     """Generate CSRF token and set cookie."""
 
@@ -2102,7 +2101,7 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
         now_ist = datetime.now(IST)
 
         def _fetch_daily():
-            acquired = _yf_semaphore.acquire(blocking=True, timeout=15)
+            acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
             if not acquired:
                 print(f"[Live] Timeout waiting for semaphore for daily batch ({len(yf_tickers)} tickers)")
                 return None
@@ -2114,18 +2113,21 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                     progress=False,
                     group_by="ticker"
                 )
+            except Exception as _e:
+                print(f"[Live] yfinance daily download error: {_e}")
+                return None
             finally:
                 _yf_semaphore.release()
         try:
-            df_daily = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_daily), timeout=12)
-        except asyncio.TimeoutError:
+            df_daily = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_daily), timeout=1.5)
+        except (asyncio.TimeoutError, Exception):
             print(f"[Live] yfinance daily timeout for {len(yf_tickers)} tickers")
             df_daily = None
 
         df_intraday = None
         if market_open:
             def _fetch_intraday():
-                acquired = _yf_semaphore.acquire(blocking=True, timeout=15)
+                acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
                 if not acquired:
                     print(f"[Live] Timeout waiting for semaphore for intraday batch ({len(yf_tickers)} tickers)")
                     return None
@@ -2137,11 +2139,14 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                         progress=False,
                         group_by="ticker"
                     )
+                except Exception as _e:
+                    print(f"[Live] yfinance intraday download error: {_e}")
+                    return None
                 finally:
                     _yf_semaphore.release()
             try:
-                df_intraday = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_intraday), timeout=12)
-            except asyncio.TimeoutError:
+                df_intraday = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_intraday), timeout=1.5)
+            except (asyncio.TimeoutError, Exception):
                 print(f"[Live] yfinance intraday timeout for {len(yf_tickers)} tickers")
                 df_intraday = None
 
@@ -5780,16 +5785,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
 
             if fill_needed:
-                # HARDEN-XX: db session is closed during network I/O
-                db.close()
-                # Synchronous fill — user waits during loading, gets complete data on first paint
-                perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
-                # Re-query after fill so the response contains the freshly stored candles
-                q_fresh = q_base
-                if after is not None:
-                    q_fresh = q_fresh.filter(model.timestamp > _epoch_to_ist_dt(after))
-                records = q_fresh.order_by(model.timestamp.desc()).limit(limit + 1).all()
-                print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")
+                # Non-blocking async background backfill — user gets immediate DB candles without waiting
+                if background_tasks is not None:
+                    background_tasks.add_task(perform_on_demand_backfill, clean_ticker, interval, fill_start, now)
+                else:
+                    threading.Thread(target=perform_on_demand_backfill, args=(clean_ticker, interval, fill_start, now), daemon=True).start()
+                print(f"[GapFill] Dispatched background fill for {clean_ticker} {interval} from {fill_start}")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
 
