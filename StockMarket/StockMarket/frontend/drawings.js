@@ -1398,11 +1398,11 @@ try {
 
             // Sync with chart native crosshair to display official price on right Y-axis and date on bottom X-axis
             var chart = window.bigChart || window.chart;
-            var candleSeries = window.bigCandleSeries || window.mainSeries || (chart && chart._candleSeries);
+            var targetSeries = window.bigWhitespaceSeries || window.bigCandleSeries || window.mainSeries || (chart && chart._candleSeries);
             var coord = chartState.pixelToCoord(this.mobileReticle.x, this.mobileReticle.y);
-            if (chart && candleSeries && this.mobileReticle.price != null && coord && coord.time != null) {
+            if (chart && targetSeries && this.mobileReticle.price != null && coord && coord.time != null) {
                 try {
-                    chart.setCrosshairPosition(this.mobileReticle.price, coord.time, candleSeries);
+                    chart.setCrosshairPosition(this.mobileReticle.price, coord.time, targetSeries);
                 } catch(e) {}
             }
 

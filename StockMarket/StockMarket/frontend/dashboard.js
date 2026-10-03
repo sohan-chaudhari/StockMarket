@@ -2143,8 +2143,7 @@ async function initBigChart() {
     upColor: '#089981', downColor: '#f23645',
     borderDownColor: '#f23645', borderUpColor: '#089981',
     wickDownColor: '#f23645', wickUpColor: '#089981',
-    wickVisible: true,    // always show wicks regardless of bar width
-    thinBars: false,      // prevent switching to thin-line mode that hides wicks
+    wickVisible: true,
     priceFormat: { type: 'price', minMove: 0.01 }
   });
 
