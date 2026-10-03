@@ -12,11 +12,14 @@ from SmartApi import SmartConnect
 import pyotp
 import time
 from datetime import datetime
+import sys
 from dotenv import load_dotenv
 import pathlib
 
-# Load environment variables from backend/.env
+# Load environment variables from backend/.env and ensure backend is in sys.path
 backend_dir = pathlib.Path(__file__).parent.resolve()
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 env_path = backend_dir / ".env"
 load_dotenv(dotenv_path=env_path)
 
