@@ -2793,12 +2793,6 @@ _DIST_BUCKETS = [
 ]
 
 
-def _load_52w_ranges():
-    """Per-ticker 52-week high/low from daily history, cached 6h.
-
-    Only the *range* comes from the DB. The comparison against it happens
-    per-request using live WebSocket prices, so the result stays real-time even
-    though the daily candle sync runs once per day.
 _52w_loading = False
 
 def _async_load_52w_ranges():
