@@ -282,4 +282,13 @@
       return (Date.now() - lastMessageTime) < 45000;
     }
   };
+
+  // Auto-connect on script load so live price streaming starts immediately
+  try {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { window.DashboardWS.start(); });
+    } else {
+      window.DashboardWS.start();
+    }
+  } catch (e) {}
 }());
