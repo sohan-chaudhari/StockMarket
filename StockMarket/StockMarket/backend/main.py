@@ -1087,17 +1087,6 @@ def get_all_stocks(db: Session = Depends(get_db)):
 
     stocks = db.query(models.StockMetadata).all()
 
-    # Fetch latest 1D close for every ticker in one query so search results show real prices
-    from sqlalchemy import text as _sa_text
-    try:
-        rows = db.execute(_sa_text(
-            "SELECT DISTINCT ON (ticker) ticker, close FROM candles "
-            "WHERE timeframe='1D' AND close > 0 ORDER BY ticker, timestamp DESC"
-        )).fetchall()
-        latest_close = {r[0]: float(r[1]) for r in rows}
-    except Exception:
-        latest_close = {}
-
     market_prices = {}
     try:
         market_prices = _get_all_market_prices()
@@ -1108,7 +1097,7 @@ def get_all_stocks(db: Session = Depends(get_db)):
     for s in stocks:
         tkr_clean = s.ticker.upper().replace('.NS', '').replace('.BO', '')
         pdata = market_prices.get(tkr_clean, {})
-        base_price = pdata.get('current') or latest_close.get(s.ticker) or s.base_price or 0.0
+        base_price = pdata.get('current') or s.base_price or 0.0
         chg = pdata.get('change', 0.0)
         chg_pct = pdata.get('change_pct', 0.0)
         results.append({
