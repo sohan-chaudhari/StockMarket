@@ -2799,25 +2799,24 @@ def _load_52w_ranges():
     Only the *range* comes from the DB. The comparison against it happens
     per-request using live WebSocket prices, so the result stays real-time even
     though the daily candle sync runs once per day.
-    """
-    with _52w_cache_lock:
-        cached, ts = _52w_cache["data"], _52w_cache["ts"]
-    if cached is not None and (time.time() - ts) < 21600:
-        return cached
+_52w_loading = False
 
-    ranges = {}
+def _async_load_52w_ranges():
+    global _52w_loading
+    if _52w_loading:
+        return
+    _52w_loading = True
     try:
+        ranges = {}
         from database import SessionLocal as _S
         from sqlalchemy import text as _txt
         s = _S()
         try:
-            # Window is anchored to the newest date present, not CURRENT_DATE, so a
-            # lagging daily sync still yields a full 12-month window.
             rows = s.execute(_txt("""
                 SELECT ticker, MAX(high), MIN(low), COUNT(*)
                 FROM candles
                 WHERE timeframe = '1D'
-                  AND timestamp >= (SELECT MAX(timestamp) FROM candles WHERE timeframe = '1D') - INTERVAL '365 days'
+                  AND timestamp >= CURRENT_DATE - INTERVAL '365 days'
                   AND high > 0 AND low > 0
                 GROUP BY ticker
                 HAVING COUNT(*) >= 60
@@ -2827,14 +2826,25 @@ def _load_52w_ranges():
                     ranges[tkr] = (float(hi), float(lo))
         finally:
             s.close()
+        with _52w_cache_lock:
+            _52w_cache["data"] = ranges
+            _52w_cache["ts"] = time.time()
         print(f"[Internals] Loaded 52w ranges for {len(ranges)} tickers")
     except Exception as e:
         print(f"[Internals] 52w range load failed: {e}")
+    finally:
+        _52w_loading = False
 
+
+def _load_52w_ranges():
+    """Per-ticker 52-week high/low from daily history, cached 6h."""
     with _52w_cache_lock:
-        _52w_cache["data"] = ranges
-        _52w_cache["ts"] = time.time()
-    return ranges
+        cached, ts = _52w_cache["data"], _52w_cache["ts"]
+    if cached is not None and (time.time() - ts) < 21600:
+        return cached
+    # Non-blocking background loader
+    threading.Thread(target=_async_load_52w_ranges, daemon=True).start()
+    return cached or {}
 
 
 def _dist_bucket_index(pct: float) -> int:
@@ -2845,31 +2855,15 @@ def _dist_bucket_index(pct: float) -> int:
 
 
 def _distribution_from_db():
-    """Fallback when the WS carries no ticks: latest vs previous daily close."""
+    """Fallback when the WS carries no ticks: cached market prices."""
     pairs = []
     try:
-        from database import SessionLocal as _S
-        from sqlalchemy import text as _txt
-        s = _S()
-        try:
-            rows = s.execute(_txt("""
-                WITH ranked AS (
-                    SELECT ticker, close,
-                           ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) AS rn
-                    FROM candles
-                    WHERE timeframe = '1D'
-                      AND timestamp >= (SELECT MAX(timestamp) FROM candles WHERE timeframe = '1D') - INTERVAL '30 days'
-                      AND close > 0
-                )
-                SELECT a.ticker, a.close, b.close
-                FROM ranked a
-                JOIN ranked b ON b.ticker = a.ticker AND b.rn = 2
-                WHERE a.rn = 1
-            """)).fetchall()
-            for tkr, cur, prev in rows:
-                pairs.append((tkr, float(cur), float(prev)))
-        finally:
-            s.close()
+        p_map = _get_all_market_prices()
+        for tkr, p in p_map.items():
+            cur = _safe_float(p.get('current') or p.get('current_price'))
+            prev = _safe_float(p.get('prev_close'))
+            if cur > 0 and prev > 0:
+                pairs.append((tkr, cur, prev))
     except Exception as e:
         print(f"[Internals] DB distribution fallback failed: {e}")
     return pairs
