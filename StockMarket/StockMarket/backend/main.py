@@ -1085,7 +1085,11 @@ def get_all_stocks(db: Session = Depends(get_db)):
     if _all_stocks_cache_bytes is not None and (now - _all_stocks_cache_ts) < _ALL_STOCKS_CACHE_TTL:
         return Response(content=_all_stocks_cache_bytes, media_type="application/json")
 
-    stocks = db.query(models.StockMetadata).all()
+    stocks = db.query(models.StockMetadata).filter(models.StockMetadata.is_active == True).all()
+    if not stocks:
+        stocks = db.query(models.StockMetadata).filter(models.StockMetadata.exchange.in_(['NSE', 'BSE', 'INDEX', 'NSE_INDEX'])).limit(3000).all()
+    if not stocks:
+        stocks = db.query(models.StockMetadata).limit(3000).all()
 
     market_prices = {}
     try:
