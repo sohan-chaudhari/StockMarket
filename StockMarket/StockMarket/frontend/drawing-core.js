@@ -3563,6 +3563,38 @@ class DrawingEngine {
         });
     }
 
+    /**
+     * Decide whether a drawing must be painted BENEATH the candle layer.
+     *
+     * Only genuine "below-candle" objects (emojis / watermarks / anything the
+     * object definition flags with behindCandles) qualify. Plain drawings
+     * return null from getObjectDef() and must render above the candles.
+     *
+     * This replaced an `instanceof` check whose right-hand side silently fell
+     * back to the `Object` constructor whenever the EmojiDrawing class
+     * reference was unavailable. Since `x instanceof Object` is true for every
+     * drawing, EVERY drawing was treated as below-candle, which forced
+     * drawVisibleCandlesOverlay() to repaint the candles on the drawing overlay
+     * (with its own barSpacing*0.75 body width) on every redraw, visibly
+     * changing the candle width.
+     */
+    static isBelowCandleLayer(d) {
+        if (!d) return false;
+        var objDef = (typeof d.getObjectDef === 'function') ? d.getObjectDef() : null;
+        if (objDef && objDef.defaults &&
+            (objDef.defaults.behindCandles === true || !!objDef.defaults.emoji)) {
+            return true;
+        }
+        var EmojiCls = (window.DrawingClasses && window.DrawingClasses.EmojiDrawing) || null;
+        if (EmojiCls && d instanceof EmojiCls) return true;
+        if (d.model) {
+            var L = window.Layer || {};
+            if (d.model.layer === L.DRAWINGS_BEHIND || d.model.layer === L.BACKGROUND) return true;
+        }
+        if (d.style && d.style.behindCandles) return true;
+        return false;
+    }
+
     // Main render: sort by zIndex, filter visible, draw in layer order
     // NOTE: caller (ToolManager.redraw) is responsible for DPR scaling.
     // This method does NOT scale — it renders in the caller's transform space.
@@ -3592,10 +3624,7 @@ class DrawingEngine {
         var aboveDrawings = [];
         for (var i = 0; i < sorted.length; i++) {
             var d = sorted[i];
-            var isBelow = (d instanceof (window.EmojiDrawing || Object)) || 
-                          (d.getObjectDef && d.getObjectDef() && d.getObjectDef().geometry === 3) ||
-                          (d.model && (d.model.layer === 'drawings_below' || d.model.layer === 'background')) ||
-                          (d.style && d.style.behindCandles);
+            var isBelow = DrawingEngine.isBelowCandleLayer(d);
             if (isBelow) {
                 belowDrawings.push(d);
             } else {

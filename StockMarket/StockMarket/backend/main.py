@@ -1434,7 +1434,7 @@ import math
 
 @app.post("/api/trade/place-order", dependencies=[Depends(validate_csrf)])
 
-async def place_order(
+def place_order(
 
     order: schemas.PlaceOrderRequest,
 
@@ -1557,9 +1557,11 @@ async def user_websocket_endpoint(websocket: WebSocket):
 
         user_id = payload.get("user_id")
 
-        with database.SessionLocal() as db:
-            user = db.query(models.User).filter(models.User.user_id == user_id).first()
-            is_active = user.is_active if user else False
+        def _load_user_active():
+            with database.SessionLocal() as db:
+                u = db.query(models.User).filter(models.User.user_id == user_id).first()
+                return u, (u.is_active if u else False)
+        user, is_active = await asyncio.to_thread(_load_user_active)
 
         if not user or not is_active:
 
@@ -1640,7 +1642,7 @@ async def user_websocket_endpoint(websocket: WebSocket):
         except: pass
 
 @app.get("/api/portfolio/closed-positions")
-async def get_closed_positions(
+def get_closed_positions(
     page: int = 1, limit: int = 20,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
@@ -1691,7 +1693,7 @@ async def get_closed_positions(
     return result
 
 @app.get("/api/portfolio/transactions")
-async def get_transactions(
+def get_transactions(
 
     page: int = 1,
 
@@ -1951,6 +1953,235 @@ _live_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 # ordinary requests (measured /api/market-movers at 10s+ during startup).
 _bg_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="bgjob")
 
+
+# ── P0.2: background yfinance refresh (keeps external fetches off request paths) ──
+# Tickers with no local quote are refreshed in the background so a cold request
+# never waits on Yahoo Finance. Duplicate-refresh protection: at most one
+# in-flight refresh per ticker at any time.
+_yf_refresh_inflight: set = set()
+_yf_refresh_inflight_lock = threading.Lock()
+
+
+async def _yf_fetch_prices(yf_eligible: List[str], market_open: bool) -> Dict[str, Dict]:
+    """Blocking yfinance fallback for tickers with no local quote.
+
+    Performs network I/O with up to ~3s of bounded waits and MUST therefore run
+    as a background task -- never awaited from a request handler. Returns
+    {raw_ticker: price_dict} (empty dict when nothing could be resolved).
+    """
+    out: Dict[str, Dict] = {}
+    yf_tickers = []
+    for t in yf_eligible:
+        t = t.strip().upper()
+        if t in INDEX_MAP:
+            yf_tickers.append(INDEX_MAP[t])
+        elif "FINNIFTY" in t:
+            yf_tickers.append("NIFTY_FIN_SERVICE.NS")
+        elif t.startswith("^"):
+            yf_tickers.append(t)
+        elif "." in t:
+            yf_tickers.append(t)
+        else:
+            yf_tickers.append(f"{t}.NS")
+
+    loop = asyncio.get_running_loop()
+    now_ist = datetime.now(IST)
+
+    def _fetch_daily():
+        acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
+        if not acquired:
+            print(f"[Live] Timeout waiting for semaphore for daily batch ({len(yf_tickers)} tickers)")
+            return None
+        try:
+            return yf.download(
+                tickers=yf_tickers,
+                period="5d",
+                interval="1d",
+                progress=False,
+                group_by="ticker"
+            )
+        except Exception as _e:
+            print(f"[Live] yfinance daily download error: {_e}")
+            return None
+        finally:
+            _yf_semaphore.release()
+
+    try:
+        df_daily = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_daily), timeout=1.5)
+    except (asyncio.TimeoutError, Exception):
+        print(f"[Live] yfinance daily timeout for {len(yf_tickers)} tickers")
+        df_daily = None
+
+    df_intraday = None
+    if market_open:
+        def _fetch_intraday():
+            acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
+            if not acquired:
+                print(f"[Live] Timeout waiting for semaphore for intraday batch ({len(yf_tickers)} tickers)")
+                return None
+            try:
+                return yf.download(
+                    tickers=yf_tickers,
+                    period="1d",
+                    interval="5m",
+                    progress=False,
+                    group_by="ticker"
+                )
+            except Exception as _e:
+                print(f"[Live] yfinance intraday download error: {_e}")
+                return None
+            finally:
+                _yf_semaphore.release()
+        try:
+            df_intraday = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_intraday), timeout=1.5)
+        except (asyncio.TimeoutError, Exception):
+            print(f"[Live] yfinance intraday timeout for {len(yf_tickers)} tickers")
+            df_intraday = None
+
+    for t in yf_eligible:
+        raw = t.strip().upper()
+        yf_key = INDEX_MAP.get(raw)
+        if yf_key is None:
+            if raw.startswith('^'):
+                yf_key = raw
+            elif "FINNIFTY" in raw:
+                yf_key = "NIFTY_FIN_SERVICE.NS"
+            elif "." in raw:
+                yf_key = raw
+            else:
+                yf_key = f"{raw}.NS"
+        try:
+            # Get prev_close from daily data
+            prev_close_val = 0
+            if df_daily is not None and not df_daily.empty:
+                if isinstance(df_daily.columns, pd.MultiIndex):
+                    if yf_key in df_daily.columns.get_level_values(0):
+                        daily_col = df_daily[yf_key]
+                    else:
+                        daily_col = None
+                else:
+                    daily_col = df_daily
+                if daily_col is not None:
+                    daily_col = daily_col.dropna(how='all')
+                    prev_row = daily_col.iloc[-2] if len(daily_col) > 1 else None
+                    if prev_row is not None:
+                        prev_close_val = _safe_float(prev_row.get("Close", prev_row.get("close", 0)))
+
+            # Get current price from intraday data (if market open) or daily data
+            close_val = 0
+            open_val = 0
+            high_val = 0
+            low_val = 0
+            vol = 0
+            source_col = None
+            if df_intraday is not None and not df_intraday.empty:
+                if isinstance(df_intraday.columns, pd.MultiIndex):
+                    if yf_key in df_intraday.columns.get_level_values(0):
+                        source_col = df_intraday[yf_key]
+                else:
+                    source_col = df_intraday
+            if source_col is None and df_daily is not None and not df_daily.empty:
+                if isinstance(df_daily.columns, pd.MultiIndex):
+                    if yf_key in df_daily.columns.get_level_values(0):
+                        source_col = df_daily[yf_key]
+                else:
+                    source_col = df_daily
+            if source_col is not None:
+                source_col = source_col.dropna(how='all')
+                last_row = source_col.iloc[-1] if not source_col.empty else None
+                if last_row is not None:
+                    close_val = _safe_float(last_row.get("Close", last_row.get("close", 0)))
+                    # When intraday (5m) data is available, compute daily OHLC across ALL bars
+                    if df_intraday is not None and not df_intraday.empty:
+                        first_row = source_col.iloc[0] if not source_col.empty else None
+                        if first_row is not None:
+                            open_val = _safe_float(first_row.get("Open", first_row.get("open", 0)))
+                        if isinstance(source_col, pd.DataFrame) and "High" in source_col.columns:
+                            high_val = _safe_float(source_col["High"].max())
+                        elif isinstance(source_col, pd.DataFrame) and "high" in source_col.columns:
+                            high_val = _safe_float(source_col["high"].max())
+                        if isinstance(source_col, pd.DataFrame) and "Low" in source_col.columns:
+                            low_val = _safe_float(source_col["Low"].min())
+                        elif isinstance(source_col, pd.DataFrame) and "low" in source_col.columns:
+                            low_val = _safe_float(source_col["low"].min())
+                    else:
+                        open_val = _safe_float(last_row.get("Open", last_row.get("open", 0)))
+                        high_val = _safe_float(last_row.get("High", last_row.get("high", 0)))
+                        low_val = _safe_float(last_row.get("Low", last_row.get("low", 0)))
+                    vol = _safe_int(last_row.get("Volume", last_row.get("volume", 0)))
+
+            if close_val > 0:
+                change = round(close_val - prev_close_val, 2) if prev_close_val else 0
+                change_pct = round(((close_val - prev_close_val) / prev_close_val) * 100, 2) if prev_close_val and prev_close_val != 0 else 0
+                out[raw] = {
+                    "current_price": close_val,
+                    "current": close_val,
+                    "open": open_val,
+                    "prev_close": prev_close_val,
+                    "high": high_val,
+                    "low": low_val,
+                    "volume": vol,
+                    "volume_display": _fmt_volume(vol),
+                    "change": change,
+                    "change_pct": change_pct,
+                    "_source": "yfinance",
+                    "_ts": time.time(),
+                }
+            else:
+                _mark_yfinance_failed(raw)
+        except Exception as e:
+            _mark_yfinance_failed(raw)
+            print(f"[Live] Error processing {raw}: {e}")
+    return out
+
+
+async def _yf_refresh_task(yf_eligible: List[str], market_open: bool):
+    """Background-only task: populate _live_prices_cache with fresh yfinance quotes."""
+    try:
+        fetched = await _yf_fetch_prices(yf_eligible, market_open)
+        if fetched:
+            ts_now = time.time()
+            for k, v in fetched.items():
+                _live_prices_cache[k] = {"data": v, "ts": ts_now}
+                _ticker_last_update[k] = ts_now
+            if len(_live_prices_cache) > LIVE_CACHE_MAX:
+                with _live_prices_cache_lock_dict_mutex:
+                    oldest = sorted(_live_prices_cache.items(), key=lambda x: x[1]["ts"])[:len(_live_prices_cache) - LIVE_CACHE_MAX]
+                    for k, _ in oldest:
+                        del _live_prices_cache[k]
+    except Exception as e:
+        print(f"[Live] background yfinance refresh failed: {e}")
+    finally:
+        with _yf_refresh_inflight_lock:
+            for t in yf_eligible:
+                _yf_refresh_inflight.discard(t.strip().upper())
+
+
+def _schedule_yf_refresh(tickers: List[str], market_open: bool):
+    """Fire-and-forget yfinance refresh for tickers with no local quote.
+
+    Duplicate-refresh protection: a ticker is only queued when no refresh for it
+    is already in flight. Returns immediately; never blocks the caller.
+    """
+    todo = []
+    with _yf_refresh_inflight_lock:
+        for t in tickers:
+            key = t.strip().upper()
+            if key and key not in _yf_refresh_inflight:
+                _yf_refresh_inflight.add(key)
+                todo.append(key)
+    if not todo:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_yf_refresh_task(todo, market_open))
+    except RuntimeError:
+        # No running loop (e.g. sync caller) -- release the markers we reserved.
+        with _yf_refresh_inflight_lock:
+            for k in todo:
+                _yf_refresh_inflight.discard(k)
+
+
 async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -> Dict[str, Dict]:
     prices = {}
     if not tickers:
@@ -2102,184 +2333,12 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
     if skipped_failed:
         print(f"[Live] Skipped {skipped_failed} failed/invalid tickers for yfinance")
 
-    if not yf_eligible:
-        return prices
-
-    yf_tickers = []
-    for t in yf_eligible:
-        t = t.strip().upper()
-        if t in INDEX_MAP:
-            yf_tickers.append(INDEX_MAP[t])
-        elif "FINNIFTY" in t:
-            yf_tickers.append("NIFTY_FIN_SERVICE.NS")
-        elif t.startswith("^"):
-            yf_tickers.append(t)
-        elif "." in t:
-            yf_tickers.append(t)
-        else:
-            yf_tickers.append(f"{t}.NS")
-
-    try:
-        loop = asyncio.get_running_loop()
-        now_ist = datetime.now(IST)
-
-        def _fetch_daily():
-            acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
-            if not acquired:
-                print(f"[Live] Timeout waiting for semaphore for daily batch ({len(yf_tickers)} tickers)")
-                return None
-            try:
-                return yf.download(
-                    tickers=yf_tickers,
-                    period="5d",
-                    interval="1d",
-                    progress=False,
-                    group_by="ticker"
-                )
-            except Exception as _e:
-                print(f"[Live] yfinance daily download error: {_e}")
-                return None
-            finally:
-                _yf_semaphore.release()
-        try:
-            df_daily = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_daily), timeout=1.5)
-        except (asyncio.TimeoutError, Exception):
-            print(f"[Live] yfinance daily timeout for {len(yf_tickers)} tickers")
-            df_daily = None
-
-        df_intraday = None
-        if market_open:
-            def _fetch_intraday():
-                acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
-                if not acquired:
-                    print(f"[Live] Timeout waiting for semaphore for intraday batch ({len(yf_tickers)} tickers)")
-                    return None
-                try:
-                    return yf.download(
-                        tickers=yf_tickers,
-                        period="1d",
-                        interval="5m",
-                        progress=False,
-                        group_by="ticker"
-                    )
-                except Exception as _e:
-                    print(f"[Live] yfinance intraday download error: {_e}")
-                    return None
-                finally:
-                    _yf_semaphore.release()
-            try:
-                df_intraday = await asyncio.wait_for(loop.run_in_executor(_live_executor, _fetch_intraday), timeout=1.5)
-            except (asyncio.TimeoutError, Exception):
-                print(f"[Live] yfinance intraday timeout for {len(yf_tickers)} tickers")
-                df_intraday = None
-
-        for t in remaining:
-            raw = t.strip().upper()
-            yf_key = INDEX_MAP.get(raw)
-            if yf_key is None:
-                if raw.startswith('^'):
-                    yf_key = raw
-                elif "FINNIFTY" in raw:
-                    yf_key = "NIFTY_FIN_SERVICE.NS"
-                elif "." in raw:
-                    yf_key = raw
-                else:
-                    yf_key = f"{raw}.NS"
-            try:
-                # Get prev_close from daily data
-                prev_close_val = 0
-                if df_daily is not None and not df_daily.empty:
-                    if isinstance(df_daily.columns, pd.MultiIndex):
-                        if yf_key in df_daily.columns.get_level_values(0):
-                            daily_col = df_daily[yf_key]
-                        else:
-                            daily_col = None
-                    else:
-                        daily_col = df_daily
-                    if daily_col is not None:
-                        daily_col = daily_col.dropna(how='all')
-                        prev_row = daily_col.iloc[-2] if len(daily_col) > 1 else None
-                        if prev_row is not None:
-                            prev_close_val = _safe_float(prev_row.get("Close", prev_row.get("close", 0)))
-
-                # Get current price from intraday data (if market open) or daily data
-                close_val = 0
-                open_val = 0
-                high_val = 0
-                low_val = 0
-                vol = 0
-                source_col = None
-                if df_intraday is not None and not df_intraday.empty:
-                    if isinstance(df_intraday.columns, pd.MultiIndex):
-                        if yf_key in df_intraday.columns.get_level_values(0):
-                            source_col = df_intraday[yf_key]
-                    else:
-                        source_col = df_intraday
-                if source_col is None and df_daily is not None and not df_daily.empty:
-                    if isinstance(df_daily.columns, pd.MultiIndex):
-                        if yf_key in df_daily.columns.get_level_values(0):
-                            source_col = df_daily[yf_key]
-                    else:
-                        source_col = df_daily
-                if source_col is not None:
-                    source_col = source_col.dropna(how='all')
-                    last_row = source_col.iloc[-1] if not source_col.empty else None
-                    if last_row is not None:
-                        close_val = _safe_float(last_row.get("Close", last_row.get("close", 0)))
-                        # When intraday (5m) data is available, compute daily OHLC across ALL bars
-                        if df_intraday is not None and not df_intraday.empty:
-                            first_row = source_col.iloc[0] if not source_col.empty else None
-                            if first_row is not None:
-                                open_val = _safe_float(first_row.get("Open", first_row.get("open", 0)))
-                            if isinstance(source_col, pd.DataFrame) and "High" in source_col.columns:
-                                high_val = _safe_float(source_col["High"].max())
-                            elif isinstance(source_col, pd.DataFrame) and "high" in source_col.columns:
-                                high_val = _safe_float(source_col["high"].max())
-                            if isinstance(source_col, pd.DataFrame) and "Low" in source_col.columns:
-                                low_val = _safe_float(source_col["Low"].min())
-                            elif isinstance(source_col, pd.DataFrame) and "low" in source_col.columns:
-                                low_val = _safe_float(source_col["low"].min())
-                        else:
-                            open_val = _safe_float(last_row.get("Open", last_row.get("open", 0)))
-                            high_val = _safe_float(last_row.get("High", last_row.get("high", 0)))
-                            low_val = _safe_float(last_row.get("Low", last_row.get("low", 0)))
-                        vol = _safe_int(last_row.get("Volume", last_row.get("volume", 0)))
-
-                if close_val > 0:
-                    change = round(close_val - prev_close_val, 2) if prev_close_val else 0
-                    change_pct = round(((close_val - prev_close_val) / prev_close_val) * 100, 2) if prev_close_val and prev_close_val != 0 else 0
-                    prices[raw] = {
-                        "current_price": close_val,
-                        "current": close_val,
-                        "open": open_val,
-                        "prev_close": prev_close_val,
-                        "high": high_val,
-                        "low": low_val,
-                        "volume": vol,
-                        "volume_display": _fmt_volume(vol),
-                        "change": change,
-                        "change_pct": change_pct,
-                        "_source": "yfinance",
-                        "_ts": time.time(),
-                    }
-                else:
-                    _mark_yfinance_failed(raw)
-            except Exception as e:
-                _mark_yfinance_failed(raw)
-                print(f"[Live] Error processing {raw}: {e}")
-    except Exception as e:
-        print(f"[Live] fetch_batch error: {e}")
-
-    ts_now = time.time()
-    for k, v in prices.items():
-        if v.get("_source") != "angel_ws" and k in final_remaining:
-            _live_prices_cache[k] = {"data": v, "ts": ts_now}
-            
-    if len(_live_prices_cache) > LIVE_CACHE_MAX:
-        with _live_prices_cache_lock_dict_mutex:
-            oldest = sorted(_live_prices_cache.items(), key=lambda x: x[1]["ts"])[:len(_live_prices_cache) - LIVE_CACHE_MAX]
-            for k, _ in oldest:
-                del _live_prices_cache[k]
+    # P0.2: Never await external yfinance on the request path. Every ticker in
+    # yf_eligible has no local quote (AngelOne WS / in-memory cache / DB) --
+    # otherwise it would have been resolved above. Refresh those misses in the
+    # background and return the locally-resolved prices immediately.
+    if yf_eligible:
+        _schedule_yf_refresh(yf_eligible, market_open)
 
     now_ts = time.time()
     for tkr in prices:
@@ -2772,8 +2831,11 @@ def _movers_prices_from_ticks() -> dict:
     return _get_all_market_prices()
 
 
-async def refresh_movers_snapshot(cap_filter: str = "all", sector: str = None):
-    """Recompute movers snapshots for all cap tiers. Safe to call at startup and from the timer."""
+def _refresh_movers_snapshot_sync(cap_filter: str = "all", sector: str = None):
+    """Synchronous body of refresh_movers_snapshot(). Runs OFF the event loop
+    (via asyncio.to_thread) because _get_all_market_prices() performs a
+    synchronous DB refresh and _build_movers() scans the whole ticker universe
+    -- both would otherwise block every request for the duration."""
     try:
         prices = _get_all_market_prices()
         now_ts = time.time()
@@ -2783,14 +2845,20 @@ async def refresh_movers_snapshot(cap_filter: str = "all", sector: str = None):
             results[cap] = data
             with _movers_snapshot_lock:
                 _movers_snapshots[cap] = {"data": data, "ts": now_ts}
-        
+
         if sector and sector.strip().lower() != "all":
             return _build_movers(prices, cap_filter=cap_filter, sector_filter=sector)
-            
+
         return results.get(cap_filter, results.get("all"))
     except Exception as e:
         print(f"[Movers] snapshot refresh failed: {e}")
         return None
+
+
+async def refresh_movers_snapshot(cap_filter: str = "all", sector: str = None):
+    """Recompute movers snapshots for all cap tiers. Safe to call at startup and from the timer.
+    The synchronous price/DB/CPU work runs in a worker thread so this never blocks the event loop."""
+    return await asyncio.to_thread(_refresh_movers_snapshot_sync, cap_filter, sector)
 
 
 @app.get("/api/market-movers")
@@ -3449,17 +3517,18 @@ async def news_search(query: str, limit: int = 20):
         # 1. Resolve company name from in-memory STOCK_META or database StockMetadata
         meta_name = (STOCK_META.get(ticker_no_ns) or {}).get("name", "")
         if not meta_name:
-            db = database.SessionLocal()
-            try:
-                meta = db.query(models.StockMetadata).filter(
-                    models.StockMetadata.ticker.in_([ticker_no_ns, f"{ticker_no_ns}.NS", f"{ticker_no_ns}.BO", q_clean.upper()])
-                ).first()
-                if meta and meta.name:
-                    meta_name = meta.name
-            except Exception:
-                pass
-            finally:
-                db.close()
+            def _lookup_meta_name():
+                db = database.SessionLocal()
+                try:
+                    meta = db.query(models.StockMetadata).filter(
+                        models.StockMetadata.ticker.in_([ticker_no_ns, f"{ticker_no_ns}.NS", f"{ticker_no_ns}.BO", q_clean.upper()])
+                    ).first()
+                    return meta.name if (meta and meta.name) else ""
+                except Exception:
+                    return ""
+                finally:
+                    db.close()
+            meta_name = (await asyncio.to_thread(_lookup_meta_name)) or meta_name
 
         # Common known ticker mappings
         KNOWN_TICKER_NAMES = {
@@ -3718,32 +3787,32 @@ async def news_search(query: str, limit: int = 20):
             a.pop("ts", None)
         return _arts[:limit]
 
-    # Run the blocking feedparser calls in a thread so we don't block the event loop
-    # Inflight deduplication: reuse running task for identical cache_key
-    created = False
+    # P0.2: never await the external Google News fetch on the request path.
+    # Serve fresh cache; else serve stale cache immediately and refresh the
+    # source in the background for the next request. Deduplicated per cache_key.
+    async def _refresh_news_search():
+        """Background refresh of the Google News RSS results for this cache_key."""
+        try:
+            articles = await asyncio.to_thread(_parse_rss_queries)
+            if articles:
+                _news_search_cache[cache_key] = {"data": articles, "ts": time.time()}
+        except Exception as e:
+            print(f"[News Search] background refresh failed for '{cache_key}': {e}")
+        finally:
+            async with _news_task_lock:
+                _news_inflight_tasks.pop(cache_key, None)
+
     async with _news_task_lock:
         cached = _news_search_cache.get(cache_key)
         if cached and (time.time() - cached["ts"]) < _NEWS_SEARCH_TTL:
             return cached["data"]
         task = _news_inflight_tasks.get(cache_key)
         if task is None or task.done():
-            task = asyncio.create_task(asyncio.to_thread(_parse_rss_queries))
-            _news_inflight_tasks[cache_key] = task
-            created = True
+            _news_inflight_tasks[cache_key] = asyncio.create_task(_refresh_news_search())
 
-    try:
-        articles = await task
-    finally:
-        if created:
-            async with _news_task_lock:
-                _news_inflight_tasks.pop(cache_key, None)
-
-    if articles:
-        _news_search_cache[cache_key] = {"data": articles, "ts": time.time()}
-        return articles
-    elif cached and cached.get("data"):
+    if cached and cached.get("data"):
         return cached["data"]
-    return articles
+    return []
 
 
 # --------------- Proxy to News Sentiment service (port 8003) ---------------
@@ -3838,10 +3907,14 @@ async def proxy_market_sentiment(db: Session = Depends(get_db)):
 
         # Fallback to last available trading day if live data is completely down
         today = date.today()
-        row = db.query(models.Candle).filter(
-            models.Candle.ticker == 'NIFTY',
-            models.Candle.timeframe == '1D',
-        ).order_by(models.Candle.timestamp.desc()).limit(2).all()
+
+        def _fallback_daily_rows():
+            return db.query(models.Candle).filter(
+                models.Candle.ticker == 'NIFTY',
+                models.Candle.timeframe == '1D',
+            ).order_by(models.Candle.timestamp.desc()).limit(2).all()
+
+        row = await asyncio.to_thread(_fallback_daily_rows)
 
         if row and len(row) > 0:
             current_day = row[0]
@@ -3896,7 +3969,7 @@ async def proxy_news_general(db: Session = Depends(get_db)):
                 res[row.ticker] = row
             return res
 
-        latest_by_ticker = fetch_latest()
+        latest_by_ticker = await asyncio.to_thread(fetch_latest)
 
         # ── Stock-level articles with sector context ──
         stock_changes = []
@@ -4114,7 +4187,7 @@ async def proxy_news_general(db: Session = Depends(get_db)):
 
 
 @app.get("/api/news/ticker/{ticker}")
-async def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
+def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
     global _news_ticker_cache
     now = time.time()
     t = ticker.strip().upper().replace('.NS', '')
@@ -4521,7 +4594,7 @@ async def _broadcast_dashboard():
 # ==================== WATCHLIST ENDPOINTS ====================
 
 @app.get("/api/watchlist", response_model=schemas.WatchlistResponse)
-async def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
+def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
     try:
         if current_user is None:
             return schemas.WatchlistResponse(watchlist=[], count=0)
@@ -4609,22 +4682,13 @@ def _fii_dii_from_db(limit=10):
         return []
 
 
-@app.get("/api/fii-dii")
-async def get_fii_dii():
-    """Fetch FII/DII data: tries NSE with session cookie first, then Moneycontrol scrape."""
-    global _fii_dii_cache
-    now = time.time()
-    
-    if _fii_dii_cache["data"] is not None and now - _fii_dii_cache["ts"] < 3600:
-        return _fii_dii_cache["data"]
-        
+async def _fii_dii_refresh_and_cache():
+    """Perform the NSE + Moneycontrol scrapes (blocking network I/O) and update the
+    in-memory cache. Runs ONLY as a background task -- never on a request path."""
     today_str = datetime.now(IST).strftime("%d-%m-%Y")
 
     # ── Attempt 1: NSE India (requires session cookie from homepage) ──
     try:
-        # 30s, not 10s: this app does blocking yfinance work on the event loop, which
-        # starves in-flight async HTTP and made both scrapes time out (they surface as
-        # an empty exception message) even while the upstream sites were healthy.
         async with httpx.AsyncClient(timeout=30) as client:
             client.headers.update({
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -4655,7 +4719,7 @@ async def get_fii_dii():
                         "net_total_cr": net,
                     })
                 if entries:
-                    _fii_dii_persist(entries, "NSE India")
+                    await asyncio.to_thread(_fii_dii_persist, entries, "NSE India")
                     res = {"entries": entries, "source": "NSE India", "last_updated": datetime.now(IST).isoformat()}
                     _fii_dii_cache["data"] = res
                     _fii_dii_cache["ts"] = time.time()
@@ -4694,7 +4758,7 @@ async def get_fii_dii():
                             "net_total_cr": dii_cash + fii_cash,
                         })
                     if entries:
-                        _fii_dii_persist(entries, "Moneycontrol")
+                        await asyncio.to_thread(_fii_dii_persist, entries, "Moneycontrol")
                         res = {"entries": entries, "source": "Moneycontrol", "last_updated": datetime.now(IST).isoformat()}
                         _fii_dii_cache["data"] = res
                         _fii_dii_cache["ts"] = time.time()
@@ -4702,10 +4766,37 @@ async def get_fii_dii():
     except Exception as e:
         print(f"[FII/DII] Moneycontrol attempt failed: {e}")
 
-    # ── Both scrapes failed: serve the last sessions we successfully stored ──
-    # Previously this overwrote the cache with an empty payload, so one flaky scrape
-    # replaced perfectly good figures with "N/A" until the next successful fetch.
-    stored = _fii_dii_from_db()
+    return None
+
+
+_fii_dii_refresh_task = None
+
+
+@app.get("/api/fii-dii")
+async def get_fii_dii():
+    """Serve FII/DII from cache/DB immediately; refresh the upstream scrapers in
+    the background. The request path never waits on NSE/Moneycontrol network I/O.
+    """
+    global _fii_dii_refresh_task
+    now = time.time()
+
+    cached = _fii_dii_cache.get("data")
+    if cached is not None and now - _fii_dii_cache["ts"] < 3600:
+        return cached
+
+    # Kick off one upstream refresh in the background (duplicate-refresh protected).
+    try:
+        if _fii_dii_refresh_task is None or _fii_dii_refresh_task.done():
+            _fii_dii_refresh_task = asyncio.create_task(_fii_dii_refresh_and_cache())
+    except RuntimeError:
+        pass
+
+    # Serve the last-known good payload immediately (stale but usable).
+    if cached is not None:
+        return cached
+
+    # No cached payload -- fall back to the last sessions persisted in the DB.
+    stored = await asyncio.to_thread(_fii_dii_from_db)
     if stored:
         res = {
             "entries": stored,
@@ -6230,13 +6321,9 @@ def _apply_screener_filters(data, sector, rsi_min, rsi_max, price_min, price_max
 _crypto_cache = {"data": None, "ts": 0.0}
 _crypto_cache_lock = threading.Lock()
 
-@app.get("/api/crypto-prices")
-async def get_crypto_prices():
-    """Return live crypto prices from CoinGecko (free, no API key needed)."""
-    now = time.time()
-    with _crypto_cache_lock:
-        if _crypto_cache["data"] and now - _crypto_cache["ts"] < 60:
-            return _crypto_cache["data"]
+async def _crypto_refresh_and_cache():
+    """Fetch CoinGecko prices and update the in-memory cache. Background-only so
+    the request path never waits on the external API."""
     try:
         import aiohttp
         ids = "bitcoin,ethereum,ripple,cardano,solana,dogecoin,polkadot,chainlink,avalanche-2,litecoin"
@@ -6267,7 +6354,34 @@ async def get_crypto_prices():
         return result
     except Exception as e:
         print(f"[Crypto] Error: {e}")
-        return _crypto_cache["data"] or []
+        return None
+
+
+_crypto_refresh_task = None
+
+
+@app.get("/api/crypto-prices")
+async def get_crypto_prices():
+    """Return live crypto prices from CoinGecko (free, no API key needed).
+
+    P0.2: serve the cache immediately; refresh CoinGecko in the background so a
+    cold request never waits on the external API.
+    """
+    global _crypto_refresh_task
+    now = time.time()
+    with _crypto_cache_lock:
+        data = _crypto_cache["data"]
+        fresh = data is not None and now - _crypto_cache["ts"] < 60
+    if fresh:
+        return data
+
+    try:
+        if _crypto_refresh_task is None or _crypto_refresh_task.done():
+            _crypto_refresh_task = asyncio.create_task(_crypto_refresh_and_cache())
+    except RuntimeError:
+        pass
+
+    return data or []
 
 def _compute_rsi(closes, period=14):
     if len(closes) < period + 1:
@@ -6329,12 +6443,12 @@ async def get_screener(
         if search:
             search_clean = search.strip().upper()
             from sqlalchemy import or_
-            rows = db.query(models.StockMetadata.ticker).filter(
+            rows = await asyncio.to_thread(lambda: db.query(models.StockMetadata.ticker).filter(
                 or_(
                     models.StockMetadata.ticker.ilike(f"%{search_clean}%"),
                     models.StockMetadata.name.ilike(f"%{search_clean}%")
                 )
-            ).distinct().limit(200).all()
+            ).distinct().limit(200).all())
             stocks = list(dict.fromkeys([r[0] for r in rows]))
         elif sector and sector.lower() not in ('', 'all', 'any'):
             sec_clean = sector.strip()
@@ -6372,9 +6486,9 @@ async def get_screener(
                 else:
                     db_conditions.append(models.StockMetadata.sector.ilike(f"%{a}%"))
 
-            db_rows = db.query(models.StockMetadata.ticker).filter(
+            db_rows = await asyncio.to_thread(lambda: db.query(models.StockMetadata.ticker).filter(
                 or_(*db_conditions)
-            ).distinct().all()
+            ).distinct().all())
             db_sec_tickers = [r[0] for r in db_rows]
 
             map_tickers = []
@@ -6386,14 +6500,14 @@ async def get_screener(
         else:
             try:
                 from sqlalchemy import text as _sa_txt
-                rows = db.execute(_sa_txt(
+                rows = await asyncio.to_thread(lambda: db.execute(_sa_txt(
                     "SELECT DISTINCT ticker FROM stock_metadata "
                     "WHERE ticker IN (SELECT DISTINCT ticker FROM candles WHERE timeframe = '1D') "
                     "ORDER BY ticker LIMIT 300"
-                )).fetchall()
+                )).fetchall())
                 stocks = list(dict.fromkeys([r[0] for r in rows]))
                 if len(stocks) < 30:
-                    rows_fallback = db.execute(_sa_txt("SELECT DISTINCT ticker FROM stock_metadata ORDER BY ticker LIMIT 300")).fetchall()
+                    rows_fallback = await asyncio.to_thread(lambda: db.execute(_sa_txt("SELECT DISTINCT ticker FROM stock_metadata ORDER BY ticker LIMIT 300")).fetchall())
                     stocks = list(dict.fromkeys(stocks + [r[0] for r in rows_fallback]))
             except Exception:
                 stocks = []
@@ -6638,7 +6752,16 @@ def _on_angel_tick(ticker: str, data: dict):
                 "change": change,
                 "change_pct": change_pct,
                 "volume": daily_volume,
-                "_source": "angel_ws",
+                # P2.4: preserve the tick's real provider and stamp a fresh
+                # receive time. Hardcoding "_source": "angel_ws" and omitting
+                # "_received_ts" here meant that after ANY tick the REST pollers'
+                # own freshness guard ("existing._source == 'angel_ws' and
+                # now - _received_ts < 2/5s") could never fire -- so an older REST
+                # snapshot could overwrite a newer WS tick. With the metadata
+                # intact, a WS tick correctly wins for its recency window while
+                # REST->REST polling is unaffected (source stays rest_poller).
+                "_source": data.get("_source") or "angel_ws",
+                "_received_ts": time.time(),
                 "_ts": time.time(),
             }
             if tick_open is not None and tick_open > 0: tick_entry["open"] = tick_open
@@ -8488,7 +8611,12 @@ from fastapi.responses import FileResponse
 async def get_stock_logo(filename: str):
     file_path = os.path.join(FRONTEND_DIR, "logos", filename)
     if os.path.isfile(file_path):
-        return FileResponse(file_path)
+        # P2.2: real logos were served without a Cache-Control header, so the
+        # browser had no freshness information and re-requested every logo on
+        # every page load (a "logo request cascade"). The generated-fallback
+        # branch below already sets max-age=86400; match it so real logos are
+        # served from the browser cache too.
+        return FileResponse(file_path, headers={"Cache-Control": "public, max-age=86400"})
     
     # Generate dynamic fallback SVG avatar with 200 OK so console never shows 404 errors
     ticker = os.path.splitext(filename)[0].upper()

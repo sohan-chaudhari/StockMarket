@@ -419,6 +419,17 @@
     // Open Positions
     var _positionLivePrices = {};
 
+    // Issue-1 fix: a position whose stored ticker is empty/placeholder must NOT
+    // be re-labelled with the ticker currently open on the chart. Legacy/unknown
+    // rows (ticker '--') were displayed as whatever stock the user happened to be
+    // viewing, which looked exactly like "the platform bought another stock".
+    // Show an explicit placeholder instead so attribution can never be wrong.
+    function _positionTicker(pos) {
+      var raw = (pos && pos.ticker != null) ? String(pos.ticker).trim() : '';
+      if (!raw || raw === '--' || raw === '—' || raw === '-') return 'UNKNOWN';
+      return raw;
+    }
+
     async function _fetchPositionLivePrices() {
       if (!window.openPositions || window.openPositions.length === 0) return;
       var tickers = window.openPositions.map(function(p){ return p.ticker; }).filter(function(t,i,s){ return t && s.indexOf(t)===i; });
@@ -513,7 +524,7 @@
           const tpStr = pos.take_profit != null ? `<span style="color:#089981; font-weight:600;">TP ₹${pos.take_profit.toFixed(2)}</span>` : '<span style="color:#555;">—</span>';
           const slStr = pos.stop_loss  != null ? `<span style="color:#FF5252; font-weight:600;">SL ₹${pos.stop_loss.toFixed(2)}</span>`  : '<span style="color:#555;">—</span>';
 
-          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const tickerDisplay = _positionTicker(pos);
           const nameDisplay   = pos.stock_name || '';
           const logoTicker = tickerDisplay.split('.')[0];
 
@@ -587,7 +598,7 @@
             ? `${pos.take_profit ? 'TP ₹' + pos.take_profit.toFixed(1) : ''}${pos.take_profit && pos.stop_loss ? ' ' : ''}${pos.stop_loss ? 'SL ₹' + pos.stop_loss.toFixed(1) : ''}`
             : '—';
 
-          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const tickerDisplay = _positionTicker(pos);
           const logoTicker = tickerDisplay.split('.')[0];
 
           return `
@@ -721,7 +732,7 @@
             reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">✋ Manual Close</span>`;
           }
 
-          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const tickerDisplay = _positionTicker(pos);
           const logoTicker = tickerDisplay.split('.')[0];
           const dateStr = pos.closed_at ? new Date(pos.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 
@@ -777,7 +788,7 @@
             reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">✋ Manual</span>`;
           }
 
-          const tickerDisplay = (pos.ticker && pos.ticker.trim() !== '--' && pos.ticker.trim() !== '—') ? pos.ticker.trim() : (window.currentTicker || 'STOCK');
+          const tickerDisplay = _positionTicker(pos);
           const logoTicker = tickerDisplay.split('.')[0];
           const dateStr = pos.closed_at ? new Date(pos.closed_at).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 

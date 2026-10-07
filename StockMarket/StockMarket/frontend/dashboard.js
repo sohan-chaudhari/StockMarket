@@ -793,6 +793,35 @@ function toTimeNum(v) {
   return 0;
 }
 
+// P1.2: Lightweight Charts' candlestick/bar colorer throws "Value is null"
+// (or "Value is undefined") at PAINT time when a bar's open/close is not a
+// finite number > 0. The initial-load path drops such bars, but the incremental
+// merge paths (lazy-load, WS-reconnect gap-fill, candle/latest) did not -- one
+// bad bar raised an uncaught error on the next repaint. Normalize OHLCV to
+// finite numbers, or return null so the caller drops the bar.
+function _sanitizeOHLCV(p) {
+  if (!p || p.time == null) return null;
+  var o = Number(p.open), h = Number(p.high), l = Number(p.low), c = Number(p.close);
+  if (!(isFinite(o) && isFinite(h) && isFinite(l) && isFinite(c))) return null;
+  if (!(o > 0 && h > 0 && l > 0 && c > 0)) return null;
+  var v = Number(p.volume);
+  return { open: o, high: h, low: l, close: c, volume: isFinite(v) ? v : 0 };
+}
+
+// P2.3: derive the per-tick bucket-volume delta from the CUMULATIVE day volume.
+// The WS/poll `volume` field is the whole day's cumulative volume (the same feed
+// the backend aggregator consumes), so a bucket's volume is the running delta
+// within the bucket. Returns {delta, base}; `base` is the new cumulative baseline
+// for the ticker (unchanged when the tick carries no usable volume).
+function _bucketVolumeDelta(prevBase, dayVol) {
+  var v = Number(dayVol);
+  if (!isFinite(v) || v <= 0) return { delta: 0, base: prevBase };
+  if (typeof prevBase === 'number' && v >= prevBase) return { delta: v - prevBase, base: v };
+  // no baseline yet (first tick / new ticker), or a reset (new session /
+  // reconnect where the cumulative counter restarted): re-baseline, no delta.
+  return { delta: 0, base: v };
+}
+
 // Convert any time value (Unix seconds, business-day object, or YYYY-MM-DD string) to epoch seconds.
 // Used by drawing-tool coordinate helpers so they work in both UTC and business-day chart modes.
 function _bdToSec(t) {
@@ -2462,6 +2491,14 @@ async function initBigChart() {
   var _isLoadingMore = false;
   var _lazyLoadSubscribed = false;
 
+  // P1.1: intraday initial-load AND lazy-load page size, in bars.
+  // Rationale: the default viewport shows the last 90 bars; this is ~6.7x that
+  // (comfortable first view + several scrollback pages), ~2x the minichart's
+  // 300-bar page, and well above the 10-bar lazy-load trigger buffer. Previously
+  // every intraday open fetched limit=15000 (~0.5 MB for 5m, ~4-6k bars) even
+  // though only ~90 bars are visible; older history now streams in on scroll.
+  var INTRADAY_PAGE_BARS = 600;
+
   function _setupLazyLoad() {
     if (!bigChart || _lazyLoadSubscribed) return;
     _lazyLoadSubscribed = true;
@@ -2474,9 +2511,9 @@ async function initBigChart() {
     if (_isLoadingMore || window._hasMoreHistoricalData === false) return;
     var range = window._loadedRange;
     if (!range || _earliestLoadedTime == null) return;
-    // Intraday sequential mode: bars use index-based time; lazy-loading would require
-    // renumbering all existing bars. Disable it — the initial API call returns all intraday data.
-    if (window._intradayBarTimes) return;
+    // P1.1: intraday is now paginated too. Older bars are fetched with the real
+    // earliest epoch and the sequential index base is rebuilt in _fetchMoreData,
+    // so lazy-load is enabled (previously disabled because it needed renumbering).
     var timeRange = bigChart.timeScale().getVisibleRange();
     if (!timeRange) return;
     var intervalMap = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600 };
@@ -2508,8 +2545,11 @@ async function initBigChart() {
     var isWeeklyMonthly = (range === '1W' || range === '1M');
     var url;
     if (isIntraday) {
+      // P1.1: display times are index-based for intraday, so _earliestLoadedTime is 0;
+      // use the true earliest loaded epoch for the "before" cursor.
+      var beforeEpochIntra = (window._intradayEarliestEpoch != null) ? window._intradayEarliestEpoch : beforeTime;
       url = '/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(ticker)
-          + '&interval=' + range + '&before=' + beforeTime + '&limit=15000';
+          + '&interval=' + range + '&before=' + beforeEpochIntra + '&limit=' + INTRADAY_PAGE_BARS;
     } else if (isWeeklyMonthly) {
       // beforeTime is a "YYYY-MM-DD" string for 1W/1M; convert to epoch seconds for the endpoint
       var _bMs = (typeof beforeTime === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(beforeTime))
@@ -2545,9 +2585,17 @@ async function initBigChart() {
           if (isIntraday) { resp.data = filterMarketHours(resp.data); }
           var _isNonIntra = ['1m','5m','15m','30m','1h'].indexOf(range) === -1;
           var incoming = resp.data.map(function (p) {
+            var s = _sanitizeOHLCV(p);
+            if (!s) return null;
             var t = _isNonIntra ? _toIST1DDate(toTimeNum(p.time)) : toTimeNum(p.time);
-            return { time: t, open: p.open, high: p.high, low: p.low, close: p.close, volume: p.volume || 0 };
-          });
+            return { time: t, open: s.open, high: s.high, low: s.low, close: s.close, volume: s.volume };
+          }).filter(function (x) { return x !== null; });
+          if (isIntraday) {
+            // P1.1: prepend older bars, rebuild the sequential index base, keep viewport.
+            _prependIntradayAndRender(incoming, resp.has_more);
+            _isLoadingMore = false;
+            return;
+          }
           var combined = _chartDataCache ? _chartDataCache.slice() : [];
           var currentLogical = bigChart.timeScale().getVisibleLogicalRange();
           var existingTimes = {};
@@ -2585,6 +2633,72 @@ async function initBigChart() {
         _isLoadingMore = false;
       })
       .catch(function () { _isLoadingMore = false; });
+  }
+
+  // P1.1: build the sequential-index display view for intraday bars.
+  // realBars: ascending [{time: epochSec, open, high, low, close, volume}].
+  // Sets the window lookup tables used by tickMarkFormatter/formatIST and the live
+  // forming-candle mapper, and returns bars whose time = index * barSecs. Extracted
+  // from _renderChartData so pagination can rebuild the index base when older
+  // history is prepended, without duplicating the mapping logic.
+  function _buildIntradayDisplay(realBars, barSecs) {
+    window._intradayBarTimes = realBars.map(function (b) { return b.time; });
+    window._intradayBarSecs  = barSecs;
+    window._intradayBarSeqMap = null;   // force rebuild against the new index base
+    window._intradayDayFirstBarMap = {};
+    var _IST_MS = 5.5 * 3600 * 1000;
+    for (var _i = 0; _i < realBars.length; _i++) {
+      var _dObj = new Date(realBars[_i].time * 1000 + _IST_MS);
+      var _dKey = _dObj.getUTCFullYear() + '-' + String(_dObj.getUTCMonth() + 1).padStart(2, '0') + '-' + String(_dObj.getUTCDate()).padStart(2, '0');
+      if (window._intradayDayFirstBarMap[_dKey] === undefined) {
+        window._intradayDayFirstBarMap[_dKey] = _i;
+      }
+    }
+    return realBars.map(function (b, i) {
+      return { time: i * barSecs, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+    });
+  }
+
+  // P1.1: merge an older intraday page (real epochs) with the currently loaded bars,
+  // rebuild the sequential display view, and keep the viewport anchored on the same
+  // bars so prepending older history does not visually jump the chart.
+  function _prependIntradayAndRender(incomingRealBars, hasMore) {
+    var barSecs = window._intradayBarSecs || 300;
+    var curReal = [];
+    if (window._intradayBarTimes && _chartDataCache) {
+      for (var i = 0; i < window._intradayBarTimes.length; i++) {
+        var c = _chartDataCache[i];
+        if (c) curReal.push({ time: window._intradayBarTimes[i], open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume });
+      }
+    }
+    var merged = curReal.concat(incomingRealBars);
+    merged.sort(function (a, b) { return a.time - b.time; });
+    var seen = {}, uniq = [];
+    merged.forEach(function (c) { if (!seen[c.time]) { seen[c.time] = true; uniq.push(c); } });
+    var addedCount = uniq.length - curReal.length;
+
+    var displayData = _buildIntradayDisplay(uniq, barSecs);
+    window._intradayEarliestEpoch = uniq.length > 0 ? uniq[0].time : null;
+    _chartDataCache = displayData;
+    window._chartCandles = _chartDataCache;
+    _earliestLoadedTime = 0;   // index-based display always starts at 0
+
+    var currentLogical = bigChart.timeScale().getVisibleLogicalRange();
+    bigCandleSeries.setData(displayData);
+    if (bigVolumeSeries) {
+      bigVolumeSeries.setData(displayData.map(function (p) {
+        return { time: p.time, value: p.volume, color: p.close >= p.open ? 'rgba(8,153,129,0.3)' : 'rgba(242,54,69,0.3)' };
+      }));
+    }
+    // The live forming candle's sequential index shifts by the number of prepended bars.
+    if (addedCount > 0 && window._formingCandles && window._formingCandles['i']) {
+      window._formingCandles['i'].time += addedCount;
+    }
+    if (window.IndicatorEngine) window.IndicatorEngine.onCandlesLoaded(displayData, window._loadedRange);
+    if (currentLogical && addedCount > 0) {
+      bigChart.timeScale().setVisibleLogicalRange({ from: currentLogical.from + addedCount, to: currentLogical.to + addedCount });
+    }
+    window._hasMoreHistoricalData = (hasMore !== false) && addedCount > 0;
   }
 
   // Shared chart data renderer (used by cache path and API path)
@@ -2628,22 +2742,10 @@ async function initBigChart() {
     var _BAR_SECS = { '1m': 60, '3m': 180, '5m': 300, '10m': 600, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 }[range];
     var displayData;
     if (!isDailyWeeklyMonthly && _BAR_SECS && unique.length > 0) {
-      window._intradayBarTimes = unique.map(function(b) { return b.time; });
-      window._intradayBarSecs  = _BAR_SECS;
-      window._intradayBarSeqMap = null;
-      window._intradayDayFirstBarMap = {};
-      var _IST_MS = 5.5 * 3600 * 1000;
-      for (var _di = 0; _di < unique.length; _di++) {
-        var _dObj = new Date(unique[_di].time * 1000 + _IST_MS);
-        var _dKey = _dObj.getUTCFullYear() + '-' + String(_dObj.getUTCMonth() + 1).padStart(2, '0') + '-' + String(_dObj.getUTCDate()).padStart(2, '0');
-        if (window._intradayDayFirstBarMap[_dKey] === undefined) {
-          window._intradayDayFirstBarMap[_dKey] = _di;
-        }
-      }
-      displayData = unique.map(function(b, i) {
-        return { time: i * _BAR_SECS, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
-      });
+      window._intradayEarliestEpoch = unique[0].time;
+      displayData = _buildIntradayDisplay(unique, _BAR_SECS);
     } else {
+      window._intradayEarliestEpoch = null;
       window._intradayBarTimes = null;
       window._intradayBarSecs  = null;
       window._intradayBarSeqMap = null;
@@ -2914,7 +3016,7 @@ async function initBigChart() {
 
     try {
       var url = '/api/stock-data/range?ticker=' + encodeURIComponent(ticker) + '&range=' + range;
-      if (['1m','5m','15m','30m','1h'].indexOf(range) !== -1)         url = '/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(ticker) + '&interval=' + range + '&limit=15000';
+      if (['1m','5m','15m','30m','1h'].indexOf(range) !== -1)         url = '/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(ticker) + '&interval=' + range + '&limit=' + INTRADAY_PAGE_BARS;
       else if (range === '1D')                                         url = '/api/stock-data/range?ticker=' + encodeURIComponent(ticker) + '&range=ALL';
       else if (range === '1W')                                         url = '/api/stock-data/weekly?ticker=' + encodeURIComponent(ticker);
       else if (range === '1M')                                         url = '/api/stock-data/monthly?ticker=' + encodeURIComponent(ticker);
@@ -3054,44 +3156,28 @@ async function initBigChart() {
       var _isMarketOpen = (_istDay >= 1 && _istDay <= 5 && _istMin >= SESSION_START_MIN && _istMin < SESSION_END_MIN);
       var isIntradayRange = ['1m','3m','5m','10m','15m','30m','1h','2h','4h'].indexOf(activeRange) !== -1;
 
-      if (_isMarketOpen && isIntradayRange && window._lastPriceUpdateMs && (now - window._lastPriceUpdateMs > 30000) && serverTs) {
-        // Fetch all candles since last known update time to fill missed data
-        // Convert local time to IST epoch seconds (DB stores IST-naive timestamps)
-        var lastUpdateUtcMs = window._lastPriceUpdateMs + (new Date().getTimezoneOffset() * 60000);
-        var sinceSec = Math.floor((lastUpdateUtcMs + 330 * 60000) / 1000);
-        fetch('/api/stock-data/intraday/since?ticker=' + encodeURIComponent(ticker) + '&interval=' + activeRange + '&since=' + sinceSec)
-          .then(function (r) { return r.json(); })
-          .then(function (missed) {
-            if (missed && missed.data) { missed = missed.data; }
-            if (!Array.isArray(missed) || missed.length === 0) return;
-              missed = filterMarketHours(missed);
-            var incoming = missed.map(function (p) {
-              return { time: toTimeNum(p.time), open: p.open, high: p.high, low: p.low, close: p.close, volume: p.volume || 0 };
-            });
-            var combined = _chartDataCache ? _chartDataCache.slice() : [];
-            var existingTimes = {};
-            combined.forEach(function (c) { existingTimes[c.time] = true; });
-            incoming.forEach(function (c) {
-              if (!existingTimes[c.time]) { combined.push(c); existingTimes[c.time] = true; }
-            });
-            combined.sort(function (a, b) { return a.time - b.time; });
-            _chartDataCache = combined;
-            window._chartCandles = _chartDataCache;
-            bigCandleSeries.setData(combined);
-            if (bigVolumeSeries) {
-              var vd = combined.map(function (p) { return { time: p.time, value: p.volume, color: p.close >= p.open ? 'rgba(8,153,129,0.3)' : 'rgba(242,54,69,0.3)' }; });
-              bigVolumeSeries.setData(vd);
-            }
-            if (window.IndicatorEngine) window.IndicatorEngine.onCandlesLoaded(combined, activeRange);
-          }).catch(function () {});
-        // Also repair forming candle from the server's latest completed candle (only for intraday during market hours)
-        fetch('/api/stock-data/candle/latest?ticker=' + encodeURIComponent(ticker) + '&interval=' + activeRange).then(function (r) { return r.json(); }).then(function (latest) {
-          if (latest && latest.time && window._formingCandles) {
-            window._formingCandles['i'] = { time: latest.time, open: latest.open, high: latest.high, low: latest.low, close: latest.close };
-            if (bigCandleSeries) bigCandleSeries.update(window._formingCandles['i']);
-            if (window.IndicatorEngine) window.IndicatorEngine.onCandleUpdate(window._formingCandles['i']);
-          }
-        }).catch(function () {});
+      // ── WS reconnect / gap reconciliation ───────────────────────────────
+      // The previous implementation fetched /api/stock-data/intraday/since and
+      // merged the returned RAW EPOCH bars straight into _chartDataCache. But
+      // _chartDataCache holds intraday bars as SEQUENTIAL INDICES (i * barSecs,
+      // produced by _buildIntradayDisplay), so the two numeric domains never
+      // aligned: missed candles were not placed on the loaded timeline, and the
+      // forming-candle seed lookup (index barTime vs epoch last-bar time) failed,
+      // re-opening the running candle at the first post-reconnect tick.
+      //
+      // Reuse the exact reconciliation every other load already uses —
+      // loadData() → /api/stock-data/intraday/paginated (server-side gap
+      // detection + backfill + authoritative forming candle) →
+      // _renderChartData() → _buildIntradayDisplay() (index remap) — instead of
+      // maintaining a second, divergent merge path. Triggered ONLY when at
+      // least one full bar of the current timeframe was actually missed, so a
+      // momentary blip does not reload the chart.
+      var _barSecsByRange = { '1m': 60, '3m': 180, '5m': 300, '10m': 600, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 };
+      var _activeBarSecs = _barSecsByRange[activeRange];
+      var _missedMs = window._lastPriceUpdateMs ? (now - window._lastPriceUpdateMs) : 0;
+      if (_isMarketOpen && isIntradayRange && _activeBarSecs && serverTs &&
+          _missedMs >= (_activeBarSecs * 1000) && typeof window.loadData === 'function') {
+        window.loadData(activeRange).catch(function () {});
       }
       window._lastPriceUpdateMs = now;
       if (wsLive.current !== undefined) {
@@ -3295,6 +3381,13 @@ async function initBigChart() {
           window._intradayBarSeqMap[snappedSec] = barTime;
         }
       }
+      // P2.3: accumulate the per-tick day-volume delta onto the current forming
+      // bucket (mirrors the backend aggregator), so the live volume bar reflects
+      // THIS bucket rather than its load-time value (usually 0 at bucket start).
+      if (!window._lastDayVolByTicker) window._lastDayVolByTicker = {};
+      var _bv = _bucketVolumeDelta(window._lastDayVolByTicker[tkr], live.volume);
+      window._lastDayVolByTicker[tkr] = _bv.base;
+      var _volDelta = _bv.delta;
       if (!window._formingCandles) window._formingCandles = {};
       if (!window._formingCandles['i'] || window._formingCandles['i'].realTime !== snappedSec) {
         // FE-05: the candle about to be replaced just completed. Append it
@@ -3341,12 +3434,20 @@ async function initBigChart() {
               : (live.current > 0 ? live.current : (window._formingCandles['i'] ? window._formingCandles['i'].close : fallbackClose)));
         var _initHigh = _seed ? Math.max(_seed.high, live.current) : Math.max(openPrice, live.current);
         var _initLow  = _seed ? Math.min(_seed.low,  live.current) : Math.min(openPrice, live.current);
-        window._formingCandles['i'] = { time: barTime, realTime: snappedSec, open: openPrice, high: _initHigh, low: _initLow, close: live.current };
+        window._formingCandles['i'] = { time: barTime, realTime: snappedSec, open: openPrice, high: _initHigh, low: _initLow, close: live.current, volume: 0 };
       }
       var fc = window._formingCandles['i'];
       fc.high = Math.max(fc.high, live.current);
       fc.low  = Math.min(fc.low,  live.current);
       fc.close = live.current;
+      // P2.3: keep the forming bucket's volume bar live (see _bucketVolumeDelta).
+      if (typeof fc.volume !== 'number' || !isFinite(fc.volume)) fc.volume = 0;
+      fc.volume += _volDelta;
+      if (bigVolumeSeries) {
+        try {
+          bigVolumeSeries.update({ time: fc.time, value: fc.volume, color: fc.close >= fc.open ? 'rgba(8,153,129,0.3)' : 'rgba(242,54,69,0.3)' });
+        } catch(e) {}
+      }
       if (bigCandleSeries && fc) { try { bigCandleSeries.update(fc); } catch(e) { /* ignore benign transition update */ } }
       if (window.IndicatorEngine) window.IndicatorEngine.onCandleUpdate(fc);
       if (pEl2) pEl2.innerText = fmtPrice(live.current);

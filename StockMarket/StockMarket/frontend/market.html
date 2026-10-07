@@ -196,6 +196,12 @@
     document.title = ticker + ' - Market - LEVERAGE';
     var chart = null, candleSeries = null;
 
+    // P1.1b: intraday initial-load page size (bars). ~4x the 150-bar Markets
+    // viewport and 3x the existing 200-bar lazy-load page. The legacy
+    // /api/stock-data/intraday endpoint is capped at 5000 bars and returned
+    // ~255-286 KB for 5m/1D; older history still streams in via _fetchMoreData.
+    var MARKET_INITIAL_BARS = 600;
+
     function fmt(p){ if(p==null)return '--'; return Number(p).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
     function fmtL(n){ if(n==null)return '--'; if(n>=10000000)return (n/10000000).toFixed(2)+' Cr'; if(n>=100000)return (n/100000).toFixed(2)+' L'; return Number(n).toLocaleString('en-IN'); }
 
@@ -293,14 +299,22 @@
 
       try{
         var url = "/api/stock-data/range?ticker="+encodeURIComponent(ticker)+"&range="+range;
-        if(range==='1D') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval=5m";
-        else if(range==='1W') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval=15m";
-        else if(range==='5m'||range==='15m'||range==='30m'||range==='1h') url = "/api/stock-data/intraday?ticker="+encodeURIComponent(ticker)+"&interval="+range;
+        // P1.1b: bound the intraday initial load to one page instead of the legacy
+        // /api/stock-data/intraday endpoint's fixed limit=5000 (which returned
+        // ~255-286 KB for 5m/1D while only ~150 bars are visible). Older history is
+        // already lazy-loaded in 200-bar pages by _fetchMoreData below, using the
+        // same paginated endpoint, so historical depth is unchanged (and no longer
+        // bounded by ChartService's per-interval cutoff).
+        if(range==='1D') url = "/api/stock-data/intraday/paginated?ticker="+encodeURIComponent(ticker)+"&interval=5m&limit="+MARKET_INITIAL_BARS;
+        else if(range==='1W') url = "/api/stock-data/intraday/paginated?ticker="+encodeURIComponent(ticker)+"&interval=15m&limit="+MARKET_INITIAL_BARS;
+        else if(range==='5m'||range==='15m'||range==='30m'||range==='1h') url = "/api/stock-data/intraday/paginated?ticker="+encodeURIComponent(ticker)+"&interval="+range+"&limit="+MARKET_INITIAL_BARS;
 
         var res = await fetch(url, {signal:signal});
         if(myLoadId!==_loadId){if(loader)loader.style.display='none';return;}
         if (!res.ok) { throw new Error('HTTP ' + res.status + ' for ' + range + ' data'); }
         var data = await res.json();
+        // Paginated endpoints return {data, has_more}; /api/stock-data/range returns a bare array.
+        if (data && data.data) data = data.data;
 
         if(myLoadId!==_loadId){if(loader)loader.style.display='none';return;}
 
@@ -355,8 +369,9 @@
       fetch(url).then(function(r){return r.json();}).then(function(resp){
         if(resp&&resp.data&&resp.data.length>0){
           var incoming=resp.data.map(function(p){
+            var s=_sanitizeOHLCV(p); if(!s)return null;
             var t=toTimeNum(p.time); if(t==null)return null;
-            return {time:Math.floor(t),open:p.open,high:p.high,low:p.low,close:p.close};
+            return {time:Math.floor(t),open:s.open,high:s.high,low:s.low,close:s.close};
           }).filter(function(p){return p!=null;});
           var combined=_chartDataCache? _chartDataCache.slice():[];
           var et={};
@@ -381,6 +396,18 @@
         var ms=new Date(v).getTime();return isNaN(ms)?0:Math.floor(ms/1000);
       }
       return 0;
+    }
+
+    // P1.2: Lightweight Charts throws "Value is null" (or "Value is undefined") at
+    // paint time if a candlestick bar's open/close is not a finite number > 0.
+    // renderChartCached already drops such bars; this applies the same predicate to
+    // the lazy-load merge so one bad bar can't raise an uncaught error on repaint.
+    function _sanitizeOHLCV(p){
+      if(!p||p.time==null)return null;
+      var o=Number(p.open),h=Number(p.high),l=Number(p.low),c=Number(p.close);
+      if(!(isFinite(o)&&isFinite(h)&&isFinite(l)&&isFinite(c)))return null;
+      if(!(o>0&&h>0&&l>0&&c>0))return null;
+      return {open:o,high:h,low:l,close:c};
     }
 
     function renderChartCached(data,range){

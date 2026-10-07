@@ -7770,6 +7770,7 @@
       (function (instanceId) {
         var inst = _instances[instanceId];
         var chip = document.createElement('div');
+        chip.setAttribute('data-indicator-instance', instanceId);
         chip.style.cssText = [
           'display:inline-flex', 'align-items:center', 'gap:7px',
           'padding:4px 10px', 'border-radius:14px',
@@ -7828,6 +7829,46 @@
         bar.appendChild(chip);
       })(id);
     }
+  }
+
+  // Issue-4: shallow equality over an indicator definition's declared params.
+  function _paramsIdentical(def, a, b) {
+    if (!def || !def.paramDefs) return false;
+    for (var k in def.paramDefs) {
+      if (a[k] !== b[k]) return false;
+    }
+    return true;
+  }
+
+  // Issue-4: find an existing instance of the same indicator type whose params
+  // match exactly. Returns its instanceId, or null when none matches.
+  // `instances` defaults to the live instance map; it is a parameter so the
+  // dedupe rule can be unit-tested in isolation.
+  function _findIdenticalInstance(typeId, params, instances) {
+    instances = instances || _instances;
+    for (var id in instances) {
+      var inst = instances[id];
+      if (inst && inst.def && inst.def.id === typeId &&
+          _paramsIdentical(inst.def, inst.params || {}, params || {})) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  // Issue-4: briefly highlight an existing indicator's card so that re-adding an
+  // already-present indicator focuses it, instead of silently doing nothing.
+  function _flashIndicatorChip(instanceId) {
+    var el = document.querySelector('[data-indicator-instance="' + instanceId + '"]');
+    if (!el) return;
+    var prevShadow = el.style.boxShadow;
+    el.style.transition = 'box-shadow 0.15s ease, transform 0.15s ease';
+    el.style.transform = 'scale(1.06)';
+    el.style.boxShadow = '0 0 0 2px #2962FF';
+    setTimeout(function () {
+      el.style.transform = '';
+      el.style.boxShadow = prevShadow || '';
+    }, 650);
   }
 
   function _chipLabel(inst) {
@@ -8270,6 +8311,19 @@
       var defaultParams = {};
       for (var k in def.paramDefs) defaultParams[k] = def.paramDefs[k].default;
       var mergedParams = Object.assign({}, defaultParams, params || {});
+
+      // Issue-4 fix: re-adding an indicator with the SAME parameters must not
+      // create a second logical instance — that was rendering a duplicate card
+      // below the chart (e.g. "RSI" added twice, both defaulting to length 14).
+      // Reuse the existing instance and focus its card instead. Instances with
+      // DIFFERENT parameters (RSI 14 vs RSI 21, EMA 9 vs EMA 21) remain fully
+      // supported and are still created as separate instances. This also
+      // collapses duplicate entries from any legacy persisted config.
+      var _dupId = _findIdenticalInstance(def.id, mergedParams);
+      if (_dupId) {
+        _flashIndicatorChip(_dupId);
+        return _dupId;
+      }
 
       // Determine color — an explicit restore color always wins so a
       // restored instance keeps the exact look it had before reload,

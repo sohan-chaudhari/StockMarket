@@ -218,8 +218,20 @@ class YFinanceDownloader:
                 self._retry_counts[clean] = 1
             self._failure_cache[clean] = (error_class, time.time())
 
-            # If permanently invalid, add to inactive list
-            if error_class in (YFErrorClass.DELISTED, YFErrorClass.NOT_FOUND):
+            # P1.3: only a genuine "possibly delisted" signal may mark a symbol
+            # permanently INACTIVE. _sync_yfinance_inactive_symbols() persists
+            # that set to stock_metadata.is_active=False, which hides the ticker
+            # from /api/all-stocks and the screener and -- critically -- has no
+            # un-deactivate path.
+            # NOT_FOUND also fires for TRANSIENT conditions ("no data found for
+            # this date range", "ticker not found in batch result"), so persisting
+            # it irreversibly hid valid, data-bearing tickers (measured locally:
+            # 4,298 of 4,627 currently-hidden tickers are exactly the set a
+            # transient NOT_FOUND would produce, e.g. AARTISURF/ACME/ADISOFT).
+            # It still enters the in-process failure cache for its retry interval
+            # below, so no extra yfinance load is created -- it just no longer
+            # causes a destructive, irreversible DB write.
+            if error_class is YFErrorClass.DELISTED:
                 self._inactive_symbols[clean] = error_class
                 logger.warning(f"[YFDownloader] Marked {clean} as INACTIVE ({error_class.value})")
 

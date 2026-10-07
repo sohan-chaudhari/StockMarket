@@ -25,7 +25,11 @@ def open_position(
     if meta:
         stock_name = meta.name
 
-    position, error_msg = TradingService.open_position(
+    # TradingService.open_position() returns a 3-tuple (position, message,
+    # amo_order). Unpacking only two values raised "too many values to unpack"
+    # on every call to this legacy route (the live endpoint is
+    # /api/trade/place-order). The AMO slot is intentionally unused here.
+    position, error_msg, _amo_order = TradingService.open_position(
         db=db,
         user_id=current_user.user_id,
         ticker=req.ticker,
