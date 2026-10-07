@@ -193,6 +193,11 @@ class Live5mBuilder:
 
         self._last_known_bucket: Dict[str, Dict[str, int]] = {}
 
+        # Last cumulative day volume (volume_trade_for_the_day) seen per ticker.
+        # Used to derive each tick's TRUE incremental volume as a delta — see
+        # the volume handling in process_tick(). Keyed by ticker.
+        self._last_day_volume: Dict[str, int] = {}
+
         self._pending_mgr = PendingCandleManager(late_buffer_sec=60)
         self._flush_batch: List[Dict] = []
         self._flush_batch_lock = threading.Lock()
@@ -257,7 +262,15 @@ class Live5mBuilder:
             self._previous_closes[ticker] = last_candle.get("close", last_candle.get("price", 0))
 
     def process_tick(self, ticker: str, price: float, volume: int = 0, tick_ts: float = None,
-                     day_open: float = None, day_high: float = None, day_low: float = None) -> Dict:
+                     day_open: float = None, day_high: float = None, day_low: float = None,
+                     day_volume: int = None) -> Dict:
+        """`day_volume` (optional) is the broker's CUMULATIVE traded quantity for
+        the day (`volume_trade_for_the_day`). When provided, the candle's volume
+        is grown by the DELTA of that counter, which is the only reliable
+        incremental measure — the per-tick `volume` argument is populated from
+        `last_traded_quantity`, which this feed reports cumulatively (see the
+        volume handling below). Omitting `day_volume` preserves the legacy
+        per-tick `volume` behaviour (used by unit tests)."""
         now = ist_now_naive()
         now_epoch = int(now.replace(tzinfo=IST).timestamp())
 
@@ -332,7 +345,27 @@ class Live5mBuilder:
             forming["high"] = max(forming["high"], price)
             forming["low"] = min(forming["low"], price)
             forming["close"] = price
-            forming["volume"] += volume
+            # Volume: when the caller supplies the cumulative day volume, grow
+            # the bucket by its delta. The old code did `forming["volume"] += volume`
+            # where `volume` came from `last_traded_quantity` — a CUMULATIVE
+            # quantity in this feed — so each 5m bucket became ~(ticks_in_bucket x
+            # day_volume) (e.g. 410,700,652 on a ~3.7M-share day). The delta form
+            # is also idempotent: a repeated/replayed tick whose day_volume hasn't
+            # advanced contributes 0, so the WS path and the poller→aggregator
+            # bridge can never double-count.
+            if day_volume is not None:
+                prev_day_vol = self._last_day_volume.get(ticker)
+                if prev_day_vol is None or day_volume < prev_day_vol:
+                    # First tick for this ticker, or a new session (the cumulative
+                    # counter reset to ~0) — do NOT dump the whole day's volume
+                    # into one bucket.
+                    vol_increment = 0
+                else:
+                    vol_increment = day_volume - prev_day_vol
+                self._last_day_volume[ticker] = day_volume
+            else:
+                vol_increment = volume
+            forming["volume"] += vol_increment
 
             res = {}
             o, h, l, c = fix_ohlc(forming["open"], forming["high"], forming["low"], forming["close"])
@@ -610,6 +643,7 @@ class Live5mBuilder:
             self._last_tick_ts.pop(t, None)
             self._stale_skip_count.pop(t, None)
             self._last_activity.pop(t, None)
+            self._last_day_volume.pop(t, None)
             self._pending_mgr.remove(t)
         if stale:
             print(f"[Aggregator] GC removed {len(stale)} inactive tickers")

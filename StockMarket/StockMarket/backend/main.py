@@ -6672,7 +6672,8 @@ def _on_angel_tick(ticker: str, data: dict):
         if cp > 0:
             candle_aggregator.process_tick(
                 ticker, cp, actual_tick_volume, tick_ts=tick_epoch,
-                day_open=tick_open, day_high=tick_high, day_low=tick_low
+                day_open=tick_open, day_high=tick_high, day_low=tick_low,
+                day_volume=daily_volume
             )
             _last_aggregator_feed_ts[ticker] = tick_epoch
             _monitoring["aggregator_ticks_processed"] += 1
@@ -7478,7 +7479,10 @@ async def startup():
                         continue
                     cp = td.get("current_price") or td.get("current", 0)
                     if cp > 0:
-                        candle_aggregator.process_tick(tkr, cp, td.get("volume", 0), tick_ts=ts)
+                        # `td["volume"]` is the CUMULATIVE day volume — pass it as
+                        # day_volume so the aggregator adds only the delta (never
+                        # the whole day's volume per poll).
+                        candle_aggregator.process_tick(tkr, cp, 0, tick_ts=ts, day_volume=td.get("volume", 0))
                         _last_aggregator_feed_ts[tkr] = ts
             except Exception:
                 pass
