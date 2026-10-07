@@ -35,13 +35,29 @@ ok(body.indexOf('combined.push(c)') === -1,
 ok(body.indexOf("fetch('/api/stock-data/candle/latest") === -1,
    'removed the epoch-domain forming-candle repair');
 
-console.log('\n[3] gate: reconcile only when >= one full bar was missed');
-ok(body.indexOf('_activeBarSecs * 1000') !== -1, 'uses a one-full-bar threshold');
-function shouldReconcile(missedMs, barSecs) { return missedMs >= barSecs * 1000; }
-ok(shouldReconcile(8 * 60 * 1000, 300) === true, '8-min outage on 5m chart reconciles');
-ok(shouldReconcile(30 * 1000, 300) === false, '30s blip on 5m chart does NOT reload');
-ok(shouldReconcile(120 * 1000, 60) === true, '2-min outage on 1m chart reconciles');
-ok(shouldReconcile(1 * 60 * 1000, 900) === false, '1-min blip on 15m chart does NOT reload');
+console.log('\n[3] gate: reconcile only when consecutive server ticks crossed a candle boundary');
+ok(body.indexOf('_bucketOf(serverTs) !== _bucketOf(window._lastTickServerTs)') !== -1,
+   'uses a server-timestamp session-aligned bucket-crossing test');
+ok(body.indexOf('window._lastTickServerTs = serverTs') !== -1,
+   'records the last tick server timestamp for the next comparison');
+function crossed(nowMs, lastMs, barSecs) {
+  const barMs = barSecs * 1000, IST = 5.5 * 3600 * 1000, SESS = (9 * 60 + 15) * 60000;
+  const b = (ms) => {
+    const dayStart = Math.floor((ms + IST) / 86400000) * 86400000 - IST;
+    const sessStart = dayStart + SESS;
+    const o = ms - sessStart;
+    return o < 0 ? sessStart : sessStart + Math.floor(o / barMs) * barMs;
+  };
+  return b(nowMs) !== b(lastMs);
+}
+const M = 60 * 1000;
+// 2026-10-07 12:07 IST == 06:37 UTC
+const t = (h, mi) => Date.UTC(2026, 9, 7, h, mi);
+ok(crossed(t(6, 39), t(6, 37), 300) === false, '2-min gap inside the same 5m bucket -> no reload');
+ok(crossed(t(6, 41), t(6, 37), 300) === true, '4-min gap crossing a 5m boundary -> reconcile');
+ok(crossed(t(6, 45), t(6, 37), 300) === true, '8-min gap (reported scenario) -> reconcile');
+ok(crossed(t(6, 42), t(6, 37), 300) === true, 'exactly one 5m bar -> reconcile');
+ok(crossed(t(6, 40), t(6, 39), 60) === true, '1-min bar crossed on a 1m chart -> reconcile');
 
 console.log('\n[4] index-domain renderer intact (used by the delegated path)');
 ok(src.indexOf('function _buildIntradayDisplay') !== -1, '_buildIntradayDisplay still present');

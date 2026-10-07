@@ -117,6 +117,10 @@ class PlaceOrderRequest(BaseModel):
     entry_price: float = Field(..., gt=0)
     take_profit: Optional[float] = None
     stop_loss: Optional[float] = None
+    # Optional client-generated idempotency key (one per submission attempt).
+    # Replaying the same key returns the original position instead of opening
+    # a second one. Omitted by older clients -> no behavior change.
+    client_order_id: Optional[str] = Field(None, max_length=64)
 
 class SetLimitsRequest(BaseModel):
     position_id: int

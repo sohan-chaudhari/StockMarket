@@ -357,6 +357,14 @@ class Position(Base):
     sl_edit_count = Column(Integer, default=0)  # Max 3 edits allowed
     created_at = Column(DateTime, default=get_ist_now, index=True)
     closed_at = Column(DateTime, nullable=True)
+    # Client-supplied idempotency key for ONE order-submission attempt.
+    # UNIQUE(user_id, client_order_id) lets the database atomically reject a
+    # replay of the same request (double-click / browser or network retry /
+    # duplicate frontend handler) while still allowing a user to open the same
+    # stock many times under different keys. NULL for every legacy row and for
+    # any client that sends no key -- both Postgres and SQLite treat NULLs as
+    # distinct in a UNIQUE index, so many NULL-key rows remain allowed.
+    client_order_id = Column(String(64), nullable=True)
 
     __table_args__ = (
         # DB-07: the open/closed-positions endpoints always filter by both
@@ -365,6 +373,8 @@ class Position(Base):
         # existed; this composite serves that exact query pattern directly
         # instead of relying on a bitmap AND of the two.
         Index("idx_positions_user_status", "user_id", "status"),
+        # Idempotency arbiter: at most one position per (user, request-key).
+        UniqueConstraint("user_id", "client_order_id", name="uix_positions_user_client_order"),
     )
 
 

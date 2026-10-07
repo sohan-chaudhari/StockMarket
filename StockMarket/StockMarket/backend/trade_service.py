@@ -51,7 +51,8 @@ class TradingService:
         entry_price: float,
         take_profit: Optional[float] = None,
         stop_loss: Optional[float] = None,
-        stock_name: Optional[str] = None
+        stock_name: Optional[str] = None,
+        client_order_id: Optional[str] = None
     ) -> Tuple[Optional[models.Position], str, Optional[models.Order]]:
         """
         Open a new trading position.
@@ -96,7 +97,8 @@ class TradingService:
                 total_investment=total_investment,
                 take_profit=take_profit,
                 stop_loss=stop_loss,
-                status="OPEN"
+                status="OPEN",
+                client_order_id=client_order_id
             )
             db.add(position)
             db.flush()

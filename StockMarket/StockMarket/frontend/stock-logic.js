@@ -128,6 +128,17 @@
 
     // ==================== TRADING LOGIC ====================
     const API_BASE = '';
+
+    // One idempotency key per order-submission attempt (stable across retries
+    // of the same request; a new key is minted per trade-modal session).
+    function _newOrderIdemKey() {
+      try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+          return window.crypto.randomUUID();
+        }
+      } catch (e) { /* fall through */ }
+      return 'ord-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    }
     let currentPositionType = 'LONG';
     let openPositions = [];
     window.positionsPanelClosedManually = false;
@@ -140,6 +151,13 @@
     // Show Trade Modal
     async function showTradeModal(defaultType) {
       if (!_requireAuth()) return;
+      // Mint one idempotency key per trade-modal session. It stays stable for
+      // every submission attempt from this modal (so a double-click, a browser/
+      // network retry of the same request, or a duplicated handler is collapsed
+      // by the server into a single position), and is cleared after a
+      // successful order so the next (re)opened modal mints a fresh key --
+      // genuinely separate orders are therefore always allowed.
+      window._tradeIdemKey = _newOrderIdemKey();
       const ticker = window.currentTicker || (new URLSearchParams(window.location.search).get('ticker') || '--');
       const price = parseFloat(document.getElementById('header-price')?.textContent?.replace(/[₹,]/g, '')) || 0;
       let user = JSON.parse(sessionStorage.getItem('user') || '{}');
@@ -316,7 +334,10 @@
         quantity: parseInt(document.getElementById('tradeQuantity').value, 10),
         entry_price: parseFloat(document.getElementById('tradeEntryPrice').value),
         take_profit: parseFloat(document.getElementById('tradeTakeProfit').value) || null,
-        stop_loss: parseFloat(document.getElementById('tradeStopLoss').value) || null
+        stop_loss: parseFloat(document.getElementById('tradeStopLoss').value) || null,
+        // Server-side idempotency key: a replay of this exact request returns
+        // the original position instead of opening a second one.
+        client_order_id: window._tradeIdemKey || (window._tradeIdemKey = _newOrderIdemKey())
       };
 
       try {
@@ -337,6 +358,9 @@
         const data = await res.json();
 
         if (res.ok) {
+          // Order accepted (or recognised as an already-processed duplicate):
+          // clear the idempotency key so the next modal session mints a new one.
+          window._tradeIdemKey = null;
           // Update balance in header and session
           if (data && data.balance != null) {
             const user = JSON.parse(sessionStorage.getItem('user') || '{}');

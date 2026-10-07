@@ -1452,6 +1452,44 @@ def place_order(
 
     stock_name = stock_meta.name if stock_meta else order.ticker
 
+    # --- Idempotency ------------------------------------------------------
+    # A client-generated client_order_id identifies ONE submission attempt
+    # (not one stock). If the SAME request arrives again -- double-click,
+    # browser/network retry of an already-sent request, or a duplicate
+    # frontend handler -- return the original position instead of opening a
+    # second one. A different key (a genuinely new order, including another
+    # entry in the same stock) is unaffected.
+    #
+    # Atomicity is enforced by the DB UNIQUE(user_id, client_order_id): two
+    # truly concurrent identical requests may both pass the check below, but
+    # only one INSERT can commit; the loser hits IntegrityError inside
+    # open_position (rolling back its balance debit / Order / Transaction)
+    # and falls through to the winner-return path below.
+    def _place_order_response(pos, msg, amo):
+        _u = db.query(models.User).filter(models.User.user_id == current_user.user_id).first()
+        return {
+            "message": msg,
+            "is_amo": amo is not None,
+            "position_id": pos.id if pos else None,
+            "order_id": amo.id if amo else None,
+            "balance": _u.virtual_balance if _u else 0,
+        }
+
+    def _existing_position_for_key():
+        if not order.client_order_id:
+            return None
+        return db.query(models.Position).filter(
+            models.Position.user_id == current_user.user_id,
+            models.Position.client_order_id == order.client_order_id,
+        ).first()
+
+    if order.client_order_id:
+        _dup = _existing_position_for_key()
+        if _dup is not None:
+            _resp = _place_order_response(_dup, "Duplicate order ignored (already processed)", None)
+            _resp["is_duplicate"] = True
+            return _resp
+
     # ── Entry price validation & synchronization ────
     # PriceProvider resolves the authoritative current price (live tick -> forming 5m -> completed 5m -> daily close).
     from execution_engine import price_monitor
@@ -1477,20 +1515,24 @@ def place_order(
         entry_price=order.entry_price,
         take_profit=order.take_profit,
         stop_loss=order.stop_loss,
-        stock_name=stock_name
+        stock_name=stock_name,
+        client_order_id=order.client_order_id
     )
 
     if not position and not amo_order:
+        # Lost a concurrent race for the same client_order_id: the winner
+        # committed first (the UNIQUE constraint rejected our insert). Return
+        # the winner's original result instead of surfacing a failure.
+        _race = _existing_position_for_key()
+        if _race is not None:
+            _resp = _place_order_response(_race, "Duplicate order ignored (already processed)", None)
+            _resp["is_duplicate"] = True
+            return _resp
         raise HTTPException(status_code=400, detail=message)
 
-    user = db.query(models.User).filter(models.User.user_id == current_user.user_id).first()
-    return {
-        "message": message,
-        "is_amo": amo_order is not None,
-        "position_id": position.id if position else None,
-        "order_id": amo_order.id if amo_order else None,
-        "balance": user.virtual_balance if user else 0
-    }
+    _resp = _place_order_response(position, message, amo_order)
+    _resp["is_duplicate"] = False
+    return _resp
 
 # ==================== USER WEBSOCKET ====================
 

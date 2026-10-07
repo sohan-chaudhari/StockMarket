@@ -3169,17 +3169,37 @@ async function initBigChart() {
       // loadData() → /api/stock-data/intraday/paginated (server-side gap
       // detection + backfill + authoritative forming candle) →
       // _renderChartData() → _buildIntradayDisplay() (index remap) — instead of
-      // maintaining a second, divergent merge path. Triggered ONLY when at
-      // least one full bar of the current timeframe was actually missed, so a
-      // momentary blip does not reload the chart.
+      // maintaining a second, divergent merge path. Triggered only when two
+      // consecutive server ticks straddle a candle boundary -- i.e. a completed
+      // candle may have been missed -- so a silence that stays inside the same
+      // bucket does not reload the chart.
       var _barSecsByRange = { '1m': 60, '3m': 180, '5m': 300, '10m': 600, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 };
       var _activeBarSecs = _barSecsByRange[activeRange];
-      var _missedMs = window._lastPriceUpdateMs ? (now - window._lastPriceUpdateMs) : 0;
       if (_isMarketOpen && isIntradayRange && _activeBarSecs && serverTs &&
-          _missedMs >= (_activeBarSecs * 1000) && typeof window.loadData === 'function') {
-        window.loadData(activeRange).catch(function () {});
+          window._lastTickServerTs && typeof window.loadData === 'function') {
+        // Reconcile when the silence between two consecutive server ticks
+        // CROSSED a candle boundary -- that is precisely when a completed
+        // candle may have been missed. A shorter silence staying inside the
+        // same bucket needs no reload (the running candle simply continues).
+        // Using the previous tick's SERVER timestamp (not the client clock)
+        // keeps this deterministic and immune to client clock skew; a fixed
+        // ">= one full bar" threshold was found (via the reconnect E2E) to
+        // miss cases where e.g. a 4-minute gap on a 5m chart spans a boundary.
+        var _barMs = _activeBarSecs * 1000;
+        var _IST_OFF = 5.5 * 3600 * 1000;
+        var _sessStartMin = 9 * 60 + 15; // NSE opens 09:15 IST
+        var _bucketOf = function (ms) {
+          var dayStart = Math.floor((ms + _IST_OFF) / 86400000) * 86400000 - _IST_OFF;
+          var sessStart = dayStart + _sessStartMin * 60000;
+          var o = ms - sessStart;
+          return o < 0 ? sessStart : sessStart + Math.floor(o / _barMs) * _barMs;
+        };
+        if (_bucketOf(serverTs) !== _bucketOf(window._lastTickServerTs)) {
+          window.loadData(activeRange).catch(function () {});
+        }
       }
       window._lastPriceUpdateMs = now;
+      window._lastTickServerTs = serverTs || window._lastTickServerTs;
       if (wsLive.current !== undefined) {
         processBigChartPrice({
           current: wsLive.current,
@@ -3321,6 +3341,10 @@ async function initBigChart() {
       activeRange = (activeEl.getAttribute('data-range') || activeEl.textContent || '').trim();
       if (activeRange === '1H') activeRange = '1h';
     }
+    // The RENDERED range is authoritative. Some intraday ranges (e.g. 1m) have
+    // no range-selector button, so relying on the active button alone silently
+    // disabled the live forming candle for them (found by the reconnect E2E).
+    if (window._loadedRange) activeRange = window._loadedRange;
 
     // Only build forming candle if the series data matches the active range
     if (activeRange !== window._loadedRange) return;
