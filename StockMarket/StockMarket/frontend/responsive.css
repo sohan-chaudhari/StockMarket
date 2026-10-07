@@ -228,7 +228,14 @@
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none !important;
     position: relative !important;
-    z-index: 1000 !important;
+    /* Bug-3 fix (mobile): keep this chart-header stacking context BELOW the
+       global nav header (.header, z-index 100) so the injected stock-search
+       dropdown (which lives inside .header) renders ABOVE the
+       Back/Indicators/Trade/Positions controls. This rule is loaded AFTER
+       stock.html's own inline .sticky-header-container rule, so its !important
+       was overriding the inline z-index:90 on mobile and the dropdown stayed
+       hidden behind the controls. Keep both at 90. */
+    z-index: 90 !important;
   }
   .sticky-header-container::-webkit-scrollbar {
     display: none !important;
