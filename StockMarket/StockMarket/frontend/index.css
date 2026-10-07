@@ -2128,47 +2128,10 @@ img.card-icon {
   background: rgba(242, 54, 69, 0.1);
   color: var(--danger);
 }
-/* Live price movement tick animations */
-@keyframes tickUpFlash {
-  0% {
-    color: #089981 !important;
-    text-shadow: 0 0 10px rgba(8, 153, 129, 0.6);
-    transform: scale(1.025);
-  }
-  40% {
-    color: #089981 !important;
-  }
-  100% {
-    color: inherit;
-    text-shadow: none;
-    transform: scale(1);
-  }
-}
-
-@keyframes tickDownFlash {
-  0% {
-    color: #f23645 !important;
-    text-shadow: 0 0 10px rgba(242, 54, 69, 0.6);
-    transform: scale(1.025);
-  }
-  40% {
-    color: #f23645 !important;
-  }
-  100% {
-    color: inherit;
-    text-shadow: none;
-    transform: scale(1);
-  }
-}
-
-.tick-up {
-  display: inline-block;
-  animation: tickUpFlash 0.7s cubic-bezier(0.25, 1, 0.5, 1) !important;
-}
-
+/* Price tick flash animations removed per user request: clean numeric updates only */
+.tick-up,
 .tick-down {
-  display: inline-block;
-  animation: tickDownFlash 0.7s cubic-bezier(0.25, 1, 0.5, 1) !important;
+  animation: none !important;
 }
 
 #ws-status {

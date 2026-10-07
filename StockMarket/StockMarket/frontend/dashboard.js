@@ -27,285 +27,6 @@ window.formatVolumeCompact = formatVolumeCompact;
 window.fmtCompact = formatVolumeCompact;
 
 /* ==========================================
-   DASHBOARD WS — singleton shared across
-   dashboard.js and index.js via custom events
-   ========================================== */
-(function () {
-  'use strict';
-
-  // All tickers the dashboard needs live prices for
-  var DASHBOARD_TICKERS = [
-    'NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY',
-    'MIDCAP', 'SMALLCAP', 'NIFTYMIDCAP100', 'NIFTYSMLCAP100',
-    'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'BHARTIARTL',
-    'SBIN', 'HINDUNILVR', 'ITC', 'LT', 'KOTAKBANK', 'AXISBANK',
-    'ASIANPAINT', 'MARUTI', 'WIPRO', 'TITAN', 'SUNPHARMA', 'BAJFINANCE',
-    'ADANIENT', 'TATAMOTORS', 'NTPC', 'ONGC', 'POWERGRID', 'ULTRACEMCO',
-    'TATASTEEL', 'JSWSTEEL', 'TECHM', 'HAL', 'BEL', 'ZOMATO', 'TRENT',
-    'BANDHANBNK', 'MARICO', 'DIVISLAB', 'HINDALCO', 'GRASIM', 'HEROMOTOCO',
-    'DRREDDY', 'CIPLA', 'APOLLOHOSP', 'HDFCLIFE', 'SBILIFE', 'EICHERMOT'
-  ];
-
-  // Read ticker from URL query param (for chart/stock pages)
-  var urlParams = new URLSearchParams(window.location.search);
-  var urlTicker = urlParams.get('ticker');
-  if (urlTicker && DASHBOARD_TICKERS.indexOf(urlTicker) === -1) {
-    DASHBOARD_TICKERS.push(urlTicker);
-  }
-
-  var reconnectAttempt = 0;
-  var reconnectTimer   = null;
-  var isPageLeaving    = false;
-  var pingTimer        = null;
-  var pongTimeout      = null;
-  var ws               = null;
-  var wsActive         = false;  // true while the page wants a WS connection
-
-  function getReconnectDelay(attempt) {
-    var base   = Math.min(1000 * Math.pow(2, attempt), 30000); // cap 30 s
-    var jitter = Math.random() * 1000;
-    return base + jitter;
-  }
-
-  function startPing() {
-    stopPing();
-    pingTimer = setInterval(function () {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ type: 'ping' })); } catch (e) {}
-      }
-    }, 30000);
-  }
-
-  function stopPing() {
-    if (pingTimer)   { clearInterval(pingTimer);  pingTimer   = null; }
-    if (pongTimeout) { clearTimeout(pongTimeout); pongTimeout = null; }
-  }
-
-  function handleMessage(msg) {
-    try {
-      switch (msg.type) {
-
-        case 'connected':
-          reconnectAttempt = 0;
-          // Subscribe with required tickers
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'subscribe', topics: DASHBOARD_TICKERS }));
-            var currentTkr = (window.currentTicker || window._chartTicker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-            if (currentTkr) {
-              ws.send(JSON.stringify({ type: 'subscribe', topics: [currentTkr] }));
-              ws.send(JSON.stringify({ type: 'view_ticker', ticker: currentTkr }));
-            }
-          }
-          break;
-
-        case 'price_update':
-          // Accept all price updates — the backend already throttles at 200ms (AngelOne)
-          // and 30s (yfinance fallback). Stale-check based on server clock offset was
-          // silently dropping all messages when the offset got miscalibrated.
-          window._lastWsPriceTime = Date.now();
-          // Persist to localStorage for instant seed on next visit
-          try {
-            var existing = JSON.parse(localStorage.getItem('llp') || '{}');
-            var merged   = Object.assign({}, existing, msg.data);
-            var mergedStr = JSON.stringify(merged);
-            if (mergedStr.length > 2e6) {
-              // Exceeded ~2MB; keep only current batch to stay under quota
-              merged = Object.assign({}, msg.data);
-              mergedStr = JSON.stringify(merged);
-            }
-            localStorage.setItem('llp',    mergedStr);
-            localStorage.setItem('llp_ts', Date.now().toString());
-          } catch (e) {}
-          // Notify all listeners
-          window.dispatchEvent(new CustomEvent('dashboard_price_update', { detail: { prices: msg.data, serverTs: msg.ts } }));
-          break;
-
-        case 'market_movers':
-          window.dispatchEvent(new CustomEvent('dashboard_market_movers', { detail: msg.data }));
-          break;
-
-        case 'market_status':
-          window.dispatchEvent(new CustomEvent('dashboard_market_status', { detail: msg }));
-          break;
-
-        case 'pong':
-          break;
-
-        case 'ping':
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            try { ws.send(JSON.stringify({ type: 'pong' })); } catch (e) {}
-          }
-          break;
-
-        case 'heartbeat':
-          // Server alive — nothing needed
-          break;
-      }
-    } catch (e) {
-      console.error('[DashWS] handleMessage error:', e);
-    }
-  }
-
-  function connect() {
-    if (!wsActive || isPageLeaving) return;
-    var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    var url      = protocol + '//' + window.location.host + '/ws/dashboard';
-
-    var newWs;
-    try { newWs = new WebSocket(url); ws = newWs; } catch (e) {
-      if (!isPageLeaving) {
-        console.warn('[DashWS] WebSocket creation failed:', e);
-        scheduleReconnect();
-      }
-      return;
-    }
-
-    newWs.onopen = function () {
-      console.log('[DashWS] Connected');
-      reconnectAttempt = 0;
-      startPing();
-      if (DASHBOARD_TICKERS.length > 0 && newWs.readyState === WebSocket.OPEN) {
-        newWs.send(JSON.stringify({ type: 'subscribe', topics: DASHBOARD_TICKERS }));
-      }
-      var currentTkr = (window.currentTicker || window._chartTicker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-      if (currentTkr && newWs.readyState === WebSocket.OPEN) {
-        newWs.send(JSON.stringify({ type: 'subscribe', topics: [currentTkr] }));
-        newWs.send(JSON.stringify({ type: 'view_ticker', ticker: currentTkr }));
-      }
-    };
-
-    newWs.onmessage = function (evt) {
-      try { handleMessage(JSON.parse(evt.data)); } catch (e) {}
-    };
-
-    newWs.onclose = function () {
-      stopPing();
-      if (isPageLeaving) return;
-      console.log('[DashWS] Disconnected');
-      scheduleReconnect();
-    };
-
-    newWs.onerror = function (e) {
-      // Suppress noisy error logging when navigating or entering Back-Forward Cache
-      if (isPageLeaving || document.hidden || (ws && (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED))) {
-        return;
-      }
-      console.warn('[DashWS] Connection interrupted');
-    };
-  }
-
-  function scheduleReconnect() {
-    if (!wsActive || isPageLeaving) return;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    var delay = getReconnectDelay(reconnectAttempt);
-    console.log('[DashWS] Reconnect in ' + (delay / 1000).toFixed(1) + 's (attempt ' + (reconnectAttempt + 1) + ')');
-    reconnectAttempt = Math.min(reconnectAttempt + 1, 10);
-    reconnectTimer = setTimeout(function () {
-      reconnectTimer = null;
-      connect();
-    }, delay);
-  }
-
-  /* Cleanly close WS on navigation / bfcache to prevent browser abort errors */
-  window.addEventListener('pagehide', function () {
-    isPageLeaving = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    stopPing();
-    if (ws) {
-      try { ws.close(1000, 'Page hidden'); } catch (e) {}
-    }
-  });
-
-  window.addEventListener('beforeunload', function () {
-    isPageLeaving = true;
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-    stopPing();
-    if (ws) {
-      try { ws.close(1000, 'Page unload'); } catch (e) {}
-    }
-  });
-
-  /* Restore connection when returning from Back-Forward Cache */
-  window.addEventListener('pageshow', function (evt) {
-    isPageLeaving = false;
-    if (evt.persisted || (wsActive && (!ws || ws.readyState !== WebSocket.OPEN))) {
-      reconnectAttempt = 0;
-      connect();
-    }
-  });
-
-  /* Reconnect when tab becomes visible */
-  document.addEventListener('visibilitychange', function () {
-    if (!document.hidden && !isPageLeaving && wsActive && (!ws || ws.readyState !== WebSocket.OPEN)) {
-      connect();
-    }
-  });
-
-  /* Public API */
-  window.DashboardWS = {
-    start: function (extraTickers) {
-      if (extraTickers) {
-        extraTickers.forEach(function (t) {
-          var clean = t.toUpperCase().replace(/\.(NS|BO)$/i, '');
-          if (DASHBOARD_TICKERS.indexOf(clean) === -1) DASHBOARD_TICKERS.push(clean);
-        });
-      }
-      if (!wsActive) {
-        wsActive = true;
-        connect();
-      } else if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
-        connect();
-      } else if (ws && ws.readyState === WebSocket.OPEN && extraTickers && extraTickers.length) {
-        var cleanList = extraTickers.map(function(t) { return t.toUpperCase().replace(/\.(NS|BO)$/i, ''); });
-        ws.send(JSON.stringify({ type: 'subscribe', topics: cleanList }));
-        cleanList.forEach(function (t) {
-          ws.send(JSON.stringify({ type: 'view_ticker', ticker: t }));
-        });
-      }
-    },
-    stop: function () {
-      wsActive = false;
-      stopPing();
-      if (ws) { try { ws.close(); } catch (e) {} ws = null; }
-    },
-    /** Subscribe additional tickers after initial connection */
-    addTickers: function (tickers) {
-      if (!tickers || !tickers.length) return;
-      var cleanList = [];
-      tickers.forEach(function (t) {
-        var clean = t.toUpperCase().replace(/\.(NS|BO)$/i, '');
-        if (DASHBOARD_TICKERS.indexOf(clean) === -1) DASHBOARD_TICKERS.push(clean);
-        cleanList.push(clean);
-      });
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'subscribe', topics: cleanList }));
-        cleanList.forEach(function (t) {
-          ws.send(JSON.stringify({ type: 'view_ticker', ticker: t }));
-        });
-      }
-    },
-    /** Check if WebSocket is currently connected */
-    isConnected: function () {
-      return ws && ws.readyState === WebSocket.OPEN;
-    },
-    /** Check if feed is healthy (alias of isConnected — used by updateMarketStatusUI) */
-    isHealthy: function () {
-      return ws && ws.readyState === WebSocket.OPEN;
-    }
-  };
-}());
-
-
-/* ==========================================
    DASHBOARD PAGE INIT
    ========================================== */
 document.addEventListener('DOMContentLoaded', function () {
@@ -450,12 +171,6 @@ function updateMinichartOHLC(d) {
   window._lastMinichartOHLC = d;
   var pEl = document.getElementById('niftyPrice');
   if (pEl && d.current != null && d.current > 0) {
-    var _lastMain = window._lastMainPrice;
-    if (_lastMain != null && d.current !== _lastMain) {
-      pEl.classList.remove('tick-up', 'tick-down');
-      void pEl.offsetWidth;
-      pEl.classList.add(d.current > _lastMain ? 'tick-up' : 'tick-down');
-    }
     window._lastMainPrice = d.current;
     pEl.innerText = Number(d.current).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
@@ -487,12 +202,6 @@ function updateMinichartOHLC(d) {
   var stripCEl = document.getElementById('strip-change-' + activeTkr);
   if (stripPEl && d.current != null && d.current > 0) {
     window._lastTickPrices = window._lastTickPrices || {};
-    var lastStrip = window._lastTickPrices[activeTkr];
-    if (lastStrip != null && d.current !== lastStrip) {
-      stripPEl.classList.remove('tick-up', 'tick-down');
-      void stripPEl.offsetWidth;
-      stripPEl.classList.add(d.current > lastStrip ? 'tick-up' : 'tick-down');
-    }
     window._lastTickPrices[activeTkr] = d.current;
     stripPEl.innerText = '₹' + Number(d.current).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     if (stripCEl) {
@@ -511,7 +220,8 @@ function seedUIFromCache() {
   try {
     var raw = localStorage.getItem('llp');
     var ts  = parseInt(localStorage.getItem('llp_ts') || '0', 10);
-    if (!raw || (Date.now() - ts > 600000)) return; // 10-min TTL
+    if (!raw || (Date.now() - ts > 300000)) return; // 5-min TTL
+    if (new Date(ts).toDateString() !== new Date().toDateString()) return; // Never seed cross-day stale prices
     var prices = JSON.parse(raw);
 
     // Seed ticker strip (elements already in DOM from home.html)
@@ -652,11 +362,6 @@ function onPriceUpdate(evt) {
     // 3a. Update all price elements matching this ticker
     var priceElements = document.querySelectorAll('.mv-price-' + cleanTicker + ', [id$="-' + cleanTicker + '"].mover-price, #mv-price-' + cleanTicker);
     priceElements.forEach(function (pEl) {
-      if (lastMv != null && cur !== lastMv) {
-        pEl.classList.remove('tick-up', 'tick-down');
-        void pEl.offsetWidth;
-        pEl.classList.add(isUp ? 'tick-up' : 'tick-down');
-      }
       pEl.innerText = '\u20B9' + cur.toFixed(2);
     });
 
@@ -718,12 +423,6 @@ function onPriceUpdate(evt) {
     if (pEl2 && d && d.current !== undefined && d.current !== null) {
       var price = d.current;
       window._lastWlPrices = window._lastWlPrices || {};
-      var lastWl = window._lastWlPrices[ticker];
-      if (lastWl != null && price !== lastWl) {
-        pEl2.classList.remove('tick-up', 'tick-down');
-        void pEl2.offsetWidth;
-        pEl2.classList.add(price > lastWl ? 'tick-up' : 'tick-down');
-      }
       window._lastWlPrices[ticker] = price;
       var prev  = (d.prev_close != null && d.prev_close > 0) ? d.prev_close : ((d.open != null && d.open > 0) ? d.open : price);
       var dif   = price - prev;
@@ -897,14 +596,7 @@ function updateTickerStrip(prices) {
     var lastTick = window._lastTickPrices[ticker];
     var newText = '₹' + d.current.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    // Flash price element green (up) or red (down) on every tick change
-    if (lastTick != null && d.current !== lastTick) {
-      priceEl.classList.remove('tick-up', 'tick-down');
-      void priceEl.offsetWidth; // force reflow to restart animation
-      priceEl.classList.add(d.current > lastTick ? 'tick-up' : 'tick-down');
-    }
     window._lastTickPrices[ticker] = d.current;
-
     priceEl.innerText  = newText;
     changeEl.innerText = sign + diff.toFixed(2) + ' (' + pct.toFixed(2) + '%)';
     changeEl.className = 'change ' + (diff >= 0 ? 'text-green' : 'text-red');
@@ -1146,44 +838,8 @@ function _addDays(dateStr, days) {
   return y + '-' + m + '-' + day;
 }
 
-function loadChartData(ticker) {
-  if (!window._niftyCandleSeries) return;
-
-  var cleanT = (ticker || window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
-
-  // Fast cache restore on startup: instant 0ms render so user sees candles immediately
-  var cacheKey = 'minichart_' + cleanT;
-  try {
-    var rawCache = sessionStorage.getItem(cacheKey);
-    if (rawCache) {
-      var cachedData = JSON.parse(rawCache);
-      if (Array.isArray(cachedData) && cachedData.length > 0) {
-        _applyNiftyChartData(cleanT, cachedData, true);
-      }
-    }
-  } catch (e) {}
-
-  fetch('/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(cleanT) + '&interval=5m&limit=1500')
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (data && data.data) { data = data.data; }
-      if (!Array.isArray(data) || data.length === 0) return;
-      try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch (e) {}
-      _applyNiftyChartData(cleanT, data, false);
-    })
-    .catch(function () {});
-}
-
-function _applyNiftyChartData(ticker, data, isCached) {
-  if (!window._niftyCandleSeries) return;
-  var activeTicker = (window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
-  var cleanT = (ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
-  if (cleanT !== activeTicker) return;
-
-  data = filterMarketHours(data);
-  if (!data || data.length === 0) return;
-
-  // Filter valid bars with non-null, valid numeric OHLC values and positive timestamps
+function _processMinichartBars(data) {
+  if (!data || !Array.isArray(data)) return [];
   var validBars = [];
   for (var i = 0; i < data.length; i++) {
     var p = data[i];
@@ -1206,12 +862,8 @@ function _applyNiftyChartData(ticker, data, isCached) {
       close: c
     });
   }
-
-  if (validBars.length === 0) return;
-
+  if (validBars.length === 0) return [];
   validBars.sort(function (a, b) { return a.time - b.time; });
-
-  // Deduplicate strictly by time (keep latest bar on timestamp collision)
   var uniqueBars = [];
   var seenTimes = {};
   for (var k = 0; k < validBars.length; k++) {
@@ -1223,8 +875,144 @@ function _applyNiftyChartData(ticker, data, isCached) {
       uniqueBars[uniqueBars.length - 1] = bar;
     }
   }
+  return uniqueBars;
+}
 
+function loadChartData(ticker) {
+  if (!window._niftyCandleSeries) return;
+
+  var cleanT = (ticker || window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
+  window._minichartActiveTicker = cleanT;
+  window._minichartLoadingMore = false;
+  window._minichartNoMoreHistory = false;
+  window._minichartAllCandles = [];
+  window._minichartEarliestTime = null;
+
+  // Fast cache restore on startup: instant 0ms render so user sees candles immediately
+  var cacheKey = 'minichart_' + cleanT;
+  try {
+    var rawCache = sessionStorage.getItem(cacheKey);
+    if (rawCache) {
+      var cachedData = JSON.parse(rawCache);
+      if (Array.isArray(cachedData) && cachedData.length > 0) {
+        _applyNiftyChartData(cleanT, cachedData, true);
+      }
+    }
+  } catch (e) {}
+
+  // Initial load: 300 candles = ~4 trading days (75 candles/day * 4 = 300)
+  fetch('/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(cleanT) + '&interval=5m&limit=300')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data && data.data) { data = data.data; }
+      if (!Array.isArray(data) || data.length === 0) return;
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(data)); } catch (e) {}
+      _applyNiftyChartData(cleanT, data, false);
+    })
+    .catch(function () {});
+}
+
+function _loadOlderMinichartData() {
+  if (window._minichartLoadingMore || window._minichartNoMoreHistory) return;
+  var activeTicker = (window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
+  if (!window._minichartEarliestTime || !window._minichartAllCandles || window._minichartAllCandles.length === 0) return;
+
+  window._minichartLoadingMore = true;
+  var beforeTs = window._minichartEarliestTime;
+
+  fetch('/api/stock-data/intraday/paginated?ticker=' + encodeURIComponent(activeTicker) + '&interval=5m&before=' + beforeTs + '&limit=300')
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      var older = (res && res.data) ? res.data : (Array.isArray(res) ? res : []);
+      if (!Array.isArray(older) || older.length < 5) {
+        window._minichartNoMoreHistory = true;
+        window._minichartLoadingMore = false;
+        return;
+      }
+
+      older = filterMarketHours(older);
+      var validOlder = _processMinichartBars(older);
+      if (validOlder.length === 0) {
+        window._minichartNoMoreHistory = true;
+        window._minichartLoadingMore = false;
+        return;
+      }
+
+      var currentT = (window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
+      if (currentT !== activeTicker) {
+        window._minichartLoadingMore = false;
+        return;
+      }
+
+      var existingMap = {};
+      window._minichartAllCandles.forEach(function(b) { existingMap[b.time] = true; });
+      var newUniqueOlder = validOlder.filter(function(b) { return !existingMap[b.time]; });
+
+      if (newUniqueOlder.length === 0) {
+        window._minichartNoMoreHistory = true;
+        window._minichartLoadingMore = false;
+        return;
+      }
+
+      var merged = newUniqueOlder.concat(window._minichartAllCandles);
+      merged.sort(function(a, b) { return a.time - b.time; });
+
+      var addedCount = newUniqueOlder.length;
+      window._minichartAllCandles = merged;
+      window._minichartEarliestTime = merged[0].time;
+
+      var prevRange = null;
+      if (window._niftyChart && window._niftyChart.timeScale) {
+        try { prevRange = window._niftyChart.timeScale().getVisibleLogicalRange(); } catch(e) {}
+      }
+
+      var areaData = merged.map(function(p) { return { time: p.time, value: p.close }; });
+      var candleData = merged.map(function(p) {
+        return { time: p.time, open: p.open, high: p.high, low: p.low, close: p.close };
+      });
+
+      if (window._niftyAreaSeries) {
+        try { window._niftyAreaSeries.setData(areaData); } catch(e) {}
+      }
+      if (window._niftyCandleSeries) {
+        try { window._niftyCandleSeries.setData(candleData); } catch(e) {}
+      }
+      var sma = calcSMA(areaData, 5);
+      if (sma.length > 0 && window._niftySMASeries) {
+        try { window._niftySMASeries.setData(sma); } catch(e) {}
+      }
+
+      // Smooth scroll preservation: offset logical range by newly prepended bars count
+      if (prevRange && window._niftyChart && window._niftyChart.timeScale) {
+        try {
+          window._niftyChart.timeScale().setVisibleLogicalRange({
+            from: prevRange.from + addedCount,
+            to: prevRange.to + addedCount
+          });
+        } catch(e) {}
+      }
+
+      window._minichartLoadingMore = false;
+    })
+    .catch(function () {
+      window._minichartLoadingMore = false;
+    });
+}
+
+function _applyNiftyChartData(ticker, data, isCached) {
+  if (!window._niftyCandleSeries) return;
+  var activeTicker = (window._chartTicker || 'NIFTY').toUpperCase().replace(/\.(NS|BO)$/i, '');
+  var cleanT = (ticker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+  if (cleanT !== activeTicker) return;
+
+  data = filterMarketHours(data);
+  if (!data || data.length === 0) return;
+
+  var uniqueBars = _processMinichartBars(data);
   if (uniqueBars.length === 0) return;
+
+  window._minichartAllCandles = uniqueBars;
+  window._minichartEarliestTime = uniqueBars[0].time;
 
   var areaData = uniqueBars.map(function (p) {
     return { time: p.time, value: p.close };
@@ -1624,6 +1412,16 @@ function initNiftyChart() {
       window._niftyChart.applyOptions({ width: cw, height: ch });
     });
     window._niftyResizeObserver.observe(container);
+  }
+
+  // Subscribe to visible range changes for lazy loading older minichart candles when scrolling left
+  if (window._niftyChart && window._niftyChart.timeScale) {
+    window._niftyChart.timeScale().subscribeVisibleLogicalRangeChange(function (newRange) {
+      if (!newRange) return;
+      if (newRange.from <= 10) {
+        _loadOlderMinichartData();
+      }
+    });
   }
 
   // Custom Ticker Dropdown Controller
@@ -3517,20 +3315,33 @@ async function initBigChart() {
           window._lastCandleClose = _chartDataCache[_chartDataCache.length - 1].close;
         }
         var fallbackClose = (window._lastCandleClose !== null) ? window._lastCandleClose : live.current;
-        // Prefer live.open (actual day open from exchange) for the first candle of the day
-        // so a gap-down/gap-up stock doesn't show prev-close as the candle open.
-        // For subsequent bars, live.current is the correct start-of-bar price.
-        var _isFirstBar = !_chartDataCache || _chartDataCache.length === 0 ||
-          (function() {
-            var lastBar = _chartDataCache[_chartDataCache.length - 1];
-            var lastDate = lastBar ? new Date((lastBar.time + (5.5 * 3600)) * 1000).toISOString().slice(0, 10) : '';
-            var todayStr = new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
-            return lastDate !== todayStr;
-          })();
-        var openPrice = (_isFirstBar && live.open != null && live.open > 0)
-          ? live.open
-          : (live.current > 0 ? live.current : (window._formingCandles['i'] ? window._formingCandles['i'].close : fallbackClose));
-        window._formingCandles['i'] = { time: barTime, realTime: snappedSec, open: openPrice, high: Math.max(openPrice, live.current), low: Math.min(openPrice, live.current), close: live.current };
+        // Bug-1 fix: only the FIRST bucket of the trading day opens at the
+        // official day open; every later bucket opens at its own first traded
+        // price. The previous check compared _chartDataCache's last bar time
+        // against today's date — but for intraday ranges _chartDataCache stores
+        // SEQUENTIAL bar indices (i * barSecs), not epoch seconds, so the
+        // comparison always evaluated to "first bar" and EVERY 5m/15m/30m/1h
+        // forming candle wrongly opened at the 09:15 day open (large phantom
+        // body/wick that never matched the historical candles). Intraday bars
+        // are session-anchored above, so the session's first bucket is exactly
+        // sessionStartMs.
+        var _isFirstBar = (snappedMs === sessionStartMs);
+        // If the loaded data already contains the CURRENT bucket, the backend
+        // merged its authoritative forming candle into the REST response — seed
+        // from it instead of restarting at the current tick. Without this,
+        // opening the chart mid-bucket resets the candle's open/high/low to the
+        // price at load time instead of the bucket's true values.
+        var _seed = (_chartDataCache && _chartDataCache.length > 0 &&
+                     _chartDataCache[_chartDataCache.length - 1].time === barTime)
+          ? _chartDataCache[_chartDataCache.length - 1] : null;
+        var openPrice = _seed
+          ? _seed.open
+          : ((_isFirstBar && live.open != null && live.open > 0)
+              ? live.open
+              : (live.current > 0 ? live.current : (window._formingCandles['i'] ? window._formingCandles['i'].close : fallbackClose)));
+        var _initHigh = _seed ? Math.max(_seed.high, live.current) : Math.max(openPrice, live.current);
+        var _initLow  = _seed ? Math.min(_seed.low,  live.current) : Math.min(openPrice, live.current);
+        window._formingCandles['i'] = { time: barTime, realTime: snappedSec, open: openPrice, high: _initHigh, low: _initLow, close: live.current };
       }
       var fc = window._formingCandles['i'];
       fc.high = Math.max(fc.high, live.current);
@@ -4010,7 +3821,7 @@ async function fetchWatchlist() {
   try {
     var cached = JSON.parse(localStorage.getItem('llp') || 'null');
     var cachedTs = parseInt(localStorage.getItem('llp_ts') || '0', 10);
-    if (cached && (Date.now() - cachedTs < 600000)) {
+    if (cached && (Date.now() - cachedTs < 300000) && (new Date(cachedTs).toDateString() === new Date().toDateString())) {
       Object.keys(cached).forEach(function(tkr) {
         var pEl2 = document.getElementById('wl-price-' + tkr);
         var chEl = document.getElementById('wl-change-' + tkr);
@@ -4057,6 +3868,12 @@ async function fetchWatchlist() {
             chEl.className = 'wl-change ' + col;
           }
         });
+        try {
+          var existing = JSON.parse(localStorage.getItem('llp') || '{}');
+          var merged = Object.assign({}, existing, data);
+          localStorage.setItem('llp', JSON.stringify(merged));
+          localStorage.setItem('llp_ts', Date.now().toString());
+        } catch(e) {}
       })
       .catch(function(){ /* non-critical */ });
   }

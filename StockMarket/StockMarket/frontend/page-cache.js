@@ -16,6 +16,66 @@
 (function () {
     'use strict';
 
+    /* ------------------------------------------------------------------
+     * BUG-2: persistent-session rehydration.
+     * The backend sets an HttpOnly session cookie on login; the SPA stores
+     * only a NON-SENSITIVE marker + profile in localStorage. When the browser
+     * (or a tab) is closed and reopened, sessionStorage is empty but
+     * localStorage survives -- so copy the marker into sessionStorage here,
+     * synchronously and before any page's inline auth check runs, so the
+     * existing sessionStorage-based UI gates keep working. The real credential
+     * is the HttpOnly cookie and is never exposed to / read by JS.
+     * ------------------------------------------------------------------ */
+    (function _lvRehydrateSession() {
+        try {
+            if (sessionStorage.getItem('token') || !localStorage.getItem('token')) return;
+            sessionStorage.setItem('token', localStorage.getItem('token'));
+            var storedUser = localStorage.getItem('user');
+            if (storedUser && !sessionStorage.getItem('user')) sessionStorage.setItem('user', storedUser);
+
+            // Confirm the HttpOnly cookie is still valid (e.g. the 24h token may
+            // have expired). Only a 401/403 expires the local marker; a network
+            // or 5xx error keeps the optimistic session rather than logging the
+            // user out on a transient blip.
+            fetch('/api/auth/me', { credentials: 'same-origin' }).then(function (r) {
+                if (r.ok) {
+                    return r.json().then(function (user) {
+                        try {
+                            var s = JSON.stringify(user);
+                            localStorage.setItem('user', s);
+                            sessionStorage.setItem('user', s);
+                        } catch (e) {}
+                    });
+                }
+                if (r.status === 401 || r.status === 403) {
+                    try {
+                        sessionStorage.removeItem('token');
+                        sessionStorage.removeItem('user');
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                    } catch (e) {}
+                    var p = (location.pathname.split('/').pop() || '').toLowerCase();
+                    var isAuthPage = p === 'login.html' || p === 'register.html' ||
+                        p === 'forgot-password.html' || p === 'reset-password.html' || p === 'verify-email.html';
+                    if (!isAuthPage) window.location.href = 'login.html';
+                }
+            }).catch(function () { /* network error: keep optimistic session */ });
+        } catch (e) {}
+    })();
+
+    /* BUG-2: invalidate the SERVER session before a page clears its local
+     * auth state on logout — otherwise the HttpOnly cookie (and its JWT) would
+     * survive a "logout" and the session would not truly be terminated.
+     * keepalive lets the request outlive the page navigation that follows. */
+    window.lvServerLogout = function () {
+        try {
+            return fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', keepalive: true })
+                .catch(function () {});
+        } catch (e) {
+            return Promise.resolve();
+        }
+    };
+
     var STORE_PREFIX = 'lv_pc_';
     var MAX_KEYS = 40; // max number of cached URLs before eviction
 
@@ -67,10 +127,12 @@
             var entry = _read(k);
             var now = Date.now();
             var isStale = !entry || (now - entry.cachedAt) > ttlMs;
+            var isCrossDay = entry && (new Date(entry.cachedAt).toDateString() !== new Date().toDateString());
+            var isExpired = !entry || (now - entry.cachedAt > 600000) || isCrossDay;
             var hasCached = entry && entry.data;
 
-            // Immediately paint from cache
-            if (hasCached && callback) {
+            // Immediately paint from cache only if recent and same trading day
+            if (hasCached && !isExpired && callback) {
                 try { callback(entry.data, true /* fromCache */); } catch (e) {}
             }
 

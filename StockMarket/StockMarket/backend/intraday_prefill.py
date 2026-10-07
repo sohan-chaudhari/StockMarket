@@ -110,15 +110,18 @@ def _get_universe() -> List[str]:
 def _get_complete_tickers(session_date: date) -> Set[str]:
     """Return tickers that already have >= COMPLETE_CANDLES 5m rows for session_date."""
     from database import SessionLocal
+    start_dt = datetime.combine(session_date, datetime.min.time())
+    end_dt = start_dt + timedelta(days=1)
     with SessionLocal() as db:
         rows = db.execute(sa_text("""
             SELECT ticker
             FROM   candles
             WHERE  timeframe        = '5m'
-              AND  timestamp::date = :d
+              AND  timestamp >= :start_dt
+              AND  timestamp < :end_dt
             GROUP  BY ticker
             HAVING COUNT(*) >= :n
-        """), {"d": session_date, "n": COMPLETE_CANDLES}).fetchall()
+        """), {"start_dt": start_dt, "end_dt": end_dt, "n": COMPLETE_CANDLES}).fetchall()
     return {r[0] for r in rows}
 
 

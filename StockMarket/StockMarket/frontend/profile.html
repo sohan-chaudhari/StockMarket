@@ -500,7 +500,7 @@
             }
         }
     </style>
-    <script src="page-cache.js"></script>
+    <script src="page-cache.js?v=3"></script>
     <script src="ws.js"></script>
 </head>
 
@@ -683,7 +683,7 @@
 
     <script src="nav.js?v=9"></script>
     <script src="stocks.js?v=25"></script>
-    <script src="index.js?v=45"></script>
+    <script src="index.js?v=46"></script>
     <script>
         // --- AUTH CHECK ---
         (function checkAuth() {
@@ -750,13 +750,15 @@
         function confirmLogout() {
             hideLogoutConfirmation();
             document.getElementById('logout-loader').style.display = 'flex';
-            setTimeout(() => {
+            // BUG-2: invalidate the HttpOnly server session too, not just local state
+            if (window.lvServerLogout) window.lvServerLogout();
+            try {
                 sessionStorage.removeItem('token');
                 sessionStorage.removeItem('user');
-                try {
-                    localStorage.removeItem('token');
-                    localStorage.removeItem('user');
-                } catch(e) {}
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+            } catch(e) {}
+            setTimeout(() => {
                 window.location.href = 'index.html';
             }, 1500);
         }

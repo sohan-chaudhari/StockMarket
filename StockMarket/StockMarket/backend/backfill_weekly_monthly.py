@@ -119,6 +119,8 @@ def phase1_migrate_stock_data() -> None:
 
 def _tickers_missing_1w_coverage():
     """Active NSE tickers that have no 1W candle in the 2yr->5yr range."""
+    from_ts = datetime.combine(FIVE_YR_CUTOFF, datetime.min.time())
+    to_ts   = datetime.combine(TWO_YR_CUTOFF, datetime.min.time())
     with SessionLocal() as db:
         return db.execute(sa_text("""
             SELECT sm.ticker
@@ -128,15 +130,16 @@ def _tickers_missing_1w_coverage():
                   SELECT 1 FROM candles c
                   WHERE c.ticker    = sm.ticker
                     AND c.timeframe = '1W'
-                    AND c.timestamp::date >= :from_d
-                    AND c.timestamp::date <  :to_d
+                    AND c.timestamp >= :from_ts
+                    AND c.timestamp <  :to_ts
               )
             ORDER BY sm.ticker
-        """), {"from_d": FIVE_YR_CUTOFF, "to_d": TWO_YR_CUTOFF}).fetchall()
+        """), {"from_ts": from_ts, "to_ts": to_ts}).fetchall()
 
 
 def _tickers_missing_1m_coverage():
     """Active NSE tickers that have no 1M candle older than 5yr cutoff."""
+    cut_ts = datetime.combine(FIVE_YR_CUTOFF, datetime.min.time())
     with SessionLocal() as db:
         return db.execute(sa_text("""
             SELECT sm.ticker
@@ -146,10 +149,10 @@ def _tickers_missing_1m_coverage():
                   SELECT 1 FROM candles c
                   WHERE c.ticker    = sm.ticker
                     AND c.timeframe = '1M'
-                    AND c.timestamp::date < :cutoff
+                    AND c.timestamp < :cut_ts
               )
             ORDER BY sm.ticker
-        """), {"cutoff": FIVE_YR_CUTOFF}).fetchall()
+        """), {"cut_ts": cut_ts}).fetchall()
 
 
 def _date_chunks(start: date, end: date, chunk_days: int = 365):
@@ -335,11 +338,36 @@ def phase2_fetch_missing_1m() -> None:
 
 
 # ===========================================================================
-# Helpers for startup integration (called from main.py)
+# Helpers for startup & closed-market background worker (called from main.py)
 # ===========================================================================
 
+_attempted_tickers = set()
+
+
+def is_market_open_or_opening_soon() -> bool:
+    """
+    Returns True if Indian market is open or will open within 30 minutes.
+    Pause window: Mon-Fri 08:45 to 15:45 IST on trading days.
+    """
+    try:
+        from exchange_calendar import nse_calendar
+        from datetime import time as dt_time, timezone
+        now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
+        if not nse_calendar.is_trading_day(now_ist.date()):
+            return False
+        t = now_ist.time()
+        return dt_time(8, 45) <= t <= dt_time(15, 45)
+    except Exception:
+        now = datetime.now()
+        if now.weekday() >= 5:
+            return False
+        return 8 <= now.hour < 16
+
+
 def needs_1w_backfill() -> bool:
-    """True if more than 50 active NSE tickers are missing any 1W coverage."""
+    """True if active NSE tickers are missing 1W coverage in the 2yr->5yr range."""
+    from_ts = datetime.combine(FIVE_YR_CUTOFF, datetime.min.time())
+    to_ts   = datetime.combine(TWO_YR_CUTOFF, datetime.min.time())
     with SessionLocal() as db:
         missing = db.execute(sa_text("""
             SELECT COUNT(*)
@@ -347,14 +375,18 @@ def needs_1w_backfill() -> bool:
             WHERE sm.is_active = TRUE AND sm.exchange = 'NSE'
               AND NOT EXISTS (
                   SELECT 1 FROM candles c
-                  WHERE c.ticker = sm.ticker AND c.timeframe = '1W'
+                  WHERE c.ticker    = sm.ticker
+                    AND c.timeframe = '1W'
+                    AND c.timestamp >= :from_ts
+                    AND c.timestamp <  :to_ts
               )
-        """)).scalar()
-    return (missing or 0) > 50
+        """), {"from_ts": from_ts, "to_ts": to_ts}).scalar()
+    return (missing or 0) > 0
 
 
 def needs_1m_backfill() -> bool:
-    """True if more than 20 active NSE tickers are missing any 1M coverage."""
+    """True if active NSE tickers are missing 1M coverage older than 5yr cutoff."""
+    cut_ts = datetime.combine(FIVE_YR_CUTOFF, datetime.min.time())
     with SessionLocal() as db:
         missing = db.execute(sa_text("""
             SELECT COUNT(*)
@@ -362,15 +394,124 @@ def needs_1m_backfill() -> bool:
             WHERE sm.is_active = TRUE AND sm.exchange = 'NSE'
               AND NOT EXISTS (
                   SELECT 1 FROM candles c
-                  WHERE c.ticker = sm.ticker AND c.timeframe = '1M'
+                  WHERE c.ticker    = sm.ticker
+                    AND c.timeframe = '1M'
+                    AND c.timestamp < :cut_ts
               )
-        """)).scalar()
-    return (missing or 0) > 20
+        """), {"cut_ts": cut_ts}).scalar()
+    return (missing or 0) > 0
+
+
+def run_controlled_closed_backfill_batch(batch_size: int = 5) -> dict:
+    """
+    Controlled, resumable batch processor called periodically during market-closed hours.
+    Processes up to batch_size missing tickers per cycle.
+    Tracks attempted tickers in memory to avoid redundant attempts on delisted/new IPOs.
+    """
+    if is_market_open_or_opening_soon():
+        return {
+            "status": "paused_market_hours",
+            "processed": 0,
+            "message": "Market is open or opening soon"
+        }
+
+    # 1. Check missing 1W coverage
+    candidates_1w = _tickers_missing_1w_coverage()
+    unattempted_1w = [t for t in candidates_1w if (t[0], '1W') not in _attempted_tickers]
+
+    if unattempted_1w:
+        batch = unattempted_1w[:batch_size]
+        for (ticker,) in batch:
+            _attempted_tickers.add((ticker, '1W'))
+
+        fetched = _phase2_fetch_into_stock_data(
+            from_d=FIVE_YR_CUTOFF, to_d=TWO_YR_CUTOFF,
+            missing_tickers=batch, label=f"1W batch ({len(batch)} tickers)"
+        )
+
+        if fetched > 0:
+            with SessionLocal() as db:
+                db.execute(sa_text("""
+                    INSERT INTO candles
+                        (ticker, timeframe, timestamp, open, high, low, close, volume,
+                         is_completed, is_backfilled, data_source)
+                    SELECT
+                        ticker, '1W',
+                        DATE_TRUNC('week', date)::timestamp,
+                        (ARRAY_AGG(open  ORDER BY date ASC))[1],
+                        MAX(high), MIN(low),
+                        (ARRAY_AGG(close ORDER BY date DESC))[1],
+                        SUM(volume)::bigint,
+                        TRUE, TRUE, 'SD_AGG'
+                    FROM stock_data
+                    WHERE date >= :from_d AND date < :to_d
+                      AND open IS NOT NULL AND close IS NOT NULL AND open > 0
+                    GROUP BY ticker, DATE_TRUNC('week', date)
+                    ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+                """), {"from_d": FIVE_YR_CUTOFF, "to_d": TWO_YR_CUTOFF})
+                db.commit()
+
+        return {
+            "status": "in_progress",
+            "timeframe": "1W",
+            "processed": len(batch),
+            "remaining": len(unattempted_1w) - len(batch)
+        }
+
+    # 2. Check missing 1M coverage
+    candidates_1m = _tickers_missing_1m_coverage()
+    unattempted_1m = [t for t in candidates_1m if (t[0], '1M') not in _attempted_tickers]
+
+    if unattempted_1m:
+        batch = unattempted_1m[:batch_size]
+        for (ticker,) in batch:
+            _attempted_tickers.add((ticker, '1M'))
+
+        fetched = _phase2_fetch_into_stock_data(
+            from_d=TEN_YR_CUTOFF, to_d=FIVE_YR_CUTOFF,
+            missing_tickers=batch, label=f"1M batch ({len(batch)} tickers)"
+        )
+
+        if fetched > 0:
+            with SessionLocal() as db:
+                db.execute(sa_text("""
+                    INSERT INTO candles
+                        (ticker, timeframe, timestamp, open, high, low, close, volume,
+                         is_completed, is_backfilled, data_source)
+                    SELECT
+                        ticker, '1M',
+                        DATE_TRUNC('month', date)::timestamp,
+                        (ARRAY_AGG(open  ORDER BY date ASC))[1],
+                        MAX(high), MIN(low),
+                        (ARRAY_AGG(close ORDER BY date DESC))[1],
+                        SUM(volume)::bigint,
+                        TRUE, TRUE, 'SD_AGG'
+                    FROM stock_data
+                    WHERE date < :cutoff
+                      AND open IS NOT NULL AND close IS NOT NULL AND open > 0
+                    GROUP BY ticker, DATE_TRUNC('month', date)
+                    ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+                """), {"cutoff": FIVE_YR_CUTOFF})
+                db.commit()
+
+        return {
+            "status": "in_progress",
+            "timeframe": "1M",
+            "processed": len(batch),
+            "remaining": len(unattempted_1m) - len(batch)
+        }
+
+    return {
+        "status": "complete",
+        "processed": 0,
+        "remaining": 0,
+        "message": "All missing 1W and 1M tickers evaluated"
+    }
 
 
 def run_startup_backfill() -> None:
     """
-    Called from main.py startup task.
+    Called from main.py startup task or CLI.
     Step 1 — Phase 1: SQL aggregate existing stock_data -> candles(1W/1M). Fast, idempotent.
     Step 2 — Phase 2: For tickers still missing coverage, fetch 1D from AngelOne ->
               store in stock_data -> re-aggregate. Skips automatically once complete.

@@ -55,8 +55,67 @@ SECRET_KEY = _SECRET_KEY_RAW
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
-# Bearer token scheme
-security = HTTPBearer()
+# Bearer token scheme. auto_error=False so a missing/malformed Authorization
+# header does not short-circuit before the HttpOnly session cookie is tried
+# (BUG-2: a browser that was closed and reopened has the cookie but no
+# JS-readable token).
+security = HTTPBearer(auto_error=False)
+
+# ==================== PERSISTENT SESSION COOKIE (BUG-2) ====================
+# The JWT is stored in an HttpOnly cookie so a user who closes/reopens the
+# browser (or the tab) stays signed in for the configured token lifetime.
+# The cookie is the ONLY persisted credential — it is never exposed to JS.
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "leverage_token")
+ACCESS_TOKEN_EXPIRE_SECONDS = ACCESS_TOKEN_EXPIRE_HOURS * 3600
+
+
+def _cookie_secure(request: Optional[Request] = None) -> bool:
+    """Secure flag: explicit env override, else true for HTTPS requests.
+    A Secure cookie is silently dropped over plain HTTP, which would break
+    local development, so it is only set when the transport is provably TLS."""
+    env = os.getenv("AUTH_COOKIE_SECURE", "").strip().lower()
+    if env in ("1", "true", "yes"):
+        return True
+    if env in ("0", "false", "no"):
+        return False
+    try:
+        return bool(request is not None and request.url.scheme == "https")
+    except Exception:
+        return False
+
+
+def set_auth_cookie(response, token: str, request: Optional[Request] = None) -> None:
+    """Persist the access token as an HttpOnly, SameSite=Lax cookie."""
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request),
+        max_age=ACCESS_TOKEN_EXPIRE_SECONDS,
+        path="/",
+    )
+
+
+def clear_auth_cookie(response) -> None:
+    response.delete_cookie(AUTH_COOKIE_NAME, path="/")
+
+
+def iter_request_tokens(request: Optional[Request],
+                        credentials: Optional[HTTPAuthorizationCredentials]):
+    """Yield candidate JWT strings in priority order — Authorization header
+    first (kept for API clients/tests), then the HttpOnly session cookie.
+    Placeholder strings are never yielded."""
+    seen = set()
+    if credentials is not None and credentials.credentials:
+        c = credentials.credentials.strip()
+        if c and c.lower() not in ("null", "undefined") and c not in seen:
+            seen.add(c)
+            yield c
+    if request is not None:
+        c = request.cookies.get(AUTH_COOKIE_NAME)
+        if c and c not in seen:
+            yield c
 
 # ==================== LOGGING SETUP ====================
 if not os.path.exists('logs'):
@@ -238,10 +297,17 @@ def is_token_blacklisted(db: Session, jti: str) -> bool:
 
 
 def blacklist_token(db: Session, jti: str):
-    """Add a token to the blacklist."""
-    blacklisted = models.TokenBlacklist(token_jti=jti)
-    db.add(blacklisted)
-    db.commit()
+    """Add a token to the blacklist. Idempotent, so calling logout twice (or
+    a client retry) cannot violate the token_jti unique constraint."""
+    if not jti:
+        return
+    if is_token_blacklisted(db, jti):
+        return
+    try:
+        db.add(models.TokenBlacklist(token_jti=jti))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 # ==================== EMAIL SENDING ====================
@@ -583,19 +649,28 @@ def send_password_reset_confirmation_email(email: str, name: Optional[str] = Non
 # ==================== AUTH DEPENDENCIES ====================
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db)
 ) -> models.User:
-    """Dependency to get the current authenticated user."""
+    """Dependency to get the current authenticated user.
+
+    BUG-2: accepts the JWT from either the Authorization header or the
+    HttpOnly session cookie, so a returning browser (whose JS storage was
+    cleared) is still authenticated as long as the cookie is valid.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    token = credentials.credentials
-    payload = decode_token(token)
-    
+
+    payload = None
+    for token in iter_request_tokens(request, credentials):
+        payload = decode_token(token)
+        if payload is not None:
+            break
+
     if payload is None:
         raise credentials_exception
     
@@ -625,19 +700,22 @@ async def get_current_user(
 
 
 def get_current_user_optional(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
     db: Session = Depends(get_db)
 ) -> Optional[models.User]:
-    """Optional auth - returns None if not authenticated or on any error."""
+    """Optional auth - returns None if not authenticated or on any error.
+
+    BUG-2: also accepts the HttpOnly session cookie, mirroring
+    get_current_user().
+    """
     try:
-        if credentials is None or not credentials.credentials:
-            return None
-        
-        token = credentials.credentials
-        if not token or token in ("null", "undefined"):
-            return None
-        payload = decode_token(token)
-        
+        payload = None
+        for token in iter_request_tokens(request, credentials):
+            payload = decode_token(token)
+            if payload is not None:
+                break
+
         if payload is None:
             return None
         

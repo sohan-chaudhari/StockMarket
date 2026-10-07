@@ -128,6 +128,27 @@
 
   function connect() {
     if (!wsActive || isPageLeaving) return;
+
+    // Safety Mutex: Never open a second socket if one is already CONNECTING or OPEN
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+      return;
+    }
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
+    // Clean up any stale/closing socket
+    if (ws) {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      try { ws.close(); } catch (e) {}
+      ws = null;
+    }
+
     var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url      = protocol + '//' + window.location.host + '/ws/dashboard';
 
@@ -141,15 +162,22 @@
     }
 
     newWs.onopen = function () {
+      if (ws !== newWs) return;
       console.log('[DashWS] Connected');
       reconnectAttempt = 0;
       startPing();
       if (DASHBOARD_TICKERS.length > 0 && newWs.readyState === WebSocket.OPEN) {
         newWs.send(JSON.stringify({ type: 'subscribe', topics: DASHBOARD_TICKERS }));
       }
+      var currentTkr = (window.currentTicker || window._chartTicker || '').toUpperCase().replace(/\.(NS|BO)$/i, '');
+      if (currentTkr && newWs.readyState === WebSocket.OPEN) {
+        newWs.send(JSON.stringify({ type: 'subscribe', topics: [currentTkr] }));
+        newWs.send(JSON.stringify({ type: 'view_ticker', ticker: currentTkr }));
+      }
     };
 
     newWs.onmessage = function (evt) {
+      if (ws !== newWs) return;
       lastMessageTime = Date.now();
       try { handleMessage(JSON.parse(evt.data)); } catch (e) {}
     };
@@ -157,11 +185,13 @@
     newWs.onclose = function () {
       stopPing();
       if (isPageLeaving) return;
+      if (ws !== newWs) return; // Stale socket guard: do not reconnect on obsolete sockets
       console.log('[DashWS] Disconnected');
       scheduleReconnect();
     };
 
     newWs.onerror = function (e) {
+      if (ws !== newWs) return;
       // Suppress noisy error logging when navigating or entering Back-Forward Cache
       if (isPageLeaving || document.hidden || (ws && (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED))) {
         return;

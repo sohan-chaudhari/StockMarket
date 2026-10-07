@@ -29,6 +29,7 @@ Key rules:
 """
 
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass
@@ -219,6 +220,7 @@ class RetentionService:
                     # Cursor always advances (even on failure) so a persistently failing
                     # ticker cannot cause an infinite retry loop; it resumes next run.
                     last_ticker = ticker
+                    time.sleep(0.01)  # Throttle CPU and yield execution between tickers
                     try:
                         src_n, tgt_n = self._process_ticker(db, rule, cutoff, ticker)
                     except Exception as e:

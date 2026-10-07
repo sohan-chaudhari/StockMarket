@@ -159,7 +159,6 @@
   }
 
   /* ===================== SEARCH ===================== */
-  var _navFetchingStocks = false;
   function initSearch() {
     var input = document.getElementById('stockSearch');
     var results = document.getElementById('searchResults');
@@ -180,16 +179,9 @@
         }
       } catch (e) {}
 
-      // If cache miss, fetch fresh stocks from API asynchronously
-      if (!_navFetchingStocks) {
-        _navFetchingStocks = true;
-        fetch('/api/all-stocks').then(function(r) { return r.json(); }).then(function(stocks) {
-          if (Array.isArray(stocks) && stocks.length > 0) {
-            window.ALL_STOCKS = stocks;
-            try { localStorage.setItem('leverage_stocks', JSON.stringify(stocks)); } catch(e){}
-            window.dispatchEvent(new Event('stocksLoaded'));
-          }
-        }).catch(function(){}).finally(function(){ _navFetchingStocks = false; });
+      // Trigger canonical stock loader if not already triggered (single in-flight owner)
+      if (typeof window !== 'undefined' && typeof window.loadAllStocks === 'function') {
+        window.loadAllStocks();
       }
 
       return (typeof SEARCH_FALLBACK !== 'undefined') ? SEARCH_FALLBACK : [];
@@ -315,6 +307,12 @@
         }).catch(function() {});
       }, 30);
     }
+
+    input.addEventListener('focus', function () {
+      if (typeof window !== 'undefined' && typeof window.loadAllStocks === 'function') {
+        window.loadAllStocks();
+      }
+    });
 
     input.addEventListener('input', function (e) {
       var query = e.target.value.trim().toLowerCase();

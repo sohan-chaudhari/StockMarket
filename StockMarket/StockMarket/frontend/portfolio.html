@@ -445,7 +445,7 @@
             box-shadow: inset 4px 0 0 var(--accent-blue);
         }
     </style>
-    <script src="page-cache.js"></script>
+    <script src="page-cache.js?v=3"></script>
     <script src="ws.js"></script>
 </head>
 
@@ -586,9 +586,15 @@
         function confirmLogout() {
             hideLogoutConfirmation();
             document.getElementById('logout-loader').style.display = 'flex';
-            setTimeout(() => {
+            // BUG-2: invalidate the HttpOnly server session too, not just local state
+            if (window.lvServerLogout) window.lvServerLogout();
+            try {
                 sessionStorage.removeItem('token');
                 sessionStorage.removeItem('user');
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+            } catch (e) {}
+            setTimeout(() => {
                 window.location.href = 'index.html';
             }, 1500);
         }

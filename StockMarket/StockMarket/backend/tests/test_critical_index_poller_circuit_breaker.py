@@ -22,7 +22,7 @@ class TestCriticalIndexPollerCircuitBreaker(unittest.TestCase):
         return poller
 
     def _run_briefly(self, poller, condition, timeout=2.0):
-        with patch("price_poller.time.sleep"):
+        with patch("price_poller.is_market_open_now", return_value=True), patch("price_poller.time.sleep"):
             t = threading.Thread(target=poller._run_loop, daemon=True)
             t.start()
             deadline = time.time() + timeout
@@ -65,6 +65,19 @@ class TestCriticalIndexPollerCircuitBreaker(unittest.TestCase):
 
         self.assertEqual(poller._consecutive_cycle_failures, 0)
         self.assertEqual(poller._current_interval, CRITICAL_POLL_INTERVAL)
+
+    def test_pauses_when_market_closed(self):
+        poller = self._make_poller(poll_result=True)
+        with patch("price_poller.is_market_open_now", return_value=False):
+            t = threading.Thread(target=poller._run_loop, daemon=True)
+            t.start()
+            # Give thread moment to run one iteration
+            time.sleep(0.05)
+            poller._stop_event.set()
+            t.join(timeout=1)
+
+        self.assertEqual(poller._stats["polls"], 0)
+        self.assertEqual(poller._consecutive_cycle_failures, 0)
 
 
 if __name__ == "__main__":

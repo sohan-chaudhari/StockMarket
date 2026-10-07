@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from typing import Optional
 from datetime import datetime, timedelta
 import time
 import threading
@@ -73,7 +75,7 @@ def register(request: Request, user: schemas.UserRegister, db: Session = Depends
 
 @router.post("/login", response_model=schemas.TokenResponse)
 @limiter.limit("20/hour")
-def login(creds: schemas.UserLogin, request: Request, db: Session = Depends(get_db)):
+def login(creds: schemas.UserLogin, request: Request, response: Response, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == creds.email).with_for_update().first()
     
     if user:
@@ -96,12 +98,39 @@ def login(creds: schemas.UserLogin, request: Request, db: Session = Depends(get_
     auth.log_login_attempt(db, creds.email, True, request)
     
     token = auth.create_access_token(data={"sub": str(user.user_id), "user_id": user.user_id, "email": user.email})
-    
+
+    # BUG-2: persist the session in an HttpOnly cookie so closing/reopening the
+    # browser keeps the user signed in for the token lifetime. The JSON token is
+    # still returned for the current tab (backwards-compatible API contract).
+    auth.set_auth_cookie(response, token, request)
+
     return schemas.TokenResponse(
         access_token=token,
         token_type="bearer",
         user=schemas.UserResponse.from_orm(user)
     )
+
+
+@router.post("/logout")
+def logout(
+    request: Request,
+    response: Response,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+    db: Session = Depends(get_db),
+):
+    """Invalidate the current session: blacklist its JWT id and clear the
+    HttpOnly session cookie. Idempotent and safe to call with a stale token."""
+    token = None
+    for candidate in auth.iter_request_tokens(request, credentials):
+        token = candidate
+        break
+    if token:
+        payload = auth.decode_token(token)
+        jti = payload.get("jti") if payload else None
+        if jti:
+            auth.blacklist_token(db, jti)
+    auth.clear_auth_cookie(response)
+    return {"message": "Logged out"}
 
 @router.post("/verify-email")
 def verify_email(req: schemas.VerifyEmailRequest, request: Request, db: Session = Depends(get_db)):

@@ -31,6 +31,21 @@ MAX_BACKOFF_INTERVAL = 60.0
 CRITICAL_INDICES = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCAP', 'SMALLCAP']
 CRITICAL_POLL_INTERVAL = 0.5  # seconds between each poll round (was 1.0 — halved for faster index updates)
 
+def is_market_open_now() -> bool:
+    """True if Indian stock market is currently open for regular trading."""
+    try:
+        from exchange_calendar import nse_calendar, IST
+        from datetime import datetime
+        return nse_calendar.is_market_open(datetime.now(IST))
+    except Exception:
+        from datetime import datetime, timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist)
+        if now.weekday() >= 5:
+            return False
+        t = now.time()
+        return (t.hour > 9 or (t.hour == 9 and t.minute >= 15)) and (t.hour < 15 or (t.hour == 15 and t.minute < 30))
+
 class PricePoller:
     def __init__(self, angelone_service, tickers=None):
         self.service = angelone_service
@@ -78,6 +93,14 @@ class PricePoller:
         print(f"[PricePoller] Started ({MAX_WORKERS} workers, {len(self.all_tickers)} stocks)")
 
         while self._running:
+            if not is_market_open_now():
+                # Market closed: do not dispatch bulk polling cycle across workers.
+                # Reset failures and sleep 60s without creating worker futures.
+                self._consecutive_failures = 0
+                self._current_interval = CYCLE_INTERVAL
+                await asyncio.sleep(60)
+                continue
+
             try:
                 cycle_ok = await self._run_cycle(loop)
             except Exception as e:
@@ -390,6 +413,12 @@ class CriticalIndexPoller:
         print(f"[CriticalIndexPoller] Tokens resolved: {list(self._token_cache.keys())}")
 
         while not self._stop_event.is_set():
+            if not is_market_open_now():
+                self._consecutive_cycle_failures = 0
+                self._current_interval = CRITICAL_POLL_INTERVAL
+                self._stop_event.wait(30.0)
+                continue
+
             cycle_start = time.time()
 
             # Re-resolve tokens for any missing
@@ -405,6 +434,9 @@ class CriticalIndexPoller:
                     cycle_success = True
                 self._stats["polls"] += 1
                 time.sleep(0.05)  # 50ms between each, so 6 indices = ~300ms total
+
+            if self._stop_event.is_set():
+                break
 
             if cycle_success:
                 self._consecutive_cycle_failures = 0

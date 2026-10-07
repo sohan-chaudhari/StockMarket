@@ -438,7 +438,7 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if path.startswith('/logos/') or path.endswith(('.svg', '.png', '.jpg', '.jpeg', '.gif', '.ico')):
             response.headers['Cache-Control'] = 'public, max-age=86400'
-        elif path in ('/drawings.js', '/drawing-core.js', '/news.js', '/stock-ui.js', '/dashboard.js'):
+        elif path in ('/drawings.js', '/drawing-core.js', '/news.js', '/stock-ui.js', '/dashboard.js', '/page-cache.js'):
             # Under active iteration — always revalidate so edits are picked up
             # on the very next reload without needing a manual ?v= bump.
             # Restore to the blanket max-age=3600 below once this stabilizes.
@@ -1226,6 +1226,27 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         backfill_locks.add(clean_ticker)
         backfill_locks.add(ticker)
 
+    # Closed-market safety guard:
+    # If market is closed and recent candles (within last 5 days) already exist,
+    # skip background network backfill to prevent false gap-fill storms during off-market hours.
+    if not is_market_open_now():
+        try:
+            with database.SessionLocal() as check_db:
+                five_days_ago = now - timedelta(days=5)
+                recent_count = check_db.query(models.Candle.id).filter(
+                    models.Candle.ticker.in_([clean_ticker, ticker]),
+                    models.Candle.timeframe == interval,
+                    models.Candle.timestamp >= five_days_ago
+                ).limit(30).count()
+                if recent_count >= 30:
+                    with _backfill_lock:
+                        backfill_locks.discard(clean_ticker)
+                        backfill_locks.discard(ticker)
+                    print(f"[GapFill] Closed market: {clean_ticker} {interval} already has {recent_count} recent candles, skipping backfill.")
+                    return
+        except Exception as e:
+            print(f"[GapFill] Error checking recent candles for {clean_ticker}: {e}")
+
     # HARDEN-XX: db session is opened later, only once network I/O is done --
     # see the "Phase 2" comment below. `db = None` here lets the except/finally
     # blocks tell "never opened" apart from "opened, needs rollback/close".
@@ -1512,9 +1533,17 @@ async def user_websocket_endpoint(websocket: WebSocket):
 
         auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
 
-        token = auth_msg.get("token", "")
+        token = auth_msg.get("token", "") if isinstance(auth_msg, dict) else ""
 
-        payload = auth.decode_token(token)
+        # BUG-2: prefer the token from the auth message, but fall back to the
+        # HttpOnly session cookie (browsers send it on the WS handshake) so a
+        # returning browser without a JS-readable token still authenticates.
+        payload = auth.decode_token(token) if token else None
+
+        if payload is None:
+            _cookie_token = websocket.cookies.get(auth.AUTH_COOKIE_NAME)
+            if _cookie_token:
+                payload = auth.decode_token(_cookie_token)
 
         if not payload:
 
@@ -1991,10 +2020,11 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
         # Use _received_ts (server receive time) for stale detection — NOT exchange timestamp.
         # This correctly handles: price hasn't moved → exchange doesn't send tick → _ts looks old.
         is_stale = False
-        if tick_data and market_open:
+        if tick_data:
             recv_ts = tick_data.get("_received_ts") or tick_data.get("_ts", 0)
             if isinstance(recv_ts, (float, int)) and recv_ts > 1e9:
-                if now_ts_sec - recv_ts > 900:  # 900s (15 min) threshold to avoid premature drop to conflicting DB candles
+                max_age_sec = 900 if market_open else 1800
+                if now_ts_sec - recv_ts > max_age_sec:
                     is_stale = True
 
         if tick_data and tick_data.get("current_price", 0) > 0 and not missing_ohlc and not is_stale:
@@ -2445,8 +2475,8 @@ def yfinance_sync_inactive(db: Session = Depends(get_db)):
 
 # ==================== MARKET MOVERS ====================
 
-def is_market_open_now():
-    now = datetime.now(IST)
+def is_market_open_now(dt=None):
+    now = dt if dt is not None else database.get_ist_now()
     today = now.date()
     if today.weekday() >= 5:
         return False
@@ -2504,27 +2534,32 @@ _MOVERS_REFRESH_SEC = 10
 _db_baseline_prices: Dict[str, Dict] = {}
 _db_baseline_ts: float = 0.0
 _db_baseline_lock = threading.Lock()
+_db_baseline_query_lock = threading.Lock()
 
 
 def _refresh_db_baseline_sync():
     """Background helper to query 1D candles from DB and update _db_baseline_prices without blocking request handlers."""
     global _db_baseline_prices, _db_baseline_ts
+    if not _db_baseline_query_lock.acquire(blocking=False):
+        return
     try:
         from database import SessionLocal
         from sqlalchemy import text
         db = SessionLocal()
-        res = db.execute(text('''
-            WITH ranked AS (
-                SELECT ticker, open, high, low, close, volume, timestamp,
-                       ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) as rn
-                FROM candles
-                WHERE timeframe = '1D' AND close > 0 AND timestamp >= NOW() - INTERVAL '30 days'
-            )
-            SELECT ticker, open, high, low, close, volume, timestamp, rn
-            FROM ranked
-            WHERE rn <= 2
-        ''')).fetchall()
-        db.close()
+        try:
+            res = db.execute(text('''
+                WITH ranked AS (
+                    SELECT ticker, open, high, low, close, volume, timestamp,
+                           ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY timestamp DESC) as rn
+                    FROM candles
+                    WHERE timeframe = '1D' AND close > 0 AND timestamp >= NOW() - INTERVAL '30 days'
+                )
+                SELECT ticker, open, high, low, close, volume, timestamp, rn
+                FROM ranked
+                WHERE rn <= 2
+            ''')).fetchall()
+        finally:
+            db.close()
         
         ticker_candles = {}
         for row in res:
@@ -2537,7 +2572,8 @@ def _refresh_db_baseline_sync():
                 'high': float(h or 0),
                 'low': float(l or 0),
                 'close': float(c or 0),
-                'volume': int(v or 0)
+                'volume': int(v or 0),
+                'timestamp': ts,
             }
         
         baseline = {}
@@ -2567,6 +2603,7 @@ def _refresh_db_baseline_sync():
                 'volume': l_vol,
                 'prev_volume': p_vol,
                 'vol_surge': vol_surge,
+                'timestamp': latest.get('timestamp'),
             }
         with _db_baseline_lock:
             _db_baseline_prices = baseline
@@ -2574,6 +2611,8 @@ def _refresh_db_baseline_sync():
         print(f"[Movers] DB baseline refreshed for {len(baseline)} tickers")
     except Exception as e:
         print(f"[Movers] DB baseline query error: {e}")
+    finally:
+        _db_baseline_query_lock.release()
 
 
 def _get_all_market_prices() -> dict:
@@ -2653,6 +2692,18 @@ def _build_movers(prices: dict, cap_filter: str = "all", sector_filter: str = No
         # Discard extreme corrupted swings (> 50% or zero/negative prices)
         if abs(change_pct) > 50.0 or cp <= 0 or prev_close <= 0:
             continue
+
+        # Discard dormant tickers whose last candle is older than 7 calendar days
+        ts_val = p.get("timestamp")
+        if ts_val is not None:
+            try:
+                now_dt = database.get_ist_now()
+                ts_naive = ts_val.replace(tzinfo=None) if hasattr(ts_val, 'replace') and ts_val.tzinfo else ts_val
+                now_naive = now_dt.replace(tzinfo=None) if hasattr(now_dt, 'replace') and now_dt.tzinfo else now_dt
+                if (now_naive - ts_naive).total_seconds() > 7 * 86400:
+                    continue
+            except Exception:
+                pass
 
         cap = _CAP_MAP.get(ticker, "small")
         if cap_filter in ["large", "mid", "small"] and cap != cap_filter:
@@ -3279,6 +3330,8 @@ def _calculate_news_sentiment(text: str) -> dict:
 
 _news_search_cache: dict = {}   # key → {data, ts}
 _NEWS_SEARCH_TTL = 300          # 5-minute cache
+_news_inflight_tasks: dict = {} # key → asyncio.Task
+_news_task_lock: asyncio.Lock = asyncio.Lock()
 
 # Domains that publish high-quality Indian financial news
 _FINANCE_SOURCES = {
@@ -3549,14 +3602,14 @@ async def news_search(query: str, limit: int = 20):
         def _fetch_single_rq(rq):
             try:
                 rss_url = f"{base_url}?q={quote_plus(rq)}&hl=en-IN&gl=IN&ceid=IN:en"
-                _r = _req.get(rss_url, timeout=5,
+                _r = _req.get(rss_url, timeout=3.5,
                               headers={"User-Agent": "Mozilla/5.0 (compatible; StockApp/1.0)"})
                 return (rq, feedparser.parse(_r.text))
             except Exception as e:
                 print(f"[News Search] query='{rq}': {e}")
                 return (rq, None)
 
-        with ThreadPoolExecutor(max_workers=min(len(rss_queries), 6)) as executor:
+        with ThreadPoolExecutor(max_workers=min(len(rss_queries), 2)) as executor:
             results = list(executor.map(_fetch_single_rq, rss_queries))
 
         for rq, feed in results:
@@ -3617,7 +3670,7 @@ async def news_search(query: str, limit: int = 20):
                 target_search = f"{cname or ticker_no_ns} stock news"
             try:
                 rss_url = f"{base_url}?q={quote_plus(target_search)}&hl=en-IN&gl=IN&ceid=IN:en"
-                _r = _req.get(rss_url, timeout=8,
+                _r = _req.get(rss_url, timeout=3.5,
                               headers={"User-Agent": "Mozilla/5.0 (compatible; StockApp/1.0)"})
                 feed = feedparser.parse(_r.text)
                 for entry in feed.entries:
@@ -3666,7 +3719,25 @@ async def news_search(query: str, limit: int = 20):
         return _arts[:limit]
 
     # Run the blocking feedparser calls in a thread so we don't block the event loop
-    articles = await asyncio.to_thread(_parse_rss_queries)
+    # Inflight deduplication: reuse running task for identical cache_key
+    created = False
+    async with _news_task_lock:
+        cached = _news_search_cache.get(cache_key)
+        if cached and (time.time() - cached["ts"]) < _NEWS_SEARCH_TTL:
+            return cached["data"]
+        task = _news_inflight_tasks.get(cache_key)
+        if task is None or task.done():
+            task = asyncio.create_task(asyncio.to_thread(_parse_rss_queries))
+            _news_inflight_tasks[cache_key] = task
+            created = True
+
+    try:
+        articles = await task
+    finally:
+        if created:
+            async with _news_task_lock:
+                _news_inflight_tasks.pop(cache_key, None)
+
     if articles:
         _news_search_cache[cache_key] = {"data": articles, "ts": time.time()}
         return articles
@@ -5109,7 +5180,8 @@ def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db
 
 # In-memory cache for yfinance intraday results (no DB persistence)
 # Key: (ticker, interval) -> (timestamp, list of Candle-like dicts)
-_yf_intraday_cache: Dict[Tuple[str, str], Tuple[float, List[Dict]]] = {}
+_YF_INTRADAY_CACHE_MAX = 200
+_yf_intraday_cache: "OrderedDict[Tuple[str, str], Tuple[float, List[Dict]]]" = OrderedDict()
 # Per-ticker cooldown: minimum seconds between yfinance fetches for same ticker
 _yf_last_fetch: Dict[str, float] = {}
 _YF_COOLDOWN = 60  # 60 seconds per ticker
@@ -5225,6 +5297,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     if cache_key in _yf_intraday_cache:
         cached_at, cached_data = _yf_intraday_cache[cache_key]
         if now_ts - cached_at < _get_yf_cache_ttl():
+            _yf_intraday_cache.move_to_end(cache_key)
             _monitoring["yfinance_cache_hits"] += 1
             return cached_data
     _monitoring["yfinance_cache_misses"] += 1
@@ -5233,6 +5306,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     last_fetch = _yf_last_fetch.get(clean_ticker, 0)
     if now_ts - last_fetch < _YF_COOLDOWN:
         if cache_key in _yf_intraday_cache:
+            _yf_intraday_cache.move_to_end(cache_key)
             return _yf_intraday_cache[cache_key][1]
         return []
 
@@ -5251,6 +5325,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
         _monitoring["yfinance_semaphore_timeouts"] += 1
         print(f"[YFRateLimit] Timeout fetching {yf_ticker} — returning stale data")
         if cache_key in _yf_intraday_cache:
+            _yf_intraday_cache.move_to_end(cache_key)
             return _yf_intraday_cache[cache_key][1]
         return []
     try:
@@ -5264,7 +5339,10 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     if error or df is None or df.empty:
         _monitoring["yfinance_errors"] += 1
         _mark_yfinance_failed(clean_ticker)
-        return _yf_intraday_cache.get(cache_key, ([],))[0]
+        if cache_key in _yf_intraday_cache:
+            _yf_intraday_cache.move_to_end(cache_key)
+            return _yf_intraday_cache[cache_key][1]
+        return []
     _monitoring["yfinance_requests"] += 1
 
     yf_int = df
@@ -5281,6 +5359,9 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
 
     if intraday_candles_5min:
         _yf_intraday_cache[cache_key] = (time.time(), intraday_candles_5min)
+        _yf_intraday_cache.move_to_end(cache_key)
+        while len(_yf_intraday_cache) > _YF_INTRADAY_CACHE_MAX:
+            _yf_intraday_cache.popitem(last=False)
 
     return intraday_candles_5min
 
@@ -5692,7 +5773,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     q_base = db.query(model).filter(model.ticker.in_(db_tickers), model.timeframe == interval)
 
     now_epoch = _ts_to_epoch(database.get_ist_now())
-    is_latest_request = before is None or before >= (now_epoch - 300)
+    is_latest_request = (before is None or not isinstance(before, (int, float))) or before >= (now_epoch - 300)
 
     # === REGISTER VIEWER for live higher-timeframe candle building ===
     if is_latest_request and interval in ("15m", "30m", "1h"):
@@ -5701,9 +5782,9 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
 
     # Now execute the main query
     q = q_base
-    if before is not None:
+    if before is not None and isinstance(before, (int, float)):
         q = q.filter(model.timestamp < _epoch_to_ist_dt(before))
-    if after is not None:
+    if after is not None and isinstance(after, (int, float)):
         q = q.filter(model.timestamp > _epoch_to_ist_dt(after))
     
     records = q.order_by(model.timestamp.desc()).limit(limit + 1).all()
@@ -5726,8 +5807,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     if is_latest_request:
         try:
             now = database.get_ist_now()
-            ist_time = now.time()
-            market_open = ist_time >= __import__('datetime').time(9, 15)
+            market_open = is_market_open_now(now)
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
 
             fill_needed = False
@@ -5737,41 +5817,40 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 fill_start = now - __import__('datetime').timedelta(days=60)
                 fill_needed = True
                 print(f"[GapFill] Sync fill for {clean_ticker} {interval}: no data in DB")
-            else:
-                # 1. Check tip gap (data doesn't reach close to now)
+            elif market_open:
+                # 1. Check tip gap: only meaningful when market is OPEN
                 tip_gap_minutes = (now - records[0].timestamp).total_seconds() / 60
-                has_tip_gap = (tip_gap_minutes > (bucket_min * 2) and market_open) or (tip_gap_minutes > 375)
+                has_tip_gap = tip_gap_minutes > (bucket_min * 2)
 
-                # 2. Check internal gaps in the fetched window
+                # 2. Check internal gaps in the fetched window on the SAME DAY
                 oldest_gap_start = None
                 for i in range(len(records) - 1):
                     t_new = records[i].timestamp
                     t_old = records[i+1].timestamp
                     internal_gap = (t_new - t_old).total_seconds() / 60
                     same_day = t_new.date() == t_old.date()
-                    if internal_gap > 375 or (same_day and internal_gap > bucket_min * 1.5):
+                    if same_day and (internal_gap > bucket_min * 2):
                         oldest_gap_start = t_old
 
-                # 3. Check history depth (if DB has fewer than 300 candles or history < 14 days)
-                has_history_gap = len(records) < 300 or (now - records[-1].timestamp).days < 14
-
-                if has_tip_gap or oldest_gap_start or has_history_gap:
-                    if has_history_gap:
-                        fill_start = now - __import__('datetime').timedelta(days=60)
-                    elif oldest_gap_start:
-                        fill_start = oldest_gap_start
-                    else:
-                        fill_start = records[0].timestamp
+                if has_tip_gap or oldest_gap_start:
+                    fill_start = oldest_gap_start if oldest_gap_start else records[0].timestamp
                     fill_needed = True
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
 
             if fill_needed:
-                # Non-blocking async background backfill — user gets immediate DB candles without waiting
                 if background_tasks is not None:
+                    # Non-blocking async background backfill in production
                     background_tasks.add_task(perform_on_demand_backfill, clean_ticker, interval, fill_start, now)
+                    print(f"[GapFill] Dispatched background fill for {clean_ticker} {interval} from {fill_start}")
                 else:
-                    threading.Thread(target=perform_on_demand_backfill, args=(clean_ticker, interval, fill_start, now), daemon=True).start()
-                print(f"[GapFill] Dispatched background fill for {clean_ticker} {interval} from {fill_start}")
+                    # Direct test call with background_tasks=None: run synchronously and release session before network I/O
+                    db.close()
+                    perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
+                    q_fresh = q_base
+                    if after is not None:
+                        q_fresh = q_fresh.filter(model.timestamp > _epoch_to_ist_dt(after))
+                    records = q_fresh.order_by(model.timestamp.desc()).limit(limit + 1).all()
+                    print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
 
@@ -7266,6 +7345,11 @@ async def startup():
     async def _ws_watchdog():
         _ws_was_ok = True
         while True:
+            # When market is closed, sleep and skip watchdog / reconnect attempts
+            if not is_market_open_now():
+                await asyncio.sleep(60)
+                continue
+
             # When a reconnect is already in-flight, back off so we don't
             # hammer AngelOne with overlapping connection attempts.
             reconnecting = getattr(angelone_service, '_ws_reconnecting', False)
@@ -7279,7 +7363,7 @@ async def startup():
                 # that window (this is a single-Gunicorn-worker deployment,
                 # so there's no other thread serving requests meanwhile).
                 ws_ok = await asyncio.to_thread(angelone_service.ensure_ws_connected)
-                if ws_ok and not _ws_was_ok:
+                if ws_ok and not _ws_was_ok and is_market_open_now():
                     _monitoring["ws_reconnects"] += 1
                     print(f"[Watchdog] WS reconnected — checking stale tickers...")
                     now_ts = time.time()
@@ -7349,9 +7433,20 @@ async def startup():
     async def _movers_refresh_loop():
         last_db_refresh = time.time()
         while True:
-            await asyncio.sleep(_MOVERS_REFRESH_SEC)
+            market_open = is_market_open_now()
+            # If market is closed, sleep 60s. If open, refresh every 10s.
+            sleep_sec = _MOVERS_REFRESH_SEC if market_open else 60
+            await asyncio.sleep(sleep_sec)
             now_ts = time.time()
-            if now_ts - last_db_refresh >= 60:
+            should_refresh_db = False
+            if not _db_baseline_prices:
+                should_refresh_db = True
+            elif market_open and (now_ts - last_db_refresh >= 300):
+                should_refresh_db = True
+            elif (not market_open) and (now_ts - last_db_refresh >= 1800):
+                should_refresh_db = True
+
+            if should_refresh_db:
                 await asyncio.to_thread(_refresh_db_baseline_sync)
                 last_db_refresh = now_ts
             await refresh_movers_snapshot()
@@ -7455,9 +7550,11 @@ async def startup():
                 today = sync_now.date()
 
                 # Check which watched tickers already have today's candle in candles(1D)
+                today_start = datetime.combine(today, datetime.min.time())
+                today_end = today_start + timedelta(days=1)
                 existing = db_sync.execute(
-                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D' AND timestamp::date=:d"),
-                    {"d": today}
+                    sa_text("SELECT DISTINCT ticker FROM candles WHERE timeframe='1D' AND timestamp >= :s AND timestamp < :e"),
+                    {"s": today_start, "e": today_end}
                 ).fetchall()
                 have_today = {r[0] for r in existing}
                 missing = sorted(watched - have_today)
@@ -7692,37 +7789,45 @@ async def startup():
             return False
 
         today_local = database.get_ist_now().date()     # same basis as job start_time (engine uses datetime.now())
+        start_dt = datetime.combine(today_local, datetime.min.time())
+        end_dt = start_dt + timedelta(days=1)
         tiers = [f"{r['source_tf']}_to_{r['target_tf']}"
                  for r in load_retention_policy()["retention_policy"]]
         with SessionLocal() as db:
             done = db.execute(
                 sa_text("SELECT COUNT(*) FROM retention_jobs "
-                        "WHERE start_time::date = :d AND status IN ('COMPLETED','SKIPPED') "
+                        "WHERE start_time >= :start_dt AND start_time < :end_dt "
+                        "AND status IN ('COMPLETED','SKIPPED','PARTIAL') "
                         "AND job_type IN :tiers"),
-                {"d": today_local, "tiers": tuple(tiers)},
+                {"start_dt": start_dt, "end_dt": end_dt, "tiers": tuple(tiers)},
             ).scalar()
         return (done or 0) < len(tiers)
+
+    _retention_cycle_running = False
 
     async def _retention_scheduler():
         """Poll loop: run the cycle ONCE per trading day, only while NSE closed.
         Idempotent across restarts (job journal in retention_jobs)."""
+        nonlocal _retention_cycle_running
         while True:
             await asyncio.sleep(60)          # cheap poll (one lightweight query when idle)
             try:
+                if _retention_cycle_running:
+                    continue
                 from aggregator import is_market_hour
                 now = database.get_ist_now()
                 if is_market_hour(now):
                     continue                 # never run while market open / close grace
                 if not _retention_due_today():
+                    await asyncio.sleep(300) # already completed today, rest for 5 minutes
                     continue                 # not a trading day, or already done today
                 if _retention_service is not None:
                     print(f"[Retention] Due at {now.isoformat()} IST -> running cycle")
-                    # DB-04: run_cycle() does real DB work (downsampling
-                    # across every configured tier) and was blocking the
-                    # shared event loop for its full duration -- market is
-                    # closed while this runs, but users still browse
-                    # portfolio/history pages then, and they'd all stall.
-                    await asyncio.to_thread(_retention_service.run_cycle)
+                    _retention_cycle_running = True
+                    try:
+                        await asyncio.to_thread(_retention_service.run_cycle)
+                    finally:
+                        _retention_cycle_running = False
                 else:
                     print("[Retention] Service not initialized, skipping")
             except Exception as e:
@@ -7780,12 +7885,14 @@ async def startup():
                     return cur
 
                 target_trading_day = _get_target_trading_day_bg(now_ist)
+                t_start = datetime.combine(target_trading_day, datetime.min.time())
+                t_end = t_start + timedelta(days=1)
                 have_target = {r[0] for r in db_df.execute(
                     sa_text("""
                         SELECT DISTINCT ticker FROM candles
-                        WHERE timeframe='1D' AND timestamp::date = :target_day AND close > 0 AND open > 0
+                        WHERE timeframe='1D' AND timestamp >= :s AND timestamp < :e AND close > 0 AND open > 0
                     """),
-                    {"target_day": target_trading_day}
+                    {"s": t_start, "e": t_end}
                 ).fetchall()}
                 missing = [t for t in all_tickers if t not in have_target]
                 if not missing:
@@ -8052,18 +8159,65 @@ async def startup():
         print("[ELLInvestigation] Dashboard index backfill disabled via ELL_DISABLE_OTHER_BG")
 
     # ── 1W / 1M tier backfill ─────────────────────────────────────────────────
-    # Runs 90s after boot (after the 5m prefill starts).
-    # Phase 1 (SQL aggregation from stock_data) is fast and always runs.
-    # Phase 2 (AngelOne fetch for tickers still missing coverage) only runs
-    # when needs_1w_backfill() / needs_1m_backfill() return True — skips
-    # automatically once coverage is complete.
+    # Phase 2F: Controlled, resumable closed-market batch worker.
+    # Runs 180s after boot, performs fast Phase 1 SQL aggregation once, then
+    # processes missing 1W/1M tickers in small batches (5 tickers) during
+    # market-closed hours only. Pauses when market is open or approaching open.
+    _wm_backfill_running = False
     async def _weekly_monthly_backfill():
-        await asyncio.sleep(90)
+        nonlocal _wm_backfill_running
+        if _wm_backfill_running:
+            return
+        _wm_backfill_running = True
         try:
-            from backfill_weekly_monthly import run_startup_backfill
-            await asyncio.to_thread(run_startup_backfill)
+            await asyncio.sleep(180)
+            from backfill_weekly_monthly import (
+                run_controlled_closed_backfill_batch,
+                is_market_open_or_opening_soon,
+                phase1_migrate_stock_data,
+            )
+            # Run Phase 1 SQL aggregation once at boot (fast, idempotent)
+            try:
+                await asyncio.to_thread(phase1_migrate_stock_data)
+            except Exception as _p1e:
+                print(f"[1W/1M Backfill] Phase 1 initial migration error: {_p1e}")
+
+            print("[1W/1M Backfill] Background worker loop started — controlled closed-market mode")
+
+            while True:
+                try:
+                    if is_market_open_or_opening_soon():
+                        # Market open or opening soon: pause to protect CPU, DB, and network
+                        await asyncio.sleep(900)
+                        continue
+
+                    res = await asyncio.to_thread(run_controlled_closed_backfill_batch, 5)
+                    if res.get("status") == "complete":
+                        # All tickers evaluated or covered — sleep 1 hour
+                        print(f"[1W/1M Backfill] {res.get('message', 'Backfill complete')}. Sleeping 1 hour.")
+                        await asyncio.sleep(3600)
+                    elif res.get("status") == "paused_market_hours":
+                        await asyncio.sleep(900)
+                    else:
+                        tf = res.get("timeframe", "")
+                        proc = res.get("processed", 0)
+                        rem = res.get("remaining", 0)
+                        print(f"[1W/1M Backfill] Batch completed: {proc} tickers for {tf} ({rem} remaining in queue). Next batch in 60s.")
+                        await asyncio.sleep(60)
+
+                except asyncio.CancelledError:
+                    print("[1W/1M Backfill] Worker cancelled.")
+                    break
+                except Exception as _be:
+                    print(f"[1W/1M Backfill] Batch error: {_be}. Retrying in 120s.")
+                    await asyncio.sleep(120)
+
+        except asyncio.CancelledError:
+            pass
         except Exception as _e:
-            print(f"[1W/1M Backfill] Startup error: {_e}")
+            print(f"[1W/1M Backfill] Startup loop error: {_e}")
+        finally:
+            _wm_backfill_running = False
 
     wm_task = _track_task(asyncio.create_task(_weekly_monthly_backfill()))
     wm_task.add_done_callback(_log_task_error)

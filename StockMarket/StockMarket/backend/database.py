@@ -97,9 +97,14 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+USER_STATEMENT_TIMEOUT_MS = int(os.getenv("USER_STATEMENT_TIMEOUT_MS", "15000"))
+
 def get_db():
     db = SessionLocal()
     try:
+        if USER_STATEMENT_TIMEOUT_MS:
+            from sqlalchemy import text as _sa_text
+            db.execute(_sa_text(f"SET statement_timeout = '{USER_STATEMENT_TIMEOUT_MS}'"))
         yield db
     finally:
         db.close()

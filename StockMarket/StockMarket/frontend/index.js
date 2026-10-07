@@ -1265,6 +1265,8 @@ async function handleLogout() {
 
   sessionStorage.removeItem('token');
   sessionStorage.removeItem('user');
+  // BUG-2: also clear the persistent (non-sensitive) session marker
+  try { localStorage.removeItem('token'); localStorage.removeItem('user'); } catch (e) {}
 
   // Refresh auth state
   checkAuthState();

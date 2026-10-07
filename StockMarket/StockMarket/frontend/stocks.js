@@ -13,76 +13,117 @@ window.addEventListener('error', function (e) {
   }
 }, true);
 
-(async function loadStocks() {
+var _stocksPromise = null;
+
+function loadAllStocks() {
   'use strict';
+  // If stocks are already populated, return immediately
+  if (Array.isArray(window.ALL_STOCKS) && window.ALL_STOCKS.length > 0) {
+    return Promise.resolve(window.ALL_STOCKS);
+  }
+  // If a request is already in-flight, return the existing promise (single in-flight request)
+  if (_stocksPromise) {
+    return _stocksPromise;
+  }
 
-  // ── 1. Fetch the lightweight version string from server ──────────────────
-  var serverVersion = null;
-  try {
-    var vAc = new AbortController();
-    var vTo = setTimeout(function () { vAc.abort(); }, 15000);
-    var vRes = await fetch('/api/stocks-version', { signal: vAc.signal });
-    clearTimeout(vTo);
-    if (vRes.ok) {
-      var vData = await vRes.json();
-      serverVersion = vData.version || null;
+  _stocksPromise = (async function () {
+    // ── 1. Fetch the lightweight version string from server ──────────────────
+    var serverVersion = null;
+    try {
+      var vAc = new AbortController();
+      var vTo = setTimeout(function () { vAc.abort(); }, 15000);
+      var vRes = await fetch('/api/stocks-version', { signal: vAc.signal });
+      clearTimeout(vTo);
+      if (vRes.ok) {
+        var vData = await vRes.json();
+        serverVersion = vData.version || null;
+      }
+    } catch (e) {
+      // Network error – will try stale cache below
     }
-  } catch (e) {
-    // Network error – will try stale cache below
-  }
 
-  // ── 2. Check localStorage cache ──────────────────────────────────────────
-  var storedVersion, storedRaw;
-  try { storedVersion = localStorage.getItem(_STOCKS_VERSION_KEY); } catch(e) {}
-  try { storedRaw     = localStorage.getItem(_STOCKS_CACHE_KEY); } catch(e) {}
+    // ── 2. Check localStorage cache ──────────────────────────────────────────
+    var storedVersion, storedRaw;
+    try { storedVersion = localStorage.getItem(_STOCKS_VERSION_KEY); } catch(e) {}
+    try { storedRaw     = localStorage.getItem(_STOCKS_CACHE_KEY); } catch(e) {}
 
-  // Cache HIT: version matches and data exists
-  if (serverVersion && serverVersion === storedVersion && storedRaw) {
-    try {
-      window.ALL_STOCKS = JSON.parse(storedRaw);
-      window.dispatchEvent(new Event('stocksLoaded'));
-      console.log('[Stocks] Cache hit – ' + window.ALL_STOCKS.length + ' stocks (localStorage)');
-      return;
-    } catch (parseErr) {
-      // Corrupt cache – fall through to re-fetch
-    }
-  }
-
-  // ── 3. Version mismatch / no cache – fetch fresh from API ───────────────
-  // Serve stale cache immediately as fallback, then refresh silently in background
-  if (storedRaw) {
-    try {
-      window.ALL_STOCKS = JSON.parse(storedRaw);
-      window.dispatchEvent(new Event('stocksLoaded'));
-      console.log('[Stocks] Showing cached stocks while fetching fresh data...');
-    } catch (e) {}
-  }
-
-  // Background retry up to 2 times
-  for (var attempt = 0; attempt < 2; attempt++) {
-    try {
-      var ac = new AbortController();
-      var to = setTimeout(function () { ac.abort(); }, 25000);
-      var response = await fetch('/api/all-stocks', { signal: ac.signal });
-      clearTimeout(to);
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      var stocks = await response.json();
-      window.ALL_STOCKS = stocks;
-
-      if (serverVersion) localStorage.setItem(_STOCKS_VERSION_KEY, serverVersion);
+    // Cache HIT: version matches and data exists
+    if (serverVersion && serverVersion === storedVersion && storedRaw) {
       try {
-        localStorage.setItem(_STOCKS_CACHE_KEY, JSON.stringify(stocks));
-      } catch (quotaErr) {}
-
-      window.dispatchEvent(new Event('stocksLoaded'));
-      console.log('[Stocks] Fetched ' + stocks.length + ' stocks from API');
-      return;
-
-    } catch (fetchErr) {
-      if (attempt < 1) {
-        await new Promise(function (r) { setTimeout(r, 3000); });
+        window.ALL_STOCKS = JSON.parse(storedRaw);
+        window.dispatchEvent(new Event('stocksLoaded'));
+        console.log('[Stocks] Cache hit – ' + window.ALL_STOCKS.length + ' stocks (localStorage)');
+        return window.ALL_STOCKS;
+      } catch (parseErr) {
+        // Corrupt cache – fall through to re-fetch
       }
     }
+
+    // ── 3. Version mismatch / no cache – fetch fresh from API ───────────────
+    // Serve stale cache immediately as fallback, then refresh silently in background
+    if (storedRaw) {
+      try {
+        window.ALL_STOCKS = JSON.parse(storedRaw);
+        window.dispatchEvent(new Event('stocksLoaded'));
+        console.log('[Stocks] Showing cached stocks while fetching fresh data...');
+      } catch (e) {}
+    }
+
+    // Background retry up to 2 times
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        var ac = new AbortController();
+        var to = setTimeout(function () { ac.abort(); }, 25000);
+        var response = await fetch('/api/all-stocks', { signal: ac.signal });
+        clearTimeout(to);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        var stocks = await response.json();
+        if (Array.isArray(stocks) && stocks.length > 0) {
+          window.ALL_STOCKS = stocks;
+
+          if (serverVersion) {
+            try { localStorage.setItem(_STOCKS_VERSION_KEY, serverVersion); } catch(e) {}
+          }
+          try {
+            localStorage.setItem(_STOCKS_CACHE_KEY, JSON.stringify(stocks));
+          } catch (quotaErr) {}
+
+          window.dispatchEvent(new Event('stocksLoaded'));
+          console.log('[Stocks] Fetched ' + stocks.length + ' stocks from API');
+          return window.ALL_STOCKS;
+        }
+      } catch (fetchErr) {
+        if (attempt < 1) {
+          await new Promise(function (r) { setTimeout(r, 3000); });
+        }
+      }
+    }
+    console.warn('[Stocks] API unavailable, using cached data');
+    return window.ALL_STOCKS;
+  })().finally(function () {
+    _stocksPromise = null;
+  });
+
+  return _stocksPromise;
+}
+
+window.loadAllStocks = loadAllStocks;
+
+// Bounded deferred execution: run when browser is idle, or after timeout
+function _scheduleDeferredStocksLoad() {
+  if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+    window.requestIdleCallback(function () {
+      loadAllStocks();
+    }, { timeout: 3000 });
+  } else {
+    setTimeout(function () {
+      loadAllStocks();
+    }, 1500);
   }
-  console.warn('[Stocks] API unavailable, using cached data');
-})();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _scheduleDeferredStocksLoad);
+} else {
+  _scheduleDeferredStocksLoad();
+}

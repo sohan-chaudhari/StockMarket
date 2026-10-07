@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="auth.css?v=1">
     <link rel="stylesheet" href="index.css?v=84">
     <link rel="stylesheet" href="loader.css?v=4">
-    <script src="page-cache.js"></script>
+    <script src="page-cache.js?v=3"></script>
     <script src="ws.js"></script>
 </head>
 
@@ -654,11 +654,22 @@
                     setTimeout(() => hiddenForm.remove(), 100);
 
                     sessionStorage.setItem('token', data.access_token);
-                    sessionStorage.setItem('user', JSON.stringify({
+                    var _lvUser = JSON.stringify({
                         email,
                         full_name: data.user.full_name,
                         virtual_balance: data.user.virtual_balance
-                    }));
+                    });
+                    sessionStorage.setItem('user', _lvUser);
+                    // BUG-2: persist only a NON-SENSITIVE profile + session marker
+                    // in localStorage so a browser/tab restart (which clears
+                    // sessionStorage) can recognise the HttpOnly-cookie session.
+                    // The JWT is NEVER written to localStorage — the real
+                    // credential lives only in the HttpOnly cookie the backend
+                    // set on this same response.
+                    try {
+                        localStorage.setItem('token', 'cookie-session');
+                        localStorage.setItem('user', _lvUser);
+                    } catch (e) {}
                     document.getElementById('loadingAccountOverlay').style.display = 'flex';
                     var redirect = new URLSearchParams(window.location.search).get('redirect') || 'home.html';
                     setTimeout(() => window.location.href = redirect, 1000);

@@ -45,10 +45,16 @@
       hideLogoutConfirmation();
       const loader = document.getElementById('logout-loader');
       if (loader) loader.style.display = 'flex';
-
-      setTimeout(() => {
+      // BUG-2: invalidate the HttpOnly server session too, not just local state
+      if (window.lvServerLogout) window.lvServerLogout();
+      try {
         sessionStorage.removeItem('token');
         sessionStorage.removeItem('user');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } catch (e) {}
+
+      setTimeout(() => {
         window.location.href = 'index.html';
       }, 1500);
     }

@@ -115,7 +115,14 @@
         border-bottom: 1px solid #2a2e39 !important;
         overflow: visible !important;  /* allow dropdown to show below bar */
         position: relative !important;
-        z-index: 1000 !important;
+        /* Bug-3 fix: this chart header must sit BELOW the global nav header
+           (the shared .header in nav.css, which stacks at 100) so the nav
+           search dropdown can render above these controls. It previously used
+           1000/1001, which formed a higher stacking context than the nav header
+           and hid the search results behind the Back/Trade/Positions/News
+           buttons. 90 keeps it above the chart floats (OHLC legend, 60) and the
+           drawing canvas (20) without competing with the nav header. */
+        z-index: 90 !important;
     }
     .header-controls {
         display: flex !important;
@@ -124,7 +131,7 @@
         margin: 0 !important;
         overflow: visible !important;  /* allow dropdown to show below bar */
         position: relative !important;
-        z-index: 1001 !important;
+        z-index: 91 !important;
     }
     .header-identity {
         display: none !important; /* Hide the bulky old header entirely! */
@@ -457,13 +464,13 @@
   <script>!function(){var t=(new URLSearchParams(location.search)).get('ticker')||'';document.title=t?t.replace('.NS','')+' - Live Price':'Stock Analysis - LEVERAGE'}();</script>
   <script src="lightweight-charts.js?v=2"></script>
   <link rel="stylesheet" href="tokens.css?v=2">
-  <link rel="stylesheet" href="index.css?v=84">
+  <link rel="stylesheet" href="index.css?v=85">
   <link rel="stylesheet" href="nav.css?v=15">
   <link rel="stylesheet" href="loader.css?v=4">
   <link rel="stylesheet" href="drawings.css?v=27">
   <link rel="stylesheet" href="responsive.css?v=7">
 
-    <script src="page-cache.js"></script>
+    <script src="page-cache.js?v=3"></script>
 </head>
 
 <body style="background-color: #0A0A0B; display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; margin: 0;">
@@ -935,12 +942,12 @@
 <script src="news.js?v=6"></script>
 <script src="ws.js"></script>
 <script src="cache.js?v=2"></script>
-<script src="dashboard.js?v=1048"></script>
+<script src="dashboard.js?v=1061"></script>
 <script src="drawing-core.js?v=31"></script>
 <script src="drawings.js?v=96"></script>
 <script src="toolbarConfig.js?v=5"></script>
 <script src="drawing-toolbar.js?v=8"></script>
-<script src="stock-logic.js?v=6"></script>
+<script src="stock-logic.js?v=7"></script>
 <script src="stock-ui.js?v=9"></script>
 <script src="indicators.js?v=2"></script>
 </body>
