@@ -159,9 +159,10 @@
     }
     // Normal zoom: concise time labels between day boundaries.
     if (o.bars <= 1500) return time;
-    // Zoomed out: dates, escalating to month/year on transitions.
+    // Zoomed out: one date per trading day (never repeat the same date on
+    // consecutive ticks); escalate to month/year on calendar transitions.
     if (o.newMon) return p.moi === 0 ? (mon + ' ' + yr) : mon;
-    return day;
+    return '';
   }
 
   // ── daily / weekly / monthly (business-day times) ───────────────────────
