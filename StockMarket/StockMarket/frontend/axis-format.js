@@ -36,6 +36,10 @@
     '1m': 1, '3m': 1, '5m': 1, '10m': 1, '15m': 1, '30m': 1,
     '1h': 1, '2h': 1, '4h': 1
   };
+  var BAR_MIN = {
+    '1m': 1, '3m': 3, '5m': 5, '10m': 10, '15m': 15, '30m': 30,
+    '1h': 60, '2h': 120, '4h': 240
+  };
 
   var CFG = new WeakMap();   // chart -> config
   var ST  = new WeakMap();   // chart -> render state { bars, last }
@@ -139,29 +143,38 @@
   }
 
   // ── intraday (5m/15m/30m/1h/4h and raw-epoch intraday) ──────────────────
+  // Tier is driven by the number of VISIBLE TRADING DAYS (bars / bars-per-day),
+  // matching TradingView: times only while ~<2 sessions are visible; beyond that
+  // one date per trading day (month/year on calendar transitions).
   function fmtIntraday(o) {
     var p = o.p;
     var time = pad2(p.hh) + ':' + pad2(p.mm);
     var day  = pad2(p.d) + ' ' + MON[p.moi];
     var mon  = MON[p.moi];
     var yr   = '' + p.y;
-    var narrow = o.width > 0 && o.width < 520;
 
-    if (o.mt === TMT.Year)  return yr;
-    if (o.mt === TMT.Month) return p.moi === 0 ? (mon + ' ' + yr) : mon;
+    if (o.mt === TMT.Year)  return (o.first || o.newYr) ? yr : '';
+    if (o.mt === TMT.Month) return (o.first || o.newMon) ? (p.moi === 0 ? (mon + ' ' + yr) : mon) : '';
 
-    // Genuine trading-day boundary (real bar sequence / render memo).
-    if (o.newDay) {
-      var dayY = o.newYr ? (day + ' ' + yr) : day;
-      // Close zoom keeps the opening time next to the date.
-      if (o.bars <= 130 && !narrow) return dayY + ' ' + time;
-      return dayY; // "08 Oct" (or "01 Jan 2027" at a year change)
+    var barMin = BAR_MIN[o.range] || 5;
+    var barsPerDay = Math.max(1, Math.floor(375 / barMin));
+    var spanDays = o.bars / barsPerDay;
+    var mins = p.hh * 60 + p.mm;
+    var sessionStart = mins <= (9 * 60 + 15 + barMin - 1);
+
+    if (spanDays <= 1.8) {
+      // Time tier: show the date only at a genuine session boundary.
+      if (o.newDay && (!o.first || o.realDayBoundary || sessionStart)) {
+        return o.newYr ? (day + ' ' + yr) : day;
+      }
+      return time;
     }
-    // Normal zoom: concise time labels between day boundaries.
-    if (o.bars <= 1500) return time;
-    // Zoomed out: one date per trading day (never repeat the same date on
-    // consecutive ticks); escalate to month/year on calendar transitions.
+
+    // Date tier: one label per trading day (never repeat); month/year on
+    // calendar transitions.
+    if (o.newYr) return yr;
     if (o.newMon) return p.moi === 0 ? (mon + ' ' + yr) : mon;
+    if (o.newDay) return day;
     return '';
   }
 
@@ -212,20 +225,23 @@
     // A backwards jump means LWC started a new render pass; re-anchor.
     if (last && idx != null && last.idx != null && idx < last.idx) { last = null; s.last = null; }
 
-    var newDay = !last, newMon = false, newYr = false;
+    var first = !last;
+    var newDay = first, newMon = false, newYr = false;
     if (last) {
       newDay = dayKeyOf(p) !== last.dayKey;
       newMon = monKeyOf(p) !== last.monKey;
       newYr  = p.y !== last.y;
     }
     // Definitive boundary from the real bar sequence (previous real bar).
-    if (prevP && dayKeyOf(p) !== dayKeyOf(prevP)) newDay = true;
+    var realDayBoundary = prevP ? (dayKeyOf(p) !== dayKeyOf(prevP)) : null;
+    if (realDayBoundary) newDay = true;
 
     if (!last || idx == null || last.idx == null || idx >= last.idx) {
       s.last = { idx: idx, dayKey: dayKeyOf(p), monKey: monKeyOf(p), y: p.y };
     }
 
-    var o = { p: p, mt: markType, bars: bars, width: width,
+    var o = { p: p, mt: markType, bars: bars, width: width, range: range,
+              first: first, realDayBoundary: realDayBoundary,
               newDay: newDay, newMon: newMon, newYr: newYr };
     return intraday ? fmtIntraday(o) : fmtDay(o);
   }
