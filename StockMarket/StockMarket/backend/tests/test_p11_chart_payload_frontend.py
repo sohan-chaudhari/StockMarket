@@ -79,8 +79,8 @@ class ChartPayloadFrontendStaticTests(unittest.TestCase):
             p = os.path.join(FRONTEND_DIR, page)
             with open(p, "r", encoding="utf-8") as f:
                 body = f.read()
-            self.assertIn("dashboard.js?v=1066", body, f"{page} must reference the new dashboard.js version")
-            self.assertNotIn("dashboard.js?v=1065", body, f"{page} still references the old dashboard.js version")
+            self.assertIn("dashboard.js?v=1067", body, f"{page} must reference the new dashboard.js version")
+            self.assertNotIn("dashboard.js?v=1066", body, f"{page} still references the old dashboard.js version")
 
 
 @unittest.skipUnless(shutil.which("node"), "node not available")
