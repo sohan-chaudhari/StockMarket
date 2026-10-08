@@ -2692,7 +2692,13 @@ async function initBigChart() {
     }
     // The live forming candle's sequential index shifts by the number of prepended bars.
     if (addedCount > 0 && window._formingCandles && window._formingCandles['i']) {
-      window._formingCandles['i'].time += addedCount;
+      // Intraday bar `time` is a SEQUENTIAL index (i * barSecs), so shifting the
+      // forming candle for N prepended bars must add N * barSecs -- NOT N.
+      // Adding only N left the forming index ~N bars behind the rebuilt cache,
+      // so subsequent live ticks updated an OLD candle instead of the current
+      // one (price moved but the running candle appeared frozen) after any
+      // lazy-load prepend (scroll-left / zoom-out into history).
+      window._formingCandles['i'].time += addedCount * barSecs;
     }
     if (window.IndicatorEngine) window.IndicatorEngine.onCandlesLoaded(displayData, window._loadedRange);
     if (currentLogical && addedCount > 0) {

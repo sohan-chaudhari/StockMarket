@@ -129,7 +129,12 @@
             var isStale = !entry || (now - entry.cachedAt) > ttlMs;
             var isCrossDay = entry && (new Date(entry.cachedAt).toDateString() !== new Date().toDateString());
             var isExpired = !entry || (now - entry.cachedAt > 600000) || isCrossDay;
-            var hasCached = entry && entry.data;
+            // An EMPTY array is not useful cache content: it is almost always a
+            // transient/cold "no data yet" response (e.g. ticker news still
+            // warming up). Treating it as cached blocked callers (overview.html
+            // news) from ever re-fetching for the whole TTL, so the page showed
+            // "no recent news" while news.html (direct fetch) showed articles.
+            var hasCached = entry && entry.data && (!Array.isArray(entry.data) || entry.data.length > 0);
 
             // Immediately paint from cache only if recent and same trading day
             if (hasCached && !isExpired && callback) {
@@ -143,7 +148,10 @@
                     var res = await fetch(url, opts);
                     if (!res.ok) return null;
                     var data = await res.json();
-                    _write(k, data);
+                    // Never persist an empty list -- see the hasCached comment
+                    // above. An empty result must be re-fetched next time, not
+                    // frozen for the TTL.
+                    if (!(Array.isArray(data) && data.length === 0)) _write(k, data);
                     if (callback) {
                         try { callback(data, false /* fresh */); } catch (e) {}
                     }

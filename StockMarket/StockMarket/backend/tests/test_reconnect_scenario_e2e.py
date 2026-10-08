@@ -101,6 +101,21 @@ def build_page(interval, now_sec):
     return rows
 
 
+def build_older_page(interval, before_sec, count=600):
+    """Older bars strictly before `before_sec` -- the lazy-load 'before' page."""
+    bar_secs = INTERVAL_MIN[interval] * 60
+    rows = []
+    t = before_sec - count * bar_secs
+    k = 0
+    while t < before_sec:
+        base = 50 + k
+        rows.append({"time": t, "open": base, "high": base + 2.0, "low": base - 1.0,
+                     "close": base + 0.5, "volume": 100 + k})
+        k += 1
+        t += bar_secs
+    return rows
+
+
 class _Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -132,8 +147,8 @@ class ReconnectScenarioE2ETests(unittest.TestCase):
 
     # ------------------------------------------------------------------ setup
 
-    def _open_page(self, interval, now_sec, ticker="RECOTEST"):
-        state = {"now_sec": now_sec, "ticker": ticker, "interval": interval}
+    def _open_page(self, interval, now_sec, ticker="RECOTEST", elder=False):
+        state = {"now_sec": now_sec, "ticker": ticker, "interval": interval, "elder": elder}
         ctx = self.browser.new_context(timezone_id="Asia/Kolkata")
         page = ctx.new_page()
         errors = []
@@ -145,9 +160,19 @@ class ReconnectScenarioE2ETests(unittest.TestCase):
             path = u.path
             if path == "/api/stock-data/intraday/paginated":
                 itv = (q.get("interval") or [state["interval"]])[0]
-                rows = build_page(itv, state["now_sec"])
-                r.fulfill(status=200, content_type="application/json",
-                          body=json.dumps({"data": rows, "has_more": False}))
+                before = q.get("before")
+                if before and state.get("elder"):
+                    # lazy-load 'before' page: strictly older bars (used by the
+                    # prepend-alignment regression test)
+                    rows = build_older_page(itv, int(float(before[0])))
+                    r.fulfill(status=200, content_type="application/json",
+                              body=json.dumps({"data": rows, "has_more": True}))
+                else:
+                    # default: same recent page with has_more False, so no other
+                    # scenario accidentally prepends history
+                    rows = build_page(itv, state["now_sec"])
+                    r.fulfill(status=200, content_type="application/json",
+                              body=json.dumps({"data": rows, "has_more": False}))
             elif path == "/api/csrf-token":
                 r.fulfill(status=200, content_type="application/json",
                           body=json.dumps({"csrf_token": "t"}))
@@ -414,6 +439,37 @@ class ReconnectScenarioE2ETests(unittest.TestCase):
                 "() => ({ t: typeof window._lastTickServerTs, v: window._lastTickServerTs })")
             self.assertEqual(last["t"], "number")
             self.assertEqual(int(last["v"]), bucket * 1000)
+        finally:
+            ctx.close()
+
+    # ------------------------------- lazy-load prepend alignment ------------
+
+    def test_lazy_load_prepend_keeps_forming_candle_aligned(self):
+        """Regression: after older history is lazily prepended, the forming
+        candle's sequential index must be shifted by addedCount*barSecs so live
+        ticks keep updating the CURRENT candle (not an old one)."""
+        interval = "5m"
+        initial_sec = _ist_epoch_sec(12, 7)
+        # elder=True makes the mock serve genuinely older history for the lazy-load
+        # 'before' requests, so the automatic prepend path is exercised end-to-end.
+        ctx, page, state, errors = self._open_page(interval, initial_sec, elder=True)
+        try:
+            self._wait_loaded(page, interval, errors)
+            # The chart fits inside its viewport, so lazy-load prepends history.
+            page.wait_for_function(
+                "() => (window._chartCandles || []).length > 100", timeout=20000)
+            page.wait_for_timeout(900)
+            snap = page.evaluate(
+                "() => ({ bars: (window._chartCandles||[]).length,"
+                " last: (window._chartCandles||[]).slice(-1)[0].time,"
+                " bt: (window._intradayBarTimes||[]).length,"
+                " f: (window._formingCandles && window._formingCandles['i']) ? window._formingCandles['i'].time : null })")
+            self.assertGreater(snap["bars"], 100,
+                               "older history must have been prepended")
+            self.assertIsNotNone(snap["f"], "forming candle must still exist")
+            self.assertEqual(snap["f"], snap["last"],
+                             "forming candle index must equal the last cache bar index "
+                             "after a prepend (addedCount*barSecs shift)")
         finally:
             ctx.close()
 
