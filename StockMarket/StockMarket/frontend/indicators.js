@@ -5528,13 +5528,32 @@
           visible: true,
           borderColor: '#2a2e39',
           timeVisible: !!window._seqMode,
-          tickMarkFormatter: window.customTickMarkFormatter
+          tickMarkFormatter: function (time, markType) {
+            return window.LeverageAxis ? window.LeverageAxis.tick(chart, time, markType, window.activeRange || 'ALL') : '';
+          }
         }),
         handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }
       });
 
       var pane = { chart: chart, wrapper: wrapper, titleEl: titleEl, paneId: paneId, baseTitle: titleText, _paneSync: null, _initialized: false };
+      // Bind the shared axis formatter to THIS pane's own chart context so its
+      // labels use the pane's visible range, not the main chart's.
+      if (window.LeverageAxis) {
+        window.LeverageAxis.register(chart, {
+          getRange: function () { return window.activeRange || 'ALL'; },
+          getBarTimes: function () { return window._intradayBarTimes || null; },
+          getBarSecs: function () { return window._intradayBarSecs || null; },
+          resolveEpoch: function (t) {
+            var bt = window._intradayBarTimes, bs = window._intradayBarSecs;
+            if (bt && bs && typeof t === 'number') {
+              var i = Math.round(t / bs);
+              return (i >= 0 && i < bt.length) ? bt[i] : null;
+            }
+            return window.LeverageAxis.toEpoch(t);
+          }
+        });
+      }
       this._panes[paneId] = pane;
 
       // Splitter Hover & Drag Interactions
@@ -5740,7 +5759,9 @@
                 visible: isBottom,
                 borderColor: '#2a2e39',
                 timeVisible: !!window._seqMode,
-                tickMarkFormatter: window.customTickMarkFormatter
+                tickMarkFormatter: function (time, markType) {
+                  return window.LeverageAxis ? window.LeverageAxis.tick(p.chart, time, markType, window.activeRange || 'ALL') : '';
+                }
               })
             });
             if (curLr) {

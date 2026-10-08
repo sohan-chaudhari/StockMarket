@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Market - LEVERAGE</title>
   <script src="lightweight-charts.js"></script>
+  <script src="axis-format.js?v=1"></script>
   <link rel="stylesheet" href="tokens.css?v=2">
   <link rel="stylesheet" href="index.css?v=84">
   <link rel="stylesheet" href="nav.css?v=14">
@@ -246,8 +247,16 @@
         grid:{vertLines:{color:'rgba(42,46,57,0.5)'},horzLines:{color:'rgba(42,46,57,0.5)'}},
         crosshair:{mode:LightweightCharts.CrosshairMode.Normal},
         rightPriceScale:{borderColor:'rgba(197,203,206,0.8)'},
-        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true,rightOffset:40,fixLeftEdge:false},
+        timeScale:{borderColor:'rgba(197,203,206,0.8)',timeVisible:true,rightOffset:40,fixLeftEdge:false,tickMarkFormatter:function(time,markType){var r=window._loadedRange||'1D';if(r==='1D')r='5m';else if(r==='1W')r='15m';return window.LeverageAxis?window.LeverageAxis.tick(chart,time,markType,r):'';}},
       });
+      if (window.LeverageAxis) {
+        window.LeverageAxis.register(chart, {
+          getRange: function(){ var r = window._loadedRange || '1D'; if (r==='1D') return '5m'; if (r==='1W') return '15m'; return r; },
+          getBarTimes: function(){ return null; },
+          getBarSecs: function(){ return null; },
+          resolveEpoch: function(t){ return window.LeverageAxis.toEpoch(t); }
+        });
+      }
       candleSeries = chart.addCandlestickSeries({
         upColor:'#26a69a',downColor:'#ef5350',
         borderDownColor:'#ef5350',borderUpColor:'#26a69a',

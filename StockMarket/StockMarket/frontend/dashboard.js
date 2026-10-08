@@ -1361,6 +1361,7 @@ function initNiftyChart() {
       fixLeftEdge: false,
       fixRightEdge: false,
       tickMarkFormatter: function (time, markType) {
+        if (window._miniChartTick) return window._miniChartTick(time, markType);
         if (markType === LightweightCharts.TickMarkType.Time) return formatIST(time, true);
         var epochSec = time;
         if (typeof time === 'object' && time.year) {
@@ -1375,6 +1376,20 @@ function initNiftyChart() {
     handleScroll: true,
     handleScale: true,
   });
+  // Shared LEVERAGE axis formatter for the mini chart (raw 5m epoch data).
+  if (window.LeverageAxis) {
+    window.LeverageAxis.register(window._niftyChart, {
+      getRange: function () { return '5m'; },
+      getBarTimes: function () { return null; },
+      getBarSecs: function () { return null; },
+      resolveEpoch: function (t) { return window.LeverageAxis.toEpoch(t); }
+    });
+    window._miniChartTick = function (time, markType) {
+      return window.LeverageAxis.tick(window._niftyChart, time, markType, '5m');
+    };
+  } else {
+    window._miniChartTick = null;
+  }
   window._niftyAreaSeries = window._niftyChart.addAreaSeries({
     lineColor: '#089981',
     topColor: 'rgba(8,153,129,0.25)',
@@ -1809,6 +1824,10 @@ async function initBigChart() {
       // sub-pixel and invisible. 0.5px per bar = ~2000 candles visible at once.
       minBarSpacing: 0.5,
       tickMarkFormatter: function(time, markType) {
+        // Delegates to the shared LEVERAGE axis formatter (axis-format.js).
+        // The legacy body below is retained only as a fallback if that script
+        // is unavailable, so behaviour degrades gracefully.
+        if (window._bigChartTick) return window._bigChartTick(time, markType);
         if (time == null) return '';
         var range = window.activeRange || 'ALL';
         var intraday = ['1m','3m','5m','10m','15m','30m','1h','2h','4h'].indexOf(range) !== -1;
@@ -1964,7 +1983,28 @@ async function initBigChart() {
     }
   });
 
-  window.customTickMarkFormatter = bigChart.timeScale().options().tickMarkFormatter;
+  // Shared, chart-bound LEVERAGE axis formatter (axis-format.js).
+  if (window.LeverageAxis) {
+    window.LeverageAxis.register(bigChart, {
+      getRange: function () { return window.activeRange || 'ALL'; },
+      getBarTimes: function () { return window._intradayBarTimes || null; },
+      getBarSecs: function () { return window._intradayBarSecs || null; },
+      resolveEpoch: function (t) {
+        var bt = window._intradayBarTimes, bs = window._intradayBarSecs;
+        if (bt && bs && typeof t === 'number') {
+          var i = Math.round(t / bs);
+          return (i >= 0 && i < bt.length) ? bt[i] : null;
+        }
+        return window.LeverageAxis.toEpoch(t);
+      }
+    });
+    window._bigChartTick = function (time, markType) {
+      return window.LeverageAxis.tick(bigChart, time, markType, window.activeRange || 'ALL');
+    };
+    window.customTickMarkFormatter = window._bigChartTick;
+  } else {
+    window.customTickMarkFormatter = bigChart.timeScale().options().tickMarkFormatter;
+  }
 
   var bigCandleSeries = window.bigCandleSeries = bigChart.addCandlestickSeries({
     upColor: '#089981', downColor: '#f23645',
@@ -2685,6 +2725,7 @@ async function initBigChart() {
 
     var currentLogical = bigChart.timeScale().getVisibleLogicalRange();
     bigCandleSeries.setData(displayData);
+    try { if (window.LeverageAxis && window.bigChart) window.LeverageAxis.reset(window.bigChart); } catch (e) {}
     if (bigVolumeSeries) {
       bigVolumeSeries.setData(displayData.map(function (p) {
         return { time: p.time, value: p.volume, color: p.close >= p.open ? 'rgba(8,153,129,0.3)' : 'rgba(242,54,69,0.3)' };
@@ -2786,6 +2827,7 @@ async function initBigChart() {
     }
 
     bigCandleSeries.setData(candleData);
+    try { if (window.LeverageAxis && window.bigChart) window.LeverageAxis.reset(window.bigChart); } catch (e) {}
     if (unique.length > 0) {
       window._lastHistoricalCandle = unique[unique.length - 1];
     }
