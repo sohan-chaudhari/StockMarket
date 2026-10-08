@@ -6073,6 +6073,27 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     data.append(forming)
                 data.sort(key=lambda c: c.get("time", 0))
 
+    # === FINAL MERGE INVARIANT: stored/native > resampled (Issue B) ===
+    # The tiered design intentionally merges stored/native candles with candles
+    # resampled from a lower timeframe. A resampled bucket can share the exact
+    # timestamp of the newest stored candle (pandas label='left' places 5m bars
+    # just after the last stored bar back into the same bucket label), and the
+    # append above does not reconcile that overlap -- so the response could carry
+    # two candles for the same logical timestamp. Enforce one candle per
+    # timestamp, preferring the stored/native row (it is added first), ascending.
+    # Mirrors ChartService._deduplicate() semantics. 5m is excluded so the
+    # intentional live-forming replacement above is preserved.
+    if interval in ("15m", "30m", "1h") and data:
+        _seen_times = set()
+        _merged = []
+        for _c in data:
+            _t = _c.get("time", 0)
+            if _t not in _seen_times:
+                _seen_times.add(_t)
+                _merged.append(_c)
+        _merged.sort(key=lambda _c: _c.get("time", 0))
+        data = _merged
+
     return {"data": data, "has_more": has_more}
 
 
