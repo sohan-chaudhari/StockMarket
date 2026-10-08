@@ -36,10 +36,12 @@ ok(body.indexOf("fetch('/api/stock-data/candle/latest") === -1,
    'removed the epoch-domain forming-candle repair');
 
 console.log('\n[3] gate: reconcile only when consecutive server ticks crossed a candle boundary');
-ok(body.indexOf('_bucketOf(serverTs) !== _bucketOf(window._lastTickServerTs)') !== -1,
+ok(body.indexOf("(typeof serverTs === 'number') ? serverTs : Date.parse(serverTs)") !== -1,
+   'normalizes serverTs (ISO string OR numeric ms) before any bucket math');
+ok(body.indexOf('_bucketOf(_serverMs) !== _bucketOf(window._lastTickServerTs)') !== -1,
    'uses a server-timestamp session-aligned bucket-crossing test');
-ok(body.indexOf('window._lastTickServerTs = serverTs') !== -1,
-   'records the last tick server timestamp for the next comparison');
+ok(body.indexOf('window._lastTickServerTs = _serverMs') !== -1,
+   'stores the NORMALIZED millisecond value for the next comparison');
 function crossed(nowMs, lastMs, barSecs) {
   const barMs = barSecs * 1000, IST = 5.5 * 3600 * 1000, SESS = (9 * 60 + 15) * 60000;
   const b = (ms) => {

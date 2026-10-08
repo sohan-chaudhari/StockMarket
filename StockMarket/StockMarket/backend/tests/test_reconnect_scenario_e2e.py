@@ -61,6 +61,16 @@ def _ist_epoch_sec(hour, minute, second=0):
 
 BASE = _ist_epoch_sec(9, 15)            # session open (09:15 IST) in true-UTC sec
 
+# The REAL production WebSocket delivers `serverTs` as an ISO-8601 datetime
+# string with a +05:30 offset (e.g. "2026-10-07T22:27:28.940889+05:30"), NOT as
+# epoch milliseconds. Tests must dispatch exactly that format so a regression
+# that assumes numeric milliseconds (as once shipped) cannot pass again.
+_IST_TZ = datetime.timezone(IST)
+
+
+def _iso_ist(epoch_ms):
+    return datetime.datetime.fromtimestamp(epoch_ms / 1000.0, tz=_IST_TZ).isoformat()
+
 
 def _bucket(sec, bar_secs):
     return BASE + ((sec - BASE) // bar_secs) * bar_secs
@@ -187,6 +197,7 @@ class ReconnectScenarioE2ETests(unittest.TestCase):
                 "chart never loaded for %s. page errors=%r" % (interval, errors[:8]))
 
     def _dispatch_tick(self, page, ticker, price, bucket_ms):
+        # Send the SAME format production sends: an ISO-8601 string with offset.
         page.evaluate(
             """([tkr, price, ts]) => {
                  window.dispatchEvent(new CustomEvent('dashboard_price_update', {
@@ -194,7 +205,7 @@ class ReconnectScenarioE2ETests(unittest.TestCase):
                                               prev_close: price, volume: 7000 } }, serverTs: ts }
                  }));
                }""",
-            [ticker, price, bucket_ms],
+            [ticker, price, _iso_ist(bucket_ms)],
         )
 
     def _set_now(self, page, now_sec):
@@ -336,6 +347,73 @@ class ReconnectScenarioE2ETests(unittest.TestCase):
                              "an in-bucket live tick must not add a bar")
             self.assertEqual(after["sentinel"], "SAME_PAGE",
                              "recovery must happen without navigating away")
+        finally:
+            ctx.close()
+
+    # ------------------------------- gate regression (ISO serverTs) ---------
+
+    def test_iso_serverts_no_reload_within_bucket_one_on_crossing(self):
+        """Regression guard for the production load-storm bug: `serverTs` is an
+        ISO string. Ticks inside the SAME candle bucket must NOT call
+        loadData(); crossing a bucket boundary must call it exactly once."""
+        interval = "5m"
+        bar_secs = 300
+        initial_sec = _ist_epoch_sec(11, 10)          # bucket 11:10
+        ctx, page, state, errors = self._open_page(interval, initial_sec)
+        try:
+            self._wait_loaded(page, interval, errors)
+            page.evaluate(
+                "() => { window.__loadCalls = 0; const o = window.loadData;"
+                " window.loadData = function(){ window.__loadCalls++; return o.apply(this, arguments); };"
+                " window.__navSentinel = 'SAME_PAGE'; }")
+            bucket = _bucket(initial_sec, bar_secs)
+
+            # 6 ticks, all inside the SAME bucket, in production ISO format
+            for i in range(6):
+                self._dispatch_tick(page, "RECOTEST", 100.0 + i, bucket * 1000 + i * 1000)
+            page.wait_for_timeout(600)
+            self.assertEqual(
+                page.evaluate("() => window.__loadCalls"), 0,
+                "ticks inside the same candle bucket must NOT reload the chart")
+
+            # now cross into the next bucket -> exactly one reconcile
+            next_sec = initial_sec + bar_secs + 30
+            state["now_sec"] = next_sec
+            self._set_now(page, next_sec)
+            self._dispatch_tick(page, "RECOTEST", 200.0, (bucket + bar_secs) * 1000)
+            page.wait_for_timeout(1200)
+            self.assertEqual(
+                page.evaluate("() => window.__loadCalls"), 1,
+                "crossing a candle boundary must trigger exactly one reload")
+            self.assertEqual(page.evaluate("() => window.__navSentinel"), "SAME_PAGE")
+
+            # _lastTickServerTs must hold the NORMALIZED numeric ms value
+            last = page.evaluate(
+                "() => ({ t: typeof window._lastTickServerTs, v: window._lastTickServerTs })")
+            self.assertEqual(last["t"], "number", "_lastTickServerTs must be a normalized number")
+            self.assertEqual(int(last["v"]), (bucket + bar_secs) * 1000)
+        finally:
+            ctx.close()
+
+    def test_numeric_serverts_is_still_supported(self):
+        """The gate must keep working if a numeric epoch-ms serverTs is supplied
+        (the normalization accepts both forms)."""
+        interval = "5m"
+        bar_secs = 300
+        initial_sec = _ist_epoch_sec(11, 10)
+        ctx, page, state, errors = self._open_page(interval, initial_sec)
+        try:
+            self._wait_loaded(page, interval, errors)
+            bucket = _bucket(initial_sec, bar_secs)
+            page.evaluate(
+                """([tkr, ts]) => { window.dispatchEvent(new CustomEvent('dashboard_price_update',
+                     { detail: { prices: { [tkr]: { current: 111, open: 111, high: 111, low: 111, prev_close: 111, volume: 1 } }, serverTs: ts } })); }""",
+                ["RECOTEST", bucket * 1000])
+            page.wait_for_timeout(400)
+            last = page.evaluate(
+                "() => ({ t: typeof window._lastTickServerTs, v: window._lastTickServerTs })")
+            self.assertEqual(last["t"], "number")
+            self.assertEqual(int(last["v"]), bucket * 1000)
         finally:
             ctx.close()
 

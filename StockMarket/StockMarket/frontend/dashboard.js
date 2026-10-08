@@ -3175,7 +3175,13 @@ async function initBigChart() {
       // bucket does not reload the chart.
       var _barSecsByRange = { '1m': 60, '3m': 180, '5m': 300, '10m': 600, '15m': 900, '30m': 1800, '1h': 3600, '2h': 7200, '4h': 14400 };
       var _activeBarSecs = _barSecsByRange[activeRange];
-      if (_isMarketOpen && isIntradayRange && _activeBarSecs && serverTs &&
+      // The WS delivers `serverTs` as an ISO-8601 datetime string (the
+      // backend's msg.ts), NOT epoch milliseconds -- normalize to a number
+      // before any bucket arithmetic. (Regression guard: doing numeric math on
+      // the raw string yielded NaN, and `NaN !== NaN` made the gate true on
+      // EVERY tick, which continuously reloaded the chart during market hours.)
+      var _serverMs = (typeof serverTs === 'number') ? serverTs : Date.parse(serverTs);
+      if (_isMarketOpen && isIntradayRange && _activeBarSecs && _serverMs &&
           window._lastTickServerTs && typeof window.loadData === 'function') {
         // Reconcile when the silence between two consecutive server ticks
         // CROSSED a candle boundary -- that is precisely when a completed
@@ -3194,12 +3200,12 @@ async function initBigChart() {
           var o = ms - sessStart;
           return o < 0 ? sessStart : sessStart + Math.floor(o / _barMs) * _barMs;
         };
-        if (_bucketOf(serverTs) !== _bucketOf(window._lastTickServerTs)) {
+        if (_bucketOf(_serverMs) !== _bucketOf(window._lastTickServerTs)) {
           window.loadData(activeRange).catch(function () {});
         }
       }
       window._lastPriceUpdateMs = now;
-      window._lastTickServerTs = serverTs || window._lastTickServerTs;
+      window._lastTickServerTs = _serverMs || window._lastTickServerTs;
       if (wsLive.current !== undefined) {
         processBigChartPrice({
           current: wsLive.current,
