@@ -604,6 +604,21 @@ try {
             const chartState = this.getChartState();
             const container = document.getElementById('chart-container');
 
+            // While a drawing tool is active the overlay canvas captures the
+            // pointer, so LWC's own crosshair never moves and the X-axis loses
+            // its date/time label. Re-position the native crosshair (lines are
+            // transparent, label visible) so the drawing point's date shows on
+            // the X-axis, matching TradingView.
+            if (isDrawingToolActive && chart && chartState && pos && typeof chart.setCrosshairPosition === 'function') {
+                try {
+                    var _xc = chartState.pixelToCoord(pos.x, pos.y);
+                    var _xSeries = window.bigWhitespaceSeries || window.bigCandleSeries || window.mainSeries || (chart && chart._candleSeries);
+                    if (_xc && _xc.time != null && _xc.price != null && _xSeries) {
+                        chart.setCrosshairPosition(_xc.price, _xc.time, _xSeries);
+                    }
+                } catch (err) {}
+            }
+
             if (this.isDrawing && this.currentDrawing) {
                 e.stopPropagation();
                 e.preventDefault();

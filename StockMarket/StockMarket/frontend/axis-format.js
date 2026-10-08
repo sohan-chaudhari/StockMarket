@@ -77,7 +77,7 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0 }; ST.set(chart, s); }
     return s;
   }
 
@@ -152,30 +152,33 @@
     var day  = pad2(p.d) + ' ' + MON[p.moi];
     var mon  = MON[p.moi];
     var yr   = '' + p.y;
+    var seen = o.s.seen;
 
-    if (o.mt === TMT.Year)  return (o.first || o.newYr) ? yr : '';
-    if (o.mt === TMT.Month) return (o.first || o.newMon) ? (p.moi === 0 ? (mon + ' ' + yr) : mon) : '';
+    if (o.mt === TMT.Year)  { if (seen.y !== p.y) { seen.y = p.y; seen.d[dayKeyOf(p)] = 1; return yr; } return ''; }
+    if (o.mt === TMT.Month) { var mk = monKeyOf(p); if (seen.m !== mk) { seen.m = mk; seen.d[dayKeyOf(p)] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; } return ''; }
 
     var barMin = BAR_MIN[o.range] || 5;
     var barsPerDay = Math.max(1, Math.floor(375 / barMin));
     var spanDays = o.bars / barsPerDay;
     var mins = p.hh * 60 + p.mm;
-    var sessionStart = mins <= (9 * 60 + 15 + barMin - 1);
+    var sessionStart = mins >= (9 * 60 + 15) && mins <= (9 * 60 + 15 + barMin - 1);
 
     if (spanDays <= 1.8) {
-      // Time tier: show the date only at a genuine session boundary.
-      if (o.newDay && (!o.first || o.realDayBoundary || sessionStart)) {
-        return o.newYr ? (day + ' ' + yr) : day;
+      // Time tier: the date appears only at a genuine session boundary.
+      if (sessionStart || o.realDayBoundary === true) {
+        return o.realYearBoundary ? (day + ' ' + yr) : day;
       }
       return time;
     }
 
-    // Date tier: one label per trading day (never repeat); month/year on
-    // calendar transitions.
-    if (o.newYr) return yr;
-    if (o.newMon) return p.moi === 0 ? (mon + ' ' + yr) : mon;
-    if (o.newDay) return day;
-    return '';
+    // Date tier: at most one label per trading day (order-independent), with
+    // month/year on genuine calendar transitions.
+    var dk = dayKeyOf(p);
+    if (o.realYearBoundary)  { seen.d[dk] = 1; return yr; }
+    if (o.realMonthBoundary) { seen.d[dk] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; }
+    if (seen.d[dk]) return '';
+    seen.d[dk] = 1;
+    return day;
   }
 
   // ── daily / weekly / monthly (business-day times) ───────────────────────
@@ -234,14 +237,25 @@
     }
     // Definitive boundary from the real bar sequence (previous real bar).
     var realDayBoundary = prevP ? (dayKeyOf(p) !== dayKeyOf(prevP)) : null;
+    var realMonthBoundary = prevP ? (prevP.y === p.y && prevP.moi !== p.moi) : null;
+    var realYearBoundary = prevP ? (prevP.y !== p.y) : null;
     if (realDayBoundary) newDay = true;
 
     if (!last || idx == null || last.idx == null || idx >= last.idx) {
       s.last = { idx: idx, dayKey: dayKeyOf(p), monKey: monKeyOf(p), y: p.y };
     }
 
-    var o = { p: p, mt: markType, bars: bars, width: width, range: range,
+    // Per-render "already labelled" sets. Lightweight Charts does NOT call the
+    // formatter in chronological order, so a call-order memo cannot dedupe
+    // reliably (it produced duplicate dates). A new render is detected by a
+    // gap since the previous call.
+    var _now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+    if (_now - (s.lastCall || 0) > 40) { s.seen = { d: {}, m: 0, y: 0 }; }
+    s.lastCall = _now;
+
+    var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s,
               first: first, realDayBoundary: realDayBoundary,
+              realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
               newDay: newDay, newMon: newMon, newYr: newYr };
     return intraday ? fmtIntraday(o) : fmtDay(o);
   }
