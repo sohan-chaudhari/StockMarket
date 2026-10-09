@@ -7084,6 +7084,110 @@ def _sync_daily_base_price() -> int:
     return round((time.time() - start) * 1000)
 
 
+# ── Bounded index 1D backfill ──────────────────────────────────────────────
+# The scheduled 1D jobs fetch thousands of tickers and die with
+# "can't start new thread" before reaching the indices, and yfinance cannot
+# fetch index symbols (^BSESN / ^NSEBANK / ^NSEI / ...). Fetch the indices'
+# official daily candles directly from AngelOne (bounded: six tickers),
+# falling back to the stored 5m aggregate only when AngelOne has no data.
+_INDEX_LIST = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCAP', 'SMALLCAP']
+
+
+def _backfill_index_daily(days_back: int = 20) -> int:
+    """Ensure the major indices have recent 1D candles. Returns rows inserted."""
+    from database import SessionLocal
+    from sqlalchemy import text as sa_text
+    inserted = 0
+    db = None
+    try:
+        today = database.get_ist_now().date()
+        start_day = today - timedelta(days=days_back)
+        start_dt = datetime.combine(start_day, datetime.min.time())
+        db = SessionLocal()
+        for tkr in _INDEX_LIST:
+            have = {r[0] for r in db.execute(sa_text(
+                "SELECT timestamp::date FROM candles "
+                "WHERE ticker=:t AND timeframe='1D' AND close>0 AND timestamp >= :s"
+            ), {"t": tkr, "s": start_dt}).fetchall()}
+
+            rows = {}  # date -> (o, h, l, c, src)
+            # 1) AngelOne official daily candles
+            try:
+                if not historical_service.is_logged_in:
+                    historical_service.login()
+                if historical_service.is_logged_in:
+                    candles = historical_service.get_historical_candles(
+                        ticker=tkr, interval='ONE_DAY', from_date=start_day, to_date=today)
+                    for ac in (candles or []):
+                        ts_raw = ac.get('timestamp')
+                        if not isinstance(ts_raw, datetime):
+                            continue
+                        d = ts_raw.date()
+                        if d in have:
+                            continue
+                        o = float(ac.get('open', 0) or 0); h = float(ac.get('high', 0) or 0)
+                        l = float(ac.get('low', 0) or 0);  c = float(ac.get('close', 0) or 0)
+                        if o > 0 and c > 0:
+                            rows[d] = (o, max(o, h, c), min(o, l, c), c, 'ANGELONE')
+            except Exception as e:
+                print(f"[IndexDailyBackfill] AngelOne {tkr}: {e}")
+
+            # 2) 5m-derived fallback ONLY if AngelOne gave nothing for this ticker
+            if not rows:
+                agg = db.execute(sa_text("""
+                    SELECT timestamp::date AS d,
+                           (array_agg(open  ORDER BY timestamp ASC))[1]  AS o,
+                           max(high) AS h, min(low) AS l,
+                           (array_agg(close ORDER BY timestamp DESC))[1] AS c
+                    FROM candles
+                    WHERE ticker=:t AND timeframe='5m' AND close>0 AND timestamp >= :s
+                    GROUP BY 1
+                """), {"t": tkr, "s": start_dt}).fetchall()
+                for d, o, h, l, c in agg:
+                    if d in have or d in rows:
+                        continue
+                    try:
+                        o = float(o); h = float(h); l = float(l); c = float(c)
+                    except Exception:
+                        continue
+                    if o > 0 and c > 0:
+                        rows[d] = (o, max(o, h, c), min(o, l, c), c, 'BACKFILL')
+
+            for d, (o, h, l, c, src) in rows.items():
+                db.execute(sa_text("""
+                    INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
+                                         volume, is_completed, data_source, is_backfilled)
+                    VALUES (:t, '1D', :ts, :o, :h, :l, :c, 0, true, :src, false)
+                    ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+                """), {"t": tkr, "ts": datetime(d.year, d.month, d.day),
+                       "o": o, "h": h, "l": l, "c": c, "src": src})
+                inserted += 1
+            db.commit()
+            print(f"[IndexDailyBackfill] {tkr}: +{len(rows)} 1D row(s)")
+    except Exception as e:
+        print(f"[IndexDailyBackfill] Error: {e}")
+    finally:
+        if db is not None:
+            db.close()
+    return inserted
+
+
+async def _index_daily_backfill_loop():
+    """Run the index 1D backfill shortly after startup, then daily at 18:35 IST."""
+    await asyncio.sleep(45)   # let AngelOne login / instrument load settle
+    while True:
+        try:
+            n = await asyncio.to_thread(_backfill_index_daily)
+            print(f"[IndexDailyBackfill] Done: {n} row(s) inserted")
+        except Exception as e:
+            print(f"[IndexDailyBackfill] loop error: {e}")
+        now_ist = database.get_ist_now()
+        nxt = now_ist.replace(hour=18, minute=35, second=0, microsecond=0)
+        if now_ist >= nxt:
+            nxt += timedelta(days=1)
+        await asyncio.sleep(max(300, (nxt - now_ist).total_seconds()))
+
+
 @app.on_event("startup")
 async def startup():
     """Load NSE holidays + start dashboard broadcast loops + subscribe AngelOne WS."""
@@ -7844,6 +7948,9 @@ async def startup():
                 db_sync.close()
     daily_sync = _track_task(asyncio.create_task(_daily_market_close_sync()))
     daily_sync.add_done_callback(_log_task_error)
+
+    idx_daily = _track_task(asyncio.create_task(_index_daily_backfill_loop()))
+    idx_daily.add_done_callback(_log_task_error)
 
     # NOTE (Phase 15A audit): a second, independent nightly 1D→1W/1W→1M
     # compression job used to live here (`_retention_compress`, 19:30 IST,
