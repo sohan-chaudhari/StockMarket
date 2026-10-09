@@ -77,7 +77,7 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, frameArmed: false }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, frameArmed: false, renderIdxs: null, rangeKey: null }; ST.set(chart, s); }
     return s;
   }
 
@@ -100,8 +100,10 @@
       // Reset the render memo + labelled sets so the next pass re-anchors
       // day/month/year boundaries. The visible-bar count is read live below.
       var s = state(chart);
+      // Only the render memo is reset here; the "already labelled" sets are
+      // reset by the visible-range key check inside tick(), which cannot fire
+      // mid-render.
       s.last = null;
-      s.seen = { d: {}, m: 0, y: 0 };
     };
   }
 
@@ -137,7 +139,7 @@
   function reset(chart) {
     if (!chart) return;
     var s = ST.get(chart);
-    if (s) s.last = null;
+    if (s) { s.last = null; s.seen = { d: {}, m: 0, y: 0 }; s.renderIdxs = null; }
   }
 
   function barsOf(chart) {
@@ -246,6 +248,19 @@
     if (!p) return '';
 
     var s = state(chart);
+    // ── Reset the "already labelled" sets when the VISIBLE RANGE changes ──
+    // A range/zoom/pan change re-invokes the formatter; a plain candle repaint
+    // does not (verified). The visible range is constant for every tick within
+    // one render, so keying the reset on it cannot fire mid-render (which is
+    // what previously let the same day be dated twice) yet still re-emits the
+    // dates on every zoom.
+    var _lr = null;
+    try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
+    var _rk = _lr ? (Math.round(_lr.from * 100) + ':' + Math.round(_lr.to * 100)) : null;
+    if (_rk !== s.rangeKey) {
+      s.rangeKey = _rk;
+      s.seen = { d: {}, m: 0, y: 0 };
+    }
     var bars = barsOf(chart);
     var width = widthOf(chart);
 
