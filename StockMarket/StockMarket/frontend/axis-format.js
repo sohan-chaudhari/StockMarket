@@ -184,24 +184,45 @@
 
     if (spanDays <= 1.8) {
       // Time tier. A single-session view shows times only (no date). When the
-      // visible range spans a day boundary, the date is shown exactly once, at
-      // the first tick of each trading day (Lightweight Charts never lands a tick
-      // on the exact 09:15 bar), then times for the rest of that day.
+      // visible range spans a day boundary, the date is shown exactly once per
+      // trading day, on the first tick that lands within one tick-span of the
+      // day's first bar (Lightweight Charts never lands a tick on the exact
+      // 09:15 bar). This is a pure function of the tick's real bar index and the
+      // day's first bar, so the same day's date can never be emitted twice --
+      // regardless of call order, panning, or how a render is split.
       if (!o.multiDay) return time;
       var dkt = dayKeyOf(p);
-      var isBoundary = (sessionStart || o.realDayBoundary === true || o.newDay === true);
-      if (isBoundary && !seen.d[dkt]) {
+      var _dkey = p.y + '-' + pad2(p.moi + 1) + '-' + pad2(p.d);
+      var d0 = (window._intradayDayFirstBarMap && o.idx != null)
+        ? window._intradayDayFirstBarMap[_dkey] : null;
+      if (d0 != null) {
+        var _step = Math.max(1, Math.round(o.bars / 4));
+        var _into = o.idx - d0;
+        if (_into >= 0 && _into < _step) return o.realYearBoundary ? (day + ' ' + yr) : day;
+        return time;
+      }
+      // Fallback for raw-epoch charts without the bar map: one date per day.
+      if ((sessionStart || o.realDayBoundary === true || o.newDay === true) && !seen.d[dkt]) {
         seen.d[dkt] = 1;
         return o.realYearBoundary ? (day + ' ' + yr) : day;
       }
       return time;
     }
 
-    // Date tier: one date per trading day (first tick of the day), month/year on
-    // genuine calendar transitions.
+    // Date tier: one date per trading day, month/year on genuine calendar
+    // transitions. Same deterministic first-tick-of-day placement when the bar
+    // map is available.
     var dk = dayKeyOf(p);
     if (o.realYearBoundary  && seen.y !== p.y)  { seen.y = p.y; seen.d[dk] = 1; return yr; }
     if (o.realMonthBoundary && seen.m !== monKeyOf(p)) { seen.m = monKeyOf(p); seen.d[dk] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; }
+    var _dkey2 = p.y + '-' + pad2(p.moi + 1) + '-' + pad2(p.d);
+    var d02 = (window._intradayDayFirstBarMap && o.idx != null)
+      ? window._intradayDayFirstBarMap[_dkey2] : null;
+    if (d02 != null) {
+      var _step2 = Math.max(1, Math.round(o.bars / 4));
+      var _into2 = o.idx - d02;
+      return (_into2 >= 0 && _into2 < _step2) ? day : '';
+    }
     if (seen.d[dk]) return '';
     seen.d[dk] = 1;
     return day;
@@ -311,7 +332,7 @@
     // formatter in or how a render is split across frames.
     s.lastCall = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 
-    var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s,
+    var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s, idx: idx,
               first: first, realDayBoundary: realDayBoundary,
               realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
               newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay };
