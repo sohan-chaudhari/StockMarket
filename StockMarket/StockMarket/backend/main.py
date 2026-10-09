@@ -2319,6 +2319,13 @@ async def fetch_batch_live_data(tickers: List[str], market_open: bool = False) -
                 if now_ts_sec - recv_ts > max_age_sec:
                     is_stale = True
 
+        # A quote whose broker/exchange timestamp is not from the current
+        # session is a stale replay (some illiquid tokens get an old snapshot
+        # from the broker's WS). Treat it as stale so the DB fallback is used,
+        # keeping /api/live-prices consistent with /api/market-movers.
+        if tick_data and not is_stale and not _tick_is_current_session(tick_data, market_open):
+            is_stale = True
+
         if tick_data and tick_data.get("current_price", 0) > 0 and not missing_ohlc and not is_stale:
             cp = tick_data["current_price"]
             pc = tick_data.get("prev_close", 0)
@@ -2735,6 +2742,38 @@ def _refresh_db_baseline_sync():
         _db_baseline_query_lock.release()
 
 
+def _tick_is_current_session(tick_data: dict, market_open: bool) -> bool:
+    """Return False only when a tick's broker/exchange timestamp proves it is
+    NOT from the current trading session.
+
+    The broker WebSocket replays stale snapshots for some illiquid tokens --
+    e.g. a late-September quote arriving with a pre-open exchange timestamp.
+    Such a quote must never be presented as a live price. Ticks with no usable
+    exchange timestamp are trusted, because staleness cannot be proven for them.
+    """
+    ex = tick_data.get("_exch_ts")
+    if ex is None:
+        return True
+    try:
+        ex = float(ex)
+    except (TypeError, ValueError):
+        return True
+    if ex < 1.5e9:  # unreasonable/zero -> fall back to trusting it
+        return True
+    try:
+        ex_dt = datetime.fromtimestamp(ex, IST)
+    except (OverflowError, OSError, ValueError):
+        return True
+    today = datetime.now(IST).date()
+    if ex_dt.date() < today:
+        return False
+    if market_open:
+        session_open = datetime(today.year, today.month, today.day, 9, 15, 0, tzinfo=IST)
+        if ex_dt < session_open:
+            return False
+    return True
+
+
 def _get_all_market_prices() -> dict:
     """Provides complete market prices in 0.1ms by reading in-memory baseline and overlaying live ticks."""
     global _db_baseline_prices
@@ -2744,13 +2783,23 @@ def _get_all_market_prices() -> dict:
     with _db_baseline_lock:
         all_prices = dict(_db_baseline_prices)
     
-    # Overlay AngelOne live WebSocket ticks on top of DB baseline in 0.1ms
+    # Overlay AngelOne live WebSocket ticks on top of DB baseline in 0.1ms.
+    # A tick is only overlaid when its broker/exchange timestamp proves it
+    # belongs to the CURRENT trading session. The broker replays stale
+    # snapshots for some illiquid tokens (e.g. a late-September quote arriving
+    # with a pre-open exchange timestamp); trusting those made
+    # /api/market-movers and /api/live-prices show a past session's price as
+    # today's. Stale ticks are skipped so the (correct) DB baseline is used.
+    market_open = is_market_open_now()
+    now_ist_naive = datetime.now(IST).replace(tzinfo=None)
     try:
         with angelone_service.latest_ticks_lock:
             live_ticks = dict(angelone_service.latest_ticks)
         for ticker, tick_data in live_ticks.items():
             cp = _safe_float(tick_data.get("current_price", 0))
             if cp <= 0:
+                continue
+            if not _tick_is_current_session(tick_data, market_open):
                 continue
             tkr_clean = ticker.upper().replace('.NS', '').replace('.BO', '')
             base_entry = all_prices.get(tkr_clean, {})
@@ -2773,6 +2822,10 @@ def _get_all_market_prices() -> dict:
                 "volume": vol,
                 "prev_volume": p_vol,
                 "vol_surge": v_surge,
+                # Markers used by _build_movers to distinguish a current-session
+                # live quote from a baseline-only (previous session) row.
+                "_live": True,
+                "timestamp": now_ist_naive,
             }
     except Exception as e:
         print(f"[Movers] Live tick overlay error: {e}")
@@ -2783,6 +2836,10 @@ def _get_all_market_prices() -> dict:
 def _build_movers(prices: dict, cap_filter: str = "all", sector_filter: str = None) -> dict:
     gainers, losers, most_active, volume_shockers = [], [], [], []
     market_open = is_market_open_now()
+    # Only enforce the "current-session quote" rule when the live feed actually
+    # produced some quotes; if it produced none at all (e.g. WS is down), fall
+    # back to the baseline so the list is not empty.
+    live_only = market_open and any(p.get("_live") for p in prices.values())
     sec_target = sector_filter.lower().strip() if (sector_filter and sector_filter.strip().lower() != "all") else None
     sec_aliases = _get_sector_aliases(sec_target) if sec_target else []
 
@@ -2792,6 +2849,16 @@ def _build_movers(prices: dict, cap_filter: str = "all", sector_filter: str = No
         prev_close = _safe_float(p.get("prev_close", 0))
         if cp <= 0 and prev_close <= 0 and open_price <= 0:
             continue
+
+        # During live hours a mover must carry a CURRENT-session quote: a
+        # baseline-only row is the previous session's close, so its change is
+        # not today's move. Without this the gainers/losers list was dominated
+        # by tickers whose (stale) baseline move never changed intraday and did
+        # not match the broker. When the market is closed the baseline is used
+        # deliberately -- it is then the last session's movers.
+        if live_only and not p.get("_live"):
+            continue
+
         change = _safe_float(p.get("change", 0))
         change_pct = _safe_float(p.get("change_pct", 0))
         vol = _safe_int(p.get("volume", 0))
@@ -2951,37 +3018,6 @@ async def get_market_movers(cap: str = Query("all"), sector: Optional[str] = Que
     prices = await asyncio.to_thread(_get_all_market_prices)
     data = _build_movers(prices, cap_filter=cap_val)
     return data
-
-
-@app.get("/api/_diag_movers")
-async def _diag_movers():
-    """TEMPORARY read-only diagnostic for market-movers staleness. Remove after use."""
-    watch = ["CUBEXTUB", "RETAIL", "KLL", "QUINT", "ABMINTLLTD", "RADHIKAJWE",
-             "PPAP", "GATECH", "DCG", "RSYSTEMS", "CYIENT"]
-
-    def _slim(d):
-        if not d:
-            return None
-        return {k: d.get(k) for k in (
-            "current", "current_price", "prev_close", "change", "change_pct",
-            "timestamp", "_received_ts", "_ts", "_source", "volume") if k in d}
-
-    with _db_baseline_lock:
-        baseline = dict(_db_baseline_prices)
-    with angelone_service.latest_ticks_lock:
-        ticks = dict(angelone_service.latest_ticks)
-    all_mp = _get_all_market_prices()
-
-    return {
-        "baseline_ts": _db_baseline_ts,
-        "baseline_len": len(baseline),
-        "ticks_len": len(ticks),
-        "baseline": {k: _slim(baseline.get(k)) for k in watch},
-        "tick": {k: _slim(ticks.get(k)) for k in watch},
-        "in_ticks": {k: (k in ticks) for k in watch},
-        "all_mp": {k: _slim(all_mp.get(k)) for k in watch},
-        "tick_keys_matching": [k for k in ticks if any(w in k for w in watch)],
-    }
 
 
 # ==================== MARKET INTERNALS ====================
@@ -6874,6 +6910,13 @@ def _on_angel_tick(ticker: str, data: dict):
                 # intact, a WS tick correctly wins for its recency window while
                 # REST->REST polling is unaffected (source stays rest_poller).
                 "_source": data.get("_source") or "angel_ws",
+                # Preserve the broker/exchange timestamp separately. `_ts` and
+                # `_received_ts` are overwritten with server time below, which
+                # previously made a stale replayed quote (broker sends an old
+                # snapshot for some illiquid tokens) indistinguishable from a
+                # live one. `_exch_ts` lets callers gate on the session the
+                # quote actually belongs to.
+                "_exch_ts": data.get("_ts"),
                 "_received_ts": time.time(),
                 "_ts": time.time(),
             }
