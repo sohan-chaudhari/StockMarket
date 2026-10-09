@@ -77,16 +77,31 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0 }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, frameArmed: false }; ST.set(chart, s); }
     return s;
+  }
+
+  // Reset the per-render "already labelled" sets on the next animation frame.
+  // LWC lays out tick marks within a single frame, so every formatter call for
+  // one render shares these sets (giving one date per day) and they are cleared
+  // before the next render -- which a fixed time gap cannot guarantee when two
+  // renders happen back to back.
+  function armFrameReset(s) {
+    if (s.frameArmed) return;
+    s.frameArmed = true;
+    var clear = function () { s.seen = { d: {}, m: 0, y: 0 }; s.frameArmed = false; };
+    try {
+      (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(clear);
+    } catch (e) { clear(); }
   }
 
   function onRangeChange(chart) {
     return function () {
-      // Reset the render memo so the next pass re-anchors day/month/year
-      // boundaries. The visible-bar count is read live (never cached) below.
+      // Reset the render memo + labelled sets so the next pass re-anchors
+      // day/month/year boundaries. The visible-bar count is read live below.
       var s = state(chart);
       s.last = null;
+      s.seen = { d: {}, m: 0, y: 0 };
     };
   }
 
@@ -164,8 +179,16 @@
     var sessionStart = mins >= (9 * 60 + 15) && mins <= (9 * 60 + 15 + barMin - 1);
 
     if (spanDays <= 1.8) {
-      // Time tier: the date appears only at a genuine session boundary.
-      if (sessionStart || o.realDayBoundary === true) {
+      // Time tier. A date is shown at a genuine session boundary, and — so the
+      // day stays identifiable when ~half a session or more is visible — on the
+      // first tick of each trading day (Lightweight Charts never lands a tick on
+      // the exact 09:15 bar). The per-render `seen` set keeps it to one date per
+      // day, so no duplicates.
+      var dkt = dayKeyOf(p);
+      var isBoundary = (sessionStart || o.realDayBoundary === true);
+      if (spanDays >= 0.6 && o.newDay) isBoundary = true;
+      if (isBoundary && !seen.d[dkt]) {
+        seen.d[dkt] = 1;
         return o.realYearBoundary ? (day + ' ' + yr) : day;
       }
       return time;
@@ -248,7 +271,8 @@
     // Per-render "already labelled" sets. Lightweight Charts does NOT call the
     // formatter in chronological order, so a call-order memo cannot dedupe
     // reliably (it produced duplicate dates). A new render is detected by a
-    // gap since the previous call.
+    // frame boundary (rAF) and, as a fallback, a gap since the previous call.
+    armFrameReset(s);
     var _now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
     if (_now - (s.lastCall || 0) > 40) { s.seen = { d: {}, m: 0, y: 0 }; }
     s.lastCall = _now;
