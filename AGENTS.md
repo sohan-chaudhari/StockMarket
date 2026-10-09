@@ -398,10 +398,10 @@
 
 ### Session 20: Mobile News Page Layout Fix
 
-**Goal:** Fix news page (news.html) mobile view � layout was broken with a vertical sidebar column above the content, inputs overflowing, and oversized typography.
+**Goal:** Fix news page (news.html) mobile view � layout was broken with a vertical sidebar column above the content, inputs overflowing, and oversized typography.
 
 **File Modified:**
-- `frontend/news.html` � Replaced single-line `@media(max-width:768px)` with comprehensive mobile-only styles. Desktop styles unchanged.
+- `frontend/news.html` � Replaced single-line `@media(max-width:768px)` with comprehensive mobile-only styles. Desktop styles unchanged.
 
 **Changes Made:**
 1. **Sidebar ? horizontal scrollable tab strip**: `.sidebar` to `flex-direction:row; overflow-x:auto;`. Each `.sidebar-btn` rendered as a pill chip with `white-space:nowrap; flex-shrink:0; border-radius:20px`.
@@ -485,3 +485,30 @@ ews_*.log files
   - Port 8000 (/api/all-stocks & /api/news/search/market) -> 200 OK
   - Port 8003 (/docs) -> 200 OK
   - Active venv (StockMarket\StockMarket\StockMarket\venv) and code intact.
+
+---
+
+## Session 22: Market Movers Stale-Tick Fix (live dashboard)
+
+**Goal:** Fix Top Gainers/Losers showing no price movement and values that did not match Angel One.
+
+**Root cause (verified against live prod, read-only + diagnostic endpoint):**
+1. `/api/market-movers` (`_get_all_market_prices`) overlaid `angelone_service.latest_ticks` with **no freshness gate**, while `/api/live-prices` (`fetch_batch_live_data`) applied a 900s `_received_ts` gate — so the two endpoints disagreed for the same ticker.
+2. `_on_angel_tick` **overwrote the broker exchange timestamp** (`_ts`) with server time, so a *replayed stale snapshot* (broker WS sends an old quote for some illiquid tokens, e.g. CUBEXTUB's 2026-09-28 close 167.46 / prev 152.24, exchange ts 06:55 IST) looked "fresh" and was trusted.
+3. Those stale quotes produced fake +10% movers that never changed intraday; the DB baseline (correct last close) was ignored. A diagnostic confirmed: `baseline CUBEXTUB = 165.27/157.4`, `tick = 167.46/152.24` (`_source=angel_ws`, fresh `_received_ts`).
+4. Aggregator also coerced old timestamps to "now", writing bogus current-session candles from stale prices (e.g. KLL 5m 10:25 = 46.0).
+
+**Fix (commit `bec24c7`, deployed via git pull → cp -ru → systemctl restart):**
+- `_on_angel_tick`: preserve broker timestamp as `_exch_ts`.
+- New `_tick_is_current_session(tick_data, market_open)`: rejects a quote whose `_exch_ts` is a previous day, or same-day pre-open (<09:15) while the market is open.
+- `_get_all_market_prices`: skip stale ticks; mark live entries `_live` + `timestamp`.
+- `fetch_batch_live_data`: same session gate → `/api/live-prices` consistent with movers.
+- `_build_movers`: while market is open, list only current-session (`_live`) quotes (falls back to baseline if the live feed is fully down); when closed, baseline = last session's movers.
+- Added `backend/tests/test_movers_stale_tick_gate.py` (11 tests).
+
+**Verification (prod):** movers now tick live (RSYSTEMS 275→279, CYIENT 1155→1157, TCS 2194→2198); all 9 previously-frozen tickers (CUBEXTUB/RETAIL/KLL/QUINT/ABMINTLLTD/RADHIKAJWE/PPAP/GATECH/DCG) gone from movers; `/api/live-prices` returns `src=db` for them. 11/11 new tests + 28 existing tests pass.
+
+**Remaining / follow-ups (NOT done):**
+- Aggregator still ingests stale quotes (coerces old ts to now) → occasional bogus candles; needs a careful guard (reuse `_tick_is_current_session` in `_on_angel_tick`/`process_tick`), ideally alongside the deferred candle/volume repair.
+- DB has corrupt BACKFILL 1D rows (volume 0, e.g. PPAP 2026-10-09 = 338.02 = +36.8%) and a 07:43 daily job that wrote today's rows from stale quotes.
+- Prod is a 1 GB Lightsail instance; a service restart under startup load caused a gunicorn WORKER TIMEOUT + SIGKILL (OOM) and a ~30s `statement_timeout` on the baseline query, then recovered. Consider more RAM / a cheaper baseline query.
