@@ -183,14 +183,13 @@
     var sessionStart = mins >= (9 * 60 + 15) && mins <= (9 * 60 + 15 + barMin - 1);
 
     if (spanDays <= 1.8) {
-      // Time tier. The date is shown at a genuine session boundary, and — so the
-      // day stays identifiable when ~half a session or more is visible — on the
-      // first tick of each trading day (Lightweight Charts never lands a tick on
-      // the exact 09:15 bar). The persistent `seen.d` set keeps it to exactly one
-      // date per day.
+      // Time tier. A single-session view shows times only (no date). When the
+      // visible range spans a day boundary, the date is shown exactly once, at
+      // the first tick of each trading day (Lightweight Charts never lands a tick
+      // on the exact 09:15 bar), then times for the rest of that day.
+      if (!o.multiDay) return time;
       var dkt = dayKeyOf(p);
-      var isBoundary = (sessionStart || o.realDayBoundary === true);
-      if (spanDays >= 0.6 && o.newDay) isBoundary = true;
+      var isBoundary = (sessionStart || o.realDayBoundary === true || o.newDay === true);
       if (isBoundary && !seen.d[dkt]) {
         seen.d[dkt] = 1;
         return o.realYearBoundary ? (day + ' ' + yr) : day;
@@ -261,6 +260,27 @@
       s.rangeKey = _rk;
       s.seen = { d: {}, m: 0, y: 0 };
     }
+    // Does the visible range span more than one trading day? Date labels are only
+    // meaningful then -- a single-session view (all visible bars on one trading
+    // day) must show times only, with no date at all.
+    var multiDay = false;
+    try {
+      var _vr = chart.timeScale().getVisibleRange();
+      if (_vr && _vr.from != null && _vr.to != null) {
+        var _eF = null, _eT = null;
+        if (intraday && idx != null) {
+          var _bt = cfg.getBarTimes(), _bs = cfg.getBarSecs();
+          if (_bt && _bs) {
+            var _iF = Math.max(0, Math.min(_bt.length - 1, Math.round(Number(_vr.from) / _bs)));
+            var _iT = Math.max(0, Math.min(_bt.length - 1, Math.round(Number(_vr.to) / _bs)));
+            _eF = _bt[_iF]; _eT = _bt[_iT];
+          }
+        }
+        if (_eF == null) { _eF = toEpoch(_vr.from); _eT = toEpoch(_vr.to); }
+        var _pF = parts(_eF), _pT = parts(_eT);
+        if (_pF && _pT) multiDay = dayKeyOf(_pF) !== dayKeyOf(_pT);
+      }
+    } catch (e) {}
     var bars = barsOf(chart);
     var width = widthOf(chart);
 
@@ -294,7 +314,7 @@
     var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s,
               first: first, realDayBoundary: realDayBoundary,
               realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
-              newDay: newDay, newMon: newMon, newYr: newYr };
+              newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay };
     return intraday ? fmtIntraday(o) : fmtDay(o);
   }
 
