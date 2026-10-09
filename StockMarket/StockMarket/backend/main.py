@@ -7172,8 +7172,60 @@ def _backfill_index_daily(days_back: int = 20) -> int:
     return inserted
 
 
+def _backfill_daily_from_5m(days_back: int = 10) -> int:
+    """DB-only: aggregate stored 5m into 1D for any (ticker, day) missing a 1D row.
+
+    Cheap, set-based, no network and no threads. Excludes the index list, which
+    is handled by _backfill_index_daily (AngelOne's official OHLC is preferred
+    over the 5m aggregate for indices).
+    """
+    from database import SessionLocal
+    from sqlalchemy import text as sa_text
+    n = 0
+    db = None
+    try:
+        start = datetime.combine(
+            database.get_ist_now().date() - timedelta(days=days_back), datetime.min.time())
+        db = SessionLocal()
+        res = db.execute(sa_text("""
+            INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
+                                 volume, is_completed, data_source, is_backfilled)
+            SELECT c.ticker, '1D', date_trunc('day', c.timestamp),
+                   (array_agg(c.open  ORDER BY c.timestamp ASC))[1],
+                   max(c.high), min(c.low),
+                   (array_agg(c.close ORDER BY c.timestamp DESC))[1],
+                   0, true, 'BACKFILL', false
+            FROM candles c
+            WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
+              AND c.timestamp >= :s
+              AND NOT (c.ticker = ANY(:idx))
+              AND NOT EXISTS (
+                  SELECT 1 FROM candles d
+                  WHERE d.ticker = c.ticker AND d.timeframe='1D'
+                    AND d.timestamp >= date_trunc('day', c.timestamp)
+                    AND d.timestamp <  date_trunc('day', c.timestamp) + interval '1 day'
+              )
+            GROUP BY c.ticker, date_trunc('day', c.timestamp)
+            ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
+        """), {"s": start, "idx": list(_INDEX_LIST)})
+        db.commit()
+        n = res.rowcount or 0
+    except Exception as e:
+        print(f"[DailyFrom5m] Error: {e}")
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    finally:
+        if db is not None:
+            db.close()
+    print(f"[DailyFrom5m] Inserted {n} 1D candle(s) from 5m")
+    return n
+
+
 async def _index_daily_backfill_loop():
-    """Run the index 1D backfill shortly after startup, then daily at 18:35 IST."""
+    """Index 1D backfill + DB-only 5m->1D pass: shortly after startup, then daily."""
     await asyncio.sleep(45)   # let AngelOne login / instrument load settle
     while True:
         try:
@@ -7181,6 +7233,11 @@ async def _index_daily_backfill_loop():
             print(f"[IndexDailyBackfill] Done: {n} row(s) inserted")
         except Exception as e:
             print(f"[IndexDailyBackfill] loop error: {e}")
+        try:
+            m = await asyncio.to_thread(_backfill_daily_from_5m)
+            print(f"[DailyFrom5m] Done: {m} row(s) inserted")
+        except Exception as e:
+            print(f"[DailyFrom5m] loop error: {e}")
         now_ist = database.get_ist_now()
         nxt = now_ist.replace(hour=18, minute=35, second=0, microsecond=0)
         if now_ist >= nxt:
@@ -7854,6 +7911,11 @@ async def startup():
                     continue
 
             print(f"[DailySync] Starting daily sync...")
+            # Cheap DB-only pass first: derive any missing 1D from stored 5m.
+            try:
+                await asyncio.to_thread(_backfill_daily_from_5m)
+            except Exception as e:
+                print(f"[DailySync] 5m pass error: {e}")
             db_sync = SessionLocal()
             try:
                 rows = db_sync.execute(
@@ -7871,6 +7933,14 @@ async def startup():
                 ).fetchall()
                 have_today = {r[0] for r in existing}
                 missing = sorted(watched - have_today)
+
+                # Bound the network work per run so the job always completes and
+                # cannot exhaust the process thread limit (previously it fetched
+                # ~7,800 tickers in one pass and died with "can't start new thread").
+                _NET_CAP = 1200
+                if len(missing) > _NET_CAP:
+                    print(f"[DailySync] Capping network fetch to {_NET_CAP} of {len(missing)} missing")
+                    missing = missing[:_NET_CAP]
 
                 if not missing:
                     print(f"[DailySync] All {len(watched)} watched tickers already have today's candle")
@@ -8181,6 +8251,12 @@ async def startup():
                 continue
 
             print(f"[DailyPreFill] Checking all tickers for daily intraday_candles_5min...")
+            # Cheap DB-only pass first: derive any missing 1D from stored 5m so the
+            # expensive network fetch below only handles tickers with no 5m data.
+            try:
+                await asyncio.to_thread(_backfill_daily_from_5m)
+            except Exception as e:
+                print(f"[DailyPreFill] 5m pass error: {e}")
             _prefill_state["running"] = True
             _prefill_started_ts = time.time()
             _prefill_state["last_started_at"] = database.get_ist_now().isoformat()
@@ -8229,6 +8305,14 @@ async def startup():
                         continue
                     filtered.append(t)
                 missing = filtered
+                # Bound the network work per run so the job always completes and
+                # cannot exhaust the process thread limit (previously it fetched
+                # ~7,800 tickers and died with "can't start new thread"). The
+                # remaining backlog is picked up on subsequent days.
+                _NET_CAP = 1200
+                if len(missing) > _NET_CAP:
+                    print(f"[DailyPreFill] Capping network fetch to {_NET_CAP} of {len(missing)} missing")
+                    missing = missing[:_NET_CAP]
                 if skipped_failed:
                     print(f"[DailyPreFill] Skipped {skipped_failed} known-failed tickers, fetching {len(missing)} up to {target_trading_day}...")
                 else:
@@ -8302,15 +8386,21 @@ async def startup():
                 # tickers, same worker count, same per-ticker logic, just batched.
                 loop = asyncio.get_event_loop()
                 _PREFILL_CHUNK = 10
+                # One reused pool for the whole run instead of a new
+                # ThreadPoolExecutor per chunk -- creating thousands of short-lived
+                # 3-thread pools was what exhausted the process thread limit.
+                _prefill_pool = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="prefill")
                 results = []
-                for i in range(0, len(missing), _PREFILL_CHUNK):
-                    chunk = missing[i:i + _PREFILL_CHUNK]
-                    def _run_chunk(_chunk=chunk):
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                            return list(pool.map(_fetch_daily, _chunk))
-                    results.extend(await loop.run_in_executor(_bg_executor, _run_chunk))
-                    if i + _PREFILL_CHUNK < len(missing):
-                        await asyncio.sleep(0.5)
+                try:
+                    for i in range(0, len(missing), _PREFILL_CHUNK):
+                        chunk = missing[i:i + _PREFILL_CHUNK]
+                        def _run_chunk(_chunk=chunk):
+                            return list(_prefill_pool.map(_fetch_daily, _chunk))
+                        results.extend(await loop.run_in_executor(_bg_executor, _run_chunk))
+                        if i + _PREFILL_CHUNK < len(missing):
+                            await asyncio.sleep(0.5)
+                finally:
+                    _prefill_pool.shutdown(wait=False)
                 ok = sum(1 for r in results if r)
                 fail = len(missing) - ok
                 # Sync stock_metadata base_price with latest 1D close prices.
