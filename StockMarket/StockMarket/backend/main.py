@@ -1869,6 +1869,25 @@ def _resolve_prices_from_db(tickers: List[str], market_open: bool) -> Tuple[Dict
                     Candle.close > 0
                 ).order_by(Candle.timestamp.desc()).limit(2).all()
 
+                # If a more recent 5m session exists than the latest 1D candle,
+                # the 1D row is stale (some indices, e.g. SENSEX/BANKNIFTY, are
+                # not always rolled into 1D). Treat it as unavailable so the
+                # 5m-derived branch below serves the latest close instead of a
+                # stale one.
+                if c_rows:
+                    _IST_ck = timezone(timedelta(hours=5, minutes=30))
+                    _lt_ck = c_rows[0].timestamp
+                    _lt_ck_date = _lt_ck.astimezone(_IST_ck).date() if getattr(_lt_ck, 'tzinfo', None) is not None else _lt_ck.date()
+                    _last5m_ts = db_prices.query(Candle.timestamp).filter(
+                        Candle.ticker.in_([raw, clean]),
+                        Candle.timeframe == '5m',
+                        Candle.close > 0
+                    ).order_by(Candle.timestamp.desc()).limit(1).scalar()
+                    if _last5m_ts is not None:
+                        _last5m_date = _last5m_ts.astimezone(_IST_ck).date() if getattr(_last5m_ts, 'tzinfo', None) is not None else _last5m_ts.date()
+                        if _last5m_date > _lt_ck_date:
+                            c_rows = []
+
                 if c_rows:
                     latest_c = c_rows[0]
                     prev_c = c_rows[1] if len(c_rows) > 1 else None
