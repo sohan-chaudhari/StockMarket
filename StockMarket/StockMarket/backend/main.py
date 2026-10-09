@@ -2953,6 +2953,37 @@ async def get_market_movers(cap: str = Query("all"), sector: Optional[str] = Que
     return data
 
 
+@app.get("/api/_diag_movers")
+async def _diag_movers():
+    """TEMPORARY read-only diagnostic for market-movers staleness. Remove after use."""
+    watch = ["CUBEXTUB", "RETAIL", "KLL", "QUINT", "ABMINTLLTD", "RADHIKAJWE",
+             "PPAP", "GATECH", "DCG", "RSYSTEMS", "CYIENT"]
+
+    def _slim(d):
+        if not d:
+            return None
+        return {k: d.get(k) for k in (
+            "current", "current_price", "prev_close", "change", "change_pct",
+            "timestamp", "_received_ts", "_ts", "_source", "volume") if k in d}
+
+    with _db_baseline_lock:
+        baseline = dict(_db_baseline_prices)
+    with angelone_service.latest_ticks_lock:
+        ticks = dict(angelone_service.latest_ticks)
+    all_mp = _get_all_market_prices()
+
+    return {
+        "baseline_ts": _db_baseline_ts,
+        "baseline_len": len(baseline),
+        "ticks_len": len(ticks),
+        "baseline": {k: _slim(baseline.get(k)) for k in watch},
+        "tick": {k: _slim(ticks.get(k)) for k in watch},
+        "in_ticks": {k: (k in ticks) for k in watch},
+        "all_mp": {k: _slim(all_mp.get(k)) for k in watch},
+        "tick_keys_matching": [k for k in ticks if any(w in k for w in watch)],
+    }
+
+
 # ==================== MARKET INTERNALS ====================
 # Move-distribution histogram + 52-week high/low extremes, both computed over the
 # whole live ticker universe rather than the ~200-ticker screener subset.
