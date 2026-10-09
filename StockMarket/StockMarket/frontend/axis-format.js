@@ -169,8 +169,10 @@
     var yr   = '' + p.y;
     var seen = o.s.seen;
 
-    if (o.mt === TMT.Year)  { if (seen.y !== p.y) { seen.y = p.y; seen.d[dayKeyOf(p)] = 1; return yr; } return ''; }
-    if (o.mt === TMT.Month) { var mk = monKeyOf(p); if (seen.m !== mk) { seen.m = mk; seen.d[dayKeyOf(p)] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; } return ''; }
+    // Year / Month marks from Lightweight Charts (wide zoom): once per distinct
+    // year/month, tracked in the persistent `seen` sets.
+    if (o.mt === TMT.Year)  { if (seen.y !== p.y) { seen.y = p.y; return yr; } return ''; }
+    if (o.mt === TMT.Month) { var mk = monKeyOf(p); if (seen.m !== mk) { seen.m = mk; return p.moi === 0 ? (mon + ' ' + yr) : mon; } return ''; }
 
     var barMin = BAR_MIN[o.range] || 5;
     var barsPerDay = Math.max(1, Math.floor(375 / barMin));
@@ -179,11 +181,11 @@
     var sessionStart = mins >= (9 * 60 + 15) && mins <= (9 * 60 + 15 + barMin - 1);
 
     if (spanDays <= 1.8) {
-      // Time tier. A date is shown at a genuine session boundary, and — so the
+      // Time tier. The date is shown at a genuine session boundary, and — so the
       // day stays identifiable when ~half a session or more is visible — on the
       // first tick of each trading day (Lightweight Charts never lands a tick on
-      // the exact 09:15 bar). The per-render `seen` set keeps it to one date per
-      // day, so no duplicates.
+      // the exact 09:15 bar). The persistent `seen.d` set keeps it to exactly one
+      // date per day.
       var dkt = dayKeyOf(p);
       var isBoundary = (sessionStart || o.realDayBoundary === true);
       if (spanDays >= 0.6 && o.newDay) isBoundary = true;
@@ -194,11 +196,11 @@
       return time;
     }
 
-    // Date tier: at most one label per trading day (order-independent), with
-    // month/year on genuine calendar transitions.
+    // Date tier: one date per trading day (first tick of the day), month/year on
+    // genuine calendar transitions.
     var dk = dayKeyOf(p);
-    if (o.realYearBoundary)  { seen.d[dk] = 1; return yr; }
-    if (o.realMonthBoundary) { seen.d[dk] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; }
+    if (o.realYearBoundary  && seen.y !== p.y)  { seen.y = p.y; seen.d[dk] = 1; return yr; }
+    if (o.realMonthBoundary && seen.m !== monKeyOf(p)) { seen.m = monKeyOf(p); seen.d[dk] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; }
     if (seen.d[dk]) return '';
     seen.d[dk] = 1;
     return day;
@@ -268,14 +270,11 @@
       s.last = { idx: idx, dayKey: dayKeyOf(p), monKey: monKeyOf(p), y: p.y };
     }
 
-    // Per-render "already labelled" sets. Lightweight Charts does NOT call the
-    // formatter in chronological order, so a call-order memo cannot dedupe
-    // reliably (it produced duplicate dates). A new render is detected by a
-    // frame boundary (rAF) and, as a fallback, a gap since the previous call.
-    armFrameReset(s);
-    var _now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
-    if (_now - (s.lastCall || 0) > 40) { s.seen = { d: {}, m: 0, y: 0 }; }
-    s.lastCall = _now;
+    // "Already labelled" sets, reset only when the visible range changes (see
+    // onRangeChange). They persist across re-renders so a given trading day can
+    // never be dated twice, no matter what order Lightweight Charts calls the
+    // formatter in or how a render is split across frames.
+    s.lastCall = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 
     var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s,
               first: first, realDayBoundary: realDayBoundary,
