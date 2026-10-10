@@ -58,12 +58,11 @@ class TestTickDeduplication(unittest.TestCase):
                                       tick_ts=data["_ts"])
             self.svc.on_tick_callback = feed
 
-            # Fixed weekday, mid-session IST timestamp. process_tick treats a
-            # tick_ts more than 30s behind the real wall clock as "frozen" and
-            # substitutes the actual server time — patch aggregator's clock to
-            # match so the fixed timestamp is honored regardless of when this
-            # test suite actually runs (same pattern the existing aggregator
-            # tests use for is_market_hour/is_trading_day).
+            # Fixed weekday, mid-session IST timestamp. process_tick uses a
+            # plausible exchange timestamp as-is, but the aggregator clock is
+            # patched anyway so the tick's bucket is unambiguous regardless of
+            # when this test suite actually runs (same pattern the existing
+            # aggregator tests use for is_market_hour/is_trading_day).
             ist = timezone(timedelta(hours=5, minutes=30))
             mid_session_dt = datetime(2026, 7, 1, 10, 0, 0, tzinfo=ist)
             mid_session = int(mid_session_dt.timestamp())

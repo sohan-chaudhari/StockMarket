@@ -7,7 +7,11 @@ Key design decisions:
   - Only 5-minute candles are built from ticks (no 1m).
   - Higher timeframes (15m/30m/1h/4h/1D/1W/1M) are built in-memory
     by LiveTimeframeManager (separate service), never stored to DB.
-  - A 60-second late-tick buffer prevents incorrect OHLC from delayed ticks.
+  - A 60-second late-tick buffer plus true-bucket routing prevent incorrect
+    OHLC from delayed ticks: a tick whose true NSE bucket is older than the
+    ticker's current bucket is never folded into the current candle (see
+    _route_late_tick); when that bucket's candle is still pending, only its
+    order-independent high/low are widened.
   - Ticks are NEVER dropped — back-pressure pauses the WS consumer instead.
   - Completed 5m candles are flushed to the DB via batch upsert.
   - Events are emitted on every tick update and on candle completion.
@@ -178,6 +182,26 @@ class PendingCandleManager:
         with self._lock:
             return self._pending.get(ticker)
 
+    def widen_if_bucket(self, ticker: str, bucket_start: datetime, price: float) -> bool:
+        """Fold a late tick's price into the pending candle for `bucket_start`.
+
+        Only `high`/`low` are touched: they are order-independent aggregates, so
+        widening them can never corrupt the candle. `open` (the bucket's first
+        observed trade) and `close` (the last trade in ARRIVAL order) are left
+        alone -- the bucket's true intra-bucket tick ordering is not retained, so
+        rewriting them from a late tick would be a guess, not a correction.
+
+        Returns True when a matching pending candle was found and updated."""
+        with self._lock:
+            pending = self._pending.get(ticker)
+            if pending is None or pending.bucket_start != bucket_start:
+                return False
+            if price > pending.high:
+                pending.high = price
+            if price < pending.low:
+                pending.low = price
+            return True
+
     def remove(self, ticker: str):
         with self._lock:
             self._pending.pop(ticker, None)
@@ -216,6 +240,12 @@ class Live5mBuilder:
         # Used to derive each tick's TRUE incremental volume as a delta — see
         # the volume handling in process_tick(). Keyed by ticker.
         self._last_day_volume: Dict[str, int] = {}
+        # Trading date that `_last_day_volume[ticker]` belongs to. The baseline
+        # may only move DOWNWARD on a date change (a genuine new-session reset);
+        # within one session a lower cumulative observation is an out-of-order /
+        # stale tick and must not lower the baseline (it would inflate the next
+        # delta). See the volume handling in process_tick().
+        self._last_day_volume_day: Dict[str, date] = {}
 
         self._pending_mgr = PendingCandleManager(late_buffer_sec=60)
         self._flush_batch: List[Dict] = []
@@ -289,33 +319,41 @@ class Live5mBuilder:
         incremental measure — the per-tick `volume` argument is populated from
         `last_traded_quantity`, which this feed reports cumulatively (see the
         volume handling below). Omitting `day_volume` preserves the legacy
-        per-tick `volume` behaviour (used by unit tests)."""
+        per-tick `volume` behaviour (used by unit tests).
+
+        Timestamp handling: a plausible exchange timestamp is used AS-IS so the
+        tick maps to its true NSE bucket. A tick whose true bucket is older than
+        the ticker's current bucket is a *late* tick and is routed to
+        `_route_late_tick` (never folded into the current candle). Only a
+        missing/implausible (or materially future) timestamp is replaced by
+        arrival time."""
         now = ist_now_naive()
         now_epoch = int(now.replace(tzinfo=IST).timestamp())
 
-        if tick_ts is None:
-            tick_ts = now_epoch
-
-        if tick_ts < 1.5e9:
+        # ── Resolve the tick's timestamp ────────────────────────────────────
+        # A missing / implausible timestamp cannot be placed on the timeline, so
+        # it is treated as ARRIVAL time -- the legacy behaviour for the broker's
+        # LTP-only packets, which carry no exchange timestamp. A *plausible*
+        # timestamp is kept AS-IS so the tick maps to its TRUE NSE bucket: the
+        # old code rewrote any ts more than 30s old to "now", which silently
+        # folded a delayed tick into the CURRENT bucket and let its stale price
+        # widen that bucket's high/low/close. A tick whose true bucket is older
+        # than the ticker's current bucket is now routed to _route_late_tick().
+        if tick_ts is None or tick_ts < 1.5e9:
             if ticker not in self._warned_suspicious_ts:
                 self._warned_suspicious_ts.add(ticker)
                 print(f"[Aggregator] {ticker} suspicious ts={tick_ts}, using server time")
             tick_ts = now_epoch
-        elif tick_ts < now_epoch - 30:
+        elif tick_ts > now_epoch + 30:
+            # Materially in the future -> not trustworthy (clock skew / bad
+            # packet). Clamp to arrival time so a candle is never placed ahead
+            # of now; this does not affect a delayed (past) timestamp.
             if ticker not in self._warned_frozen_ts:
                 self._warned_frozen_ts.add(ticker)
-                print(f"[Aggregator] {ticker} frozen ts={tick_ts} (now={now_epoch}), using server time")
+                print(f"[Aggregator] {ticker} future ts={tick_ts} (now={now_epoch}), using server time")
             tick_ts = now_epoch
 
         tick_dt = datetime.fromtimestamp(tick_ts, tz=IST).replace(tzinfo=None)
-
-        with self._lock:
-            last_ts = self._last_tick_ts.get(ticker)
-            if last_ts is not None and tick_ts < last_ts:
-                self._stale_skip_count[ticker] = self._stale_skip_count.get(ticker, 0) + 1
-                if self._stale_skip_count[ticker] <= 3:
-                    print(f"[Aggregator] Stale tick {ticker}: {tick_ts} < last {last_ts}")
-                return {}
 
         today = tick_dt.date()
         if not is_trading_day(today, self._holidays):
@@ -336,7 +374,26 @@ class Live5mBuilder:
                 self._flush_batch_now()
             return {}
 
+        snapped_5m = snap_to_nse_session(tick_ts, 5, open_sec, close_sec, close_grace_sec)
+
+        # ── Late tick: TRUE bucket strictly older than the current bucket ────
+        # Such a tick must never be folded into the current candle (that is
+        # exactly how a delayed tick's stale price used to widen the current
+        # high/low/close). Handled BEFORE the monotonic guard below, which
+        # compares raw timestamps and would otherwise silently drop it.
         with self._lock:
+            cur_bucket = self._last_known_bucket.get(ticker, {}).get("5m")
+        if cur_bucket is not None and snapped_5m < cur_bucket:
+            return self._route_late_tick(ticker, snapped_5m, price)
+
+        with self._lock:
+            last_ts = self._last_tick_ts.get(ticker)
+            if last_ts is not None and tick_ts < last_ts:
+                self._stale_skip_count[ticker] = self._stale_skip_count.get(ticker, 0) + 1
+                if self._stale_skip_count[ticker] <= 3:
+                    print(f"[Aggregator] Stale tick {ticker}: {tick_ts} < last {last_ts}")
+                return {}
+
             self._last_tick_ts[ticker] = tick_ts
             self._last_activity[ticker] = time.time()
 
@@ -346,7 +403,6 @@ class Live5mBuilder:
                 self._init_ticker(tick_ts, ticker, price, day_open, day_high, day_low,
                                    open_sec, close_sec, close_grace_sec)
 
-            snapped_5m = snap_to_nse_session(tick_ts, 5, open_sec, close_sec, close_grace_sec)
             forming = self.active_candles[ticker].get("5m")
             last_bucket = self._last_known_bucket.get(ticker, {}).get("5m")
 
@@ -372,16 +428,27 @@ class Live5mBuilder:
             # is also idempotent: a repeated/replayed tick whose day_volume hasn't
             # advanced contributes 0, so the WS path and the poller→aggregator
             # bridge can never double-count.
+            #
+            # The baseline may only move DOWNWARD on a DATE CHANGE (a genuine
+            # new-session reset). Within one session a lower cumulative value is
+            # an out-of-order / stale observation whose true increment is already
+            # reflected in the baseline -- it contributes 0 and must NOT lower the
+            # baseline, otherwise the NEXT tick's delta is inflated.
             if day_volume is not None:
                 prev_day_vol = self._last_day_volume.get(ticker)
-                if prev_day_vol is None or day_volume < prev_day_vol:
-                    # First tick for this ticker, or a new session (the cumulative
-                    # counter reset to ~0) — do NOT dump the whole day's volume
-                    # into one bucket.
+                prev_vol_day = self._last_day_volume_day.get(ticker)
+                if prev_day_vol is None or prev_vol_day != today:
+                    # First observation for this ticker, or a new session (the
+                    # cumulative counter reset to ~0) — do NOT dump the whole
+                    # day's volume into one bucket.
+                    vol_increment = 0
+                    self._last_day_volume[ticker] = day_volume
+                    self._last_day_volume_day[ticker] = today
+                elif day_volume < prev_day_vol:
                     vol_increment = 0
                 else:
                     vol_increment = day_volume - prev_day_vol
-                self._last_day_volume[ticker] = day_volume
+                    self._last_day_volume[ticker] = day_volume
             else:
                 vol_increment = volume
             forming["volume"] += vol_increment
@@ -400,6 +467,33 @@ class Live5mBuilder:
 
         self._flush_batch_now()
         return res
+
+    def _route_late_tick(self, ticker: str, snapped_5m: int, price: float) -> Dict:
+        """Handle a tick whose TRUE 5m bucket is strictly OLDER than the ticker's
+        current bucket.
+
+        Such a tick must never widen/close the CURRENT candle. If its bucket's
+        candle is still inside the 60s pending (late-tick) buffer, the tick's
+        price is folded into THAT candle -- and only into its order-independent
+        `high`/`low` (see PendingCandleManager.widen_if_bucket); `open` and
+        `close` are arrival-ordered and are deliberately left alone, because the
+        bucket's true intra-bucket tick ordering is not retained. If no matching
+        pending candle exists (already flushed, or a bucket from an earlier
+        session), the tick is ignored for candle purposes.
+
+        Volume is intentionally NOT attributed here: the tick's cumulative day
+        volume is, by definition, not newer than the baseline, so its true
+        increment is already reflected -- adding it would double-count. The
+        baseline is likewise left untouched.
+
+        Never advances `_last_tick_ts` / `_last_known_bucket`, so a late tick
+        cannot move the ticker's timeline backwards or re-open a closed bucket.
+        """
+        snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
+        applied = self._pending_mgr.widen_if_bucket(ticker, snapped_dt, price)
+        if applied:
+            event_bus.emit("candle.5m.late_tick", ticker=ticker, bucket=snapped_5m)
+        return {}
 
     def _finalize_5m_candle_unsafe(self, ticker: str):
         forming = self.active_candles.get(ticker, {}).get("5m")
@@ -715,6 +809,7 @@ class Live5mBuilder:
             self._stale_skip_count.pop(t, None)
             self._last_activity.pop(t, None)
             self._last_day_volume.pop(t, None)
+            self._last_day_volume_day.pop(t, None)
             self._pending_mgr.remove(t)
         if stale:
             print(f"[Aggregator] GC removed {len(stale)} inactive tickers")

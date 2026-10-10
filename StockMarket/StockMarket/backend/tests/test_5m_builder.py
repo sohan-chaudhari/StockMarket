@@ -118,12 +118,11 @@ class TestUtils(unittest.TestCase):
 class TestSpecialSessionWiring(unittest.TestCase):
     """Live5mBuilder honors a registered special session end-to-end via process_tick.
 
-    process_tick substitutes the real server clock for tick_ts whenever the
-    supplied timestamp looks "frozen" (>30s behind the actual wall clock) —
-    a deliberate guard against a stale broker feed. That means a fixed
-    Muhurat-style timestamp can't be asserted against reliably unless
-    aggregator's own clock is patched to match it, exactly like the existing
-    process_tick tests above do for is_market_hour/is_trading_day.
+    process_tick now uses a plausible exchange timestamp AS-IS (only a missing /
+    implausible or materially-future timestamp falls back to server time), so a
+    fixed Muhurat-style timestamp is honored directly. These tests still patch
+    aggregator's clock so the tick's own bucket is unambiguous, matching the
+    pattern used above for is_market_hour/is_trading_day.
     """
 
     def setUp(self):
