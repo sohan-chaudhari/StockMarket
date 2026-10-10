@@ -616,6 +616,11 @@ _news_general_cache_ts: float = 0
 # O(n) scan/sort on every write.
 _news_ticker_cache: "OrderedDict[str, dict]" = OrderedDict()
 _NEWS_CACHE_TTL = 180  # 180 seconds
+# An EMPTY /api/news/ticker result is a transient fallback ("no live quote AND
+# no stored 1D candle"), not real content. Caching it for the full TTL pinned
+# "no news" on the Overview page; it is cached only briefly so a recovery is
+# picked up quickly while still avoiding a DB hit on every request.
+_NEWS_TICKER_EMPTY_TTL = 30  # 30 seconds
 _MAX_NEWS_CACHE_ENTRIES = 500  # hard cap alongside the TTL above
 
 # --- AngelOne WebSocket Tick Buffer (thread-safe) ---
@@ -4415,27 +4420,32 @@ def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
     now = time.time()
     t = ticker.strip().upper().replace('.NS', '')
     cached = _news_ticker_cache.get(t)
-    if cached and (now - cached["ts"]) < _NEWS_CACHE_TTL:
+    if cached and (now - cached["ts"]) < cached.get("ttl", _NEWS_CACHE_TTL):
         _news_ticker_cache.move_to_end(t)  # O(1): mark as most-recently-used
         return cached["data"]
+
+    articles = []
     try:
         meta = db.query(models.StockMetadata).filter(models.StockMetadata.ticker == t).first()
         name = meta.name if meta else t
-        
+
         with angelone_service.latest_ticks_lock:
             live_ticks = dict(angelone_service.latest_ticks)
-            
+
         today_date = datetime.now(IST).strftime("%Y-%m-%d")
-        
+
+        # The normalized tick dict built by angelone_service._handle_ws_tick
+        # exposes `current_price` / `prev_close` -- NOT `last_traded_price` /
+        # `change_per`, which never existed on it. Requiring those meant the
+        # live branch could never fire and every request fell through to the
+        # DB branch (which then raised on a non-existent date attribute).
         tick = live_ticks.get(t)
-        articles = []
-        if tick and tick.get('last_traded_price') and tick.get('change_per'):
-            chg = tick['change_per']
-            cp = tick['last_traded_price']
-            high = tick.get('high', cp)
-            low = tick.get('low', cp)
-            vol = tick.get('volume_trade_for_the_day', 0)
-            
+        cp = _safe_float(tick.get("current_price", 0)) if tick else 0.0
+        pc = _safe_float(tick.get("prev_close", 0)) if tick else 0.0
+        if cp > 0 and pc > 0:
+            chg = ((cp - pc) / pc) * 100
+            high = _safe_float(tick.get("high", 0)) or cp
+            low = _safe_float(tick.get("low", 0)) or cp
             direction = "gained" if chg >= 0 else "lost"
             articles.append({
                 "title": f"{name} {direction} {abs(chg):.2f}% to ₹{cp:.2f}",
@@ -4459,21 +4469,35 @@ def proxy_news_ticker(ticker: str, db: Session = Depends(get_db)):
                     "sentiment": "positive" if chg >= 0 else "negative",
                     "source": "Market Data",
                     "url": "",
-                    "published_at": str(row.date)
+                    # Candle's timestamp column is `timestamp` (there is no
+                    # `date` column); the previous code read a non-existent
+                    # attribute and the AttributeError was swallowed into an
+                    # empty response.
+                    "published_at": str(row.timestamp.date())
                 })
-                
-        result = {"articles": articles}
-        # Overwriting an existing key leaves its position unchanged in an
-        # OrderedDict, so drop it first — the fresh insert both updates the
-        # value and moves it to the MRU (end) position.
-        _news_ticker_cache.pop(t, None)
-        _news_ticker_cache[t] = {"data": result, "ts": now}
-        while len(_news_ticker_cache) > _MAX_NEWS_CACHE_ENTRIES:
-            _news_ticker_cache.popitem(last=False)  # O(1): evict the LRU entry
-        return result
-    except Exception as e:
-        print(f"[News Ticker] Error: {e}")
-        return {"articles": []}
+    except Exception:
+        # Do NOT let a programming error masquerade as a successful empty-news
+        # response: log it with a traceback, then still honour the endpoint's
+        # {"articles": [...]} contract so callers degrade cleanly.
+        logging.getLogger(__name__).exception("[News Ticker] derivation failed for %s", t)
+        articles = []
+
+    result = {"articles": articles}
+    # Overwriting an existing key leaves its position unchanged in an
+    # OrderedDict, so drop it first — the fresh insert both updates the
+    # value and moves it to the MRU (end) position.
+    _news_ticker_cache.pop(t, None)
+    # Non-empty results keep the full TTL; an empty fallback is cached only
+    # briefly (see _NEWS_TICKER_EMPTY_TTL) so a transient miss cannot pin
+    # "no news" for the whole TTL.
+    _news_ticker_cache[t] = {
+        "data": result,
+        "ts": now,
+        "ttl": _NEWS_CACHE_TTL if articles else _NEWS_TICKER_EMPTY_TTL,
+    }
+    while len(_news_ticker_cache) > _MAX_NEWS_CACHE_ENTRIES:
+        _news_ticker_cache.popitem(last=False)  # O(1): evict the LRU entry
+    return result
 
 # ==================== DASHBOARD WEBSOCKET ====================
 

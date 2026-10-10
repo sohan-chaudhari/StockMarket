@@ -892,9 +892,32 @@
                             allNews = articles;
                             renderNews();
                         } else {
+                            // Cold cache: /api/news/search returns [] on the very
+                            // first request while the backend refreshes the
+                            // provider in the background. Show a syncing state and
+                            // retry EXACTLY ONCE before declaring "no news", so a
+                            // genuinely empty ticker still resolves quickly while
+                            // a cold one recovers on the second request.
                             if (container) {
-                                container.innerHTML = '<div style="padding:3.5rem 1rem;text-align:center;color:#a1a1aa;"><div style="font-size:1.75rem;margin-bottom:0.75rem;">🔍</div><div style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.3rem;">No news found for "' + _escHtml(query) + '"</div><div style="font-size:0.85rem;color:#71717a;">Try searching with a different ticker (e.g. SBIN, RELIANCE, TCS).</div></div>';
+                                container.innerHTML = '<div style="padding:4rem 1rem;text-align:center;color:#4A90E2;"><div style="width:34px;height:34px;border:3px solid rgba(74,144,226,0.2);border-top-color:#4A90E2;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 1rem;"></div><div style="font-size:1.02rem;font-weight:600;">Syncing live news for "' + _escHtml(query) + '"...</div></div>';
                             }
+                            setTimeout(async function() {
+                                if (thisReqId !== self.currentSearchId) return;
+                                var retryArticles = [];
+                                try {
+                                    retryArticles = await fetchNewsAPI(query, thisReqSignal);
+                                } catch (e) {
+                                    if (e.name === 'AbortError') return;
+                                    retryArticles = [];
+                                }
+                                if (thisReqId !== self.currentSearchId) return;
+                                if (retryArticles.length > 0) {
+                                    allNews = retryArticles;
+                                    renderNews();
+                                } else if (container) {
+                                    container.innerHTML = '<div style="padding:3.5rem 1rem;text-align:center;color:#a1a1aa;"><div style="font-size:1.75rem;margin-bottom:0.75rem;">🔍</div><div style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.3rem;">No news found for "' + _escHtml(query) + '"</div><div style="font-size:0.85rem;color:#71717a;">Try searching with a different ticker (e.g. SBIN, RELIANCE, TCS).</div></div>';
+                                }
+                            }, 2500);
                         }
                     } catch(e) {
                         if (e.name !== 'AbortError' && thisReqId === self.currentSearchId) {

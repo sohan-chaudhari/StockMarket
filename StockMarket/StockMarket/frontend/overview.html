@@ -1066,37 +1066,65 @@
           } catch(e) { return 0; }
       }
 
-      async function fetchTickerNews() {
-          // Fetch from live news search (uses scanx.trade + google news rss with sentiments)
-          PageCache.fetch('/api/news/search/' + encodeURIComponent(ticker), null, 600000, function(data) {
-              if (Array.isArray(data) && data.length > 0) {
-                  var arts = data.slice();
-                  arts.sort(function(a, b) {
-                      var da = _parseOverviewDate(a.published_date || a.published_at || a.date);
-                      var db = _parseOverviewDate(b.published_date || b.published_at || b.date);
-                      return db - da;
-                  });
-                  window.allFetchedArticles = arts;
-                  renderNews(arts);
-              } else {
-                  // Fallback to proxy
-                  PageCache.fetch('/api/news/ticker/' + ticker, null, 600000, function(d2) {
-                      if (d2 && d2.articles) {
-                          var arts2 = (d2.articles || []).slice();
-                          arts2.sort(function(a, b) {
-                              var da = _parseOverviewDate(a.published_date || a.published_at || a.date);
-                              var db = _parseOverviewDate(b.published_date || b.published_at || b.date);
-                              return db - da;
-                          });
-                          window.allFetchedArticles = arts2;
-                          renderNews(arts2);
-                      } else {
-                          window.allFetchedArticles = [];
-                          renderNews([]);
-                      }
-                  });
-              }
+      function _sortOverviewNews(arts) {
+          return (arts || []).slice().sort(function(a, b) {
+              var da = _parseOverviewDate(a.published_date || a.published_at || a.date);
+              var db = _parseOverviewDate(b.published_date || b.published_at || b.date);
+              return db - da;
           });
+      }
+
+      function _renderOverviewNewsSyncing() {
+          var container = document.getElementById('newsListContainer');
+          if (container) {
+              container.innerHTML = '<div style="color:var(--text-secondary);padding:1rem 0;text-align:center;font-size:0.85rem;">Syncing live news...</div>';
+          }
+      }
+
+      function _overviewNewsDelay(ms) {
+          return new Promise(function(resolve) { setTimeout(resolve, ms); });
+      }
+
+      async function fetchTickerNews() {
+          // Fetch from live news search (uses scanx.trade + google news rss with
+          // sentiments). The Promise form of PageCache.fetch (rather than only a
+          // callback) resolves with the data OR null on a provider failure, so a
+          // failure can be handled explicitly instead of leaving the section
+          // stuck on "Syncing live news...".
+          try {
+              var data = await PageCache.fetch('/api/news/search/' + encodeURIComponent(ticker), null, 600000);
+              if (Array.isArray(data) && data.length > 0) {
+                  window.allFetchedArticles = _sortOverviewNews(data);
+                  renderNews(window.allFetchedArticles);
+                  return;
+              }
+              // Cold cache: the first /api/news/search response can be [] while
+              // the backend refreshes its provider cache in the background. Show
+              // a syncing state and retry EXACTLY ONCE before falling back to the
+              // proxy endpoint, so the section does not flash "no recent news".
+              _renderOverviewNewsSyncing();
+              await _overviewNewsDelay(2500);
+              var data2 = await PageCache.fetch('/api/news/search/' + encodeURIComponent(ticker), null, 600000);
+              if (Array.isArray(data2) && data2.length > 0) {
+                  window.allFetchedArticles = _sortOverviewNews(data2);
+                  renderNews(window.allFetchedArticles);
+                  return;
+              }
+              // Last-resort proxy (synthetic live/DB quote).
+              var d2 = await PageCache.fetch('/api/news/ticker/' + ticker, null, 600000);
+              if (d2 && d2.articles) {
+                  window.allFetchedArticles = _sortOverviewNews(d2.articles);
+                  renderNews(window.allFetchedArticles);
+              } else {
+                  window.allFetchedArticles = [];
+                  renderNews([]);
+              }
+          } catch (e) {
+              // Provider error / unexpected failure: degrade to the empty state
+              // rather than leaving a stuck "syncing" placeholder.
+              window.allFetchedArticles = [];
+              renderNews([]);
+          }
       }
 
       // ---- PDF Report Generator ----
