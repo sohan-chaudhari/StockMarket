@@ -180,6 +180,9 @@ import pandas as pd
 
 import requests
 
+import difflib
+import re
+
 import httpx
 
 from bs4 import BeautifulSoup
@@ -3674,6 +3677,102 @@ def _clean_article_title(t: str, desc: str = "", tk: str = "") -> str:
             return f"{tk}: Latest Stock & Market Updates"
     return s
 
+
+# ── Typo-tolerant company-name resolution for the news search ──────────────
+# A free-text query like "chennai petrolium corporation" (a misspelling of
+# "Chennai Petroleum Corporation Limited") used to build Google-News queries
+# AND a relevance filter from the literal misspelled phrase, so every real
+# article was discarded and the user saw "No news found". The helpers below
+# resolve such a query to a known stock's canonical ticker + name, which is
+# then used for query construction, filtering and the fallback.
+_FUZZY_NAME_INDEX = None  # list of (normalized_name, ticker, display_name)
+
+
+def _normalize_stock_name(s: str) -> str:
+    """Lowercase, expand '&', strip punctuation and collapse whitespace, so
+    two spellings of the same company compare on equal footing."""
+    if not s:
+        return ""
+    s = s.lower().replace("&", " and ")
+    s = re.sub(r"[^a-z0-9 ]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _get_stock_name_index():
+    """Lazily build (once) the normalized company-name index used for fuzzy
+    matching, from in-memory STOCK_META plus the StockMetadata table. ~1.5k
+    entries; a few hundred KB. Never raises."""
+    global _FUZZY_NAME_INDEX
+    if _FUZZY_NAME_INDEX is not None:
+        return _FUZZY_NAME_INDEX
+    idx = []
+    seen = set()
+    try:
+        for tkr, meta in (STOCK_META or {}).items():
+            nm = (meta or {}).get("name", "") or ""
+            n = _normalize_stock_name(nm)
+            if n and (n, tkr) not in seen:
+                seen.add((n, tkr))
+                idx.append((n, tkr, nm or tkr))
+    except Exception:
+        pass
+    try:
+        db = database.SessionLocal()
+        try:
+            for tkr, nm in db.query(models.StockMetadata.ticker, models.StockMetadata.name).all():
+                n = _normalize_stock_name(nm or "")
+                if n and (n, tkr) not in seen:
+                    seen.add((n, tkr))
+                    idx.append((n, tkr, nm or tkr))
+        finally:
+            db.close()
+    except Exception:
+        pass
+    _FUZZY_NAME_INDEX = idx
+    return idx
+
+
+def _tokens_are_close(a: str, b: str, cutoff: float = 0.82) -> bool:
+    """True when two company-name tokens are equal or near-equal (typo
+    tolerant), e.g. 'petrolium' ~ 'petroleum'."""
+    if a == b:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() >= cutoff
+
+
+def _resolve_company_name(query: str):
+    """Best-effort (ticker, canonical_name) for a free-text company-name query.
+
+    Returns (None, None) unless the match is confident, so a general news
+    query is never mapped to an unrelated stock. Matching is TOKEN based
+    (which tolerates a misspelling in any word and partial names), with two
+    guard rails:
+      * the query must be multi-word and at least 8 characters long; and
+      * the candidate's LEADING token must equal the query's leading token
+        (the brand), and EVERY query token must correspond to some candidate
+        token -- so "market news today" cannot latch onto a company.
+    """
+    q_norm = _normalize_stock_name(query)
+    q_tokens = q_norm.split()
+    if len(q_tokens) < 2 or len(q_norm) < 8:
+        return None, None
+    index = _get_stock_name_index()
+    if not index:
+        return None, None
+    best = None
+    for n, tkr, disp in index:
+        c_tokens = n.split()
+        if not c_tokens or c_tokens[0] != q_tokens[0]:
+            continue  # brand anchor: leading token must match exactly
+        if all(any(_tokens_are_close(qt, ct) for ct in c_tokens) for qt in q_tokens):
+            score = difflib.SequenceMatcher(None, q_norm, n).ratio()
+            if best is None or score > best[0]:
+                best = (score, tkr, disp)
+    if best is None:
+        return None, None
+    return best[1], best[2]
+
+
 @app.get("/api/news/search/{query}")
 async def news_search(query: str, limit: int = 20):
     """
@@ -3803,6 +3902,19 @@ async def news_search(query: str, limit: int = 20):
         }
         if not meta_name and ticker_no_ns in KNOWN_TICKER_NAMES:
             meta_name = KNOWN_TICKER_NAMES[ticker_no_ns]
+
+        # 3. Typo-tolerant fallback: if the query is not a known ticker, check
+        # whether it is (a close spelling of) a known company name -- e.g.
+        # "chennai petrolium corporation" -> CHENNPETRO / "Chennai Petroleum
+        # Corporation Limited". Using the canonical ticker + name (rather than
+        # the raw, misspelled text) is what lets real articles pass the
+        # relevance filter below. Only attempted when nothing else matched, so
+        # valid ticker searches (RELIANCE, SBIN, TCS, CHENNPETRO) are untouched.
+        if not meta_name:
+            _fz_ticker, _fz_name = _resolve_company_name(q_clean)
+            if _fz_ticker:
+                ticker_no_ns = _fz_ticker
+                meta_name = _fz_name
 
         cname = meta_name
         for s in [r'\s+\(India\)', r'\s+Limited$', r'\s+Ltd\.?$', r'\s+Corporation$', r'\s+Corp\.?$', r'\s+Private$', r'\s+Pvt\.?$']:
