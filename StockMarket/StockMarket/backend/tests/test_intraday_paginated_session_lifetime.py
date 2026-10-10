@@ -176,7 +176,12 @@ class IntradayPaginatedSessionLifetimeTests(unittest.TestCase):
     # exactly as before this phase.
     def test_no_gap_path_never_calls_backfill_and_keeps_its_connection(self):
         now = datetime(2026, 1, 5, 12, 0)
+        # Seed a FULL-DEPTH 5m history so this is a genuine "no gap" case. The
+        # history-depth check (A3) correctly treats a lone recent candle as a
+        # missing deep-history tier and dispatches a fill -- a different path
+        # than the unchanged fast path this test pins down (session lifetime).
         _insert_candle(TEST_TICKER, "5m", now - timedelta(minutes=1), price=50.0)
+        _insert_candle(TEST_TICKER, "5m", now - timedelta(days=80), price=50.0)
         pool = database.engine.pool
 
         db = database.SessionLocal()
@@ -193,7 +198,7 @@ class IntradayPaginatedSessionLifetimeTests(unittest.TestCase):
             checked_out_immediately_after_call, 1,
             "the connection opened by the initial query must still be held on the unchanged fast path",
         )
-        self.assertEqual(len(result["data"]), 1)
+        self.assertEqual(len(result["data"]), 2)
 
     # 11 & 12. Historical pagination (before= set, not the latest window)
     # never enters the gap-fill block at all -- pagination ordering and

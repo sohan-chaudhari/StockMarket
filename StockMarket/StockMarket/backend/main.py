@@ -1268,10 +1268,17 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         backfill_locks.add(clean_ticker)
         backfill_locks.add(ticker)
 
-    # Closed-market safety guard:
-    # If market is closed and recent candles (within last 5 days) already exist,
-    # skip background network backfill to prevent false gap-fill storms during off-market hours.
-    if not is_market_open_now():
+    # Closed-market safety guard (SHALLOW fills only):
+    # If the market is closed and recent candles (within the last 5 days)
+    # already exist, skip a background network backfill to prevent false
+    # gap-fill storms during off-market hours. This applies ONLY to a
+    # shallow/tip fill (backfill_start near the tip). A DEEP-history fill --
+    # dispatched by the history-depth check in get_intraday_paginated, with
+    # backfill_start well in the past -- is a genuine missing tier and must not
+    # be silently skipped, or a sparse ticker would never recover its history
+    # while the market is closed. Repeats remain bounded by the cooldown above.
+    shallow_fill = backfill_start >= (now - timedelta(days=5))
+    if not is_market_open_now() and shallow_fill:
         try:
             with database.SessionLocal() as check_db:
                 five_days_ago = now - timedelta(days=5)
@@ -4599,6 +4606,50 @@ def _cleanup_dashboard_client(client_id: str):
         viewed_ticker_mgr.unview_all(list(topics))
     manager.disconnect(client_id)
 
+
+def _acquire_ticker_view(client_id: str, ticker: str, user_topics: dict, mgr) -> bool:
+    """Take exactly ONE view reference for (client_id, ticker).
+
+    The dashboard client sends BOTH `subscribe` (for price updates) and
+    `view_ticker` (the user opened it) for the same ticker, and re-sends both on
+    every reconnect. Previously each handler called `ViewedTickerManager.view()`
+    independently, so the reference count for a ticker went to 2 while teardown
+    (`_cleanup_dashboard_client` -> `unview_all`) released it only once -- the
+    count never returned to 0, so the ticker was never unsubscribed (a slow
+    subscription/memory leak, and a fresh reconnect added yet another).
+
+    `user_topics[client_id]` is the per-connection source of truth for what this
+    client has already been granted; a ticker already present there is a no-op.
+    Returns True iff a new reference was taken. Idempotent per connection, so
+    the acquire and release are balanced one-for-one.
+    """
+    tracked = user_topics.get(client_id)
+    if tracked is None or ticker in tracked:
+        return False
+    tracked.add(ticker)
+    if mgr is not None:
+        mgr.view(ticker)
+    return True
+
+
+def _release_ticker_view(client_id: str, ticker: str, user_topics: dict, mgr) -> bool:
+    """Release exactly ONE view reference for (client_id, ticker), and only if
+    this connection actually held one.
+
+    Guards against over-releasing: an `unsubscribe`/`unview_ticker` for a ticker
+    this client never acquired (or already released) must NOT decrement the
+    count, otherwise another client still viewing the ticker could be
+    unsubscribed. Returns True iff a reference was released.
+    """
+    tracked = user_topics.get(client_id)
+    if tracked is None or ticker not in tracked:
+        return False
+    tracked.discard(ticker)
+    if mgr is not None:
+        mgr.unview(ticker)
+    return True
+
+
 DASHBOARD_TICKERS = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'BHARTIARTL']
 SECTOR_TICKERS = ['NIFTY_AUTO', 'NIFTY_IT', 'NIFTY_PHARMA', 'NIFTY_FMCG', 'NIFTY_METAL', 'NIFTY_ENERGY', 'NIFTY_MEDIA', 'NIFTY_PSU_BANK', 'NIFTY_REALTY']
 
@@ -4647,13 +4698,11 @@ async def dashboard_websocket(websocket: WebSocket):
                 topics = data.get("topics", [])
                 valid_topics = [t.strip().upper().replace('.NS', '').replace('.BO', '') for t in topics if isinstance(t, str)]
                 valid_topics = [t for t in valid_topics if t and (angelone_service.get_token(t, "NSE") or angelone_service.get_token(t, "BSE"))]
-                already_tracked = manager.user_topics.get(client_id, set())
-                new_topics = [t for t in valid_topics if t not in already_tracked]
-                if client_id in manager.user_topics:
-                    manager.user_topics[client_id].update(valid_topics)
-                if viewed_ticker_mgr:
-                    for t in new_topics:
-                        viewed_ticker_mgr.view(t)
+                # Exactly-once per (connection, ticker): a topic already granted
+                # to this client is a no-op, so the `view_ticker` message the
+                # frontend also sends for the same ticker cannot double-count.
+                new_topics = [t for t in valid_topics
+                              if _acquire_ticker_view(client_id, t, manager.user_topics, viewed_ticker_mgr)]
                 poller = getattr(app.state, "price_poller", None)
                 if poller:
                     for t in new_topics:
@@ -4688,20 +4737,16 @@ async def dashboard_websocket(websocket: WebSocket):
             elif msg_type == "unsubscribe":
                 topics = data.get("topics", [])
                 clean_topics = [t.strip().upper().replace('.NS', '').replace('.BO', '') for t in topics if isinstance(t, str)]
-                if client_id in manager.user_topics:
-                    for t in clean_topics:
-                        manager.user_topics[client_id].discard(t)
-                if viewed_ticker_mgr:
-                    for t in clean_topics:
-                        viewed_ticker_mgr.unview(t)
+                for t in clean_topics:
+                    _release_ticker_view(client_id, t, manager.user_topics, viewed_ticker_mgr)
             elif msg_type == "view_ticker":
                 raw_tkr = data.get("ticker", "")
                 tkr = raw_tkr.strip().upper().replace('.NS', '').replace('.BO', '') if isinstance(raw_tkr, str) else ""
                 if tkr and (angelone_service.get_token(tkr, "NSE") or angelone_service.get_token(tkr, "BSE")):
-                    if client_id in manager.user_topics:
-                        manager.user_topics[client_id].add(tkr)
-                    if viewed_ticker_mgr:
-                        viewed_ticker_mgr.view(tkr)
+                    # Idempotent: if this client already holds a view reference
+                    # for tkr (e.g. via the preceding `subscribe`), this is a
+                    # no-op rather than a second reference.
+                    _acquire_ticker_view(client_id, tkr, manager.user_topics, viewed_ticker_mgr)
                     poller = getattr(app.state, "price_poller", None)
                     if poller:
                         poller.add_ticker(tkr)
@@ -4724,8 +4769,8 @@ async def dashboard_websocket(websocket: WebSocket):
             elif msg_type == "unview_ticker":
                 raw_tkr = data.get("ticker", "")
                 tkr = raw_tkr.strip().upper().replace('.NS', '').replace('.BO', '') if isinstance(raw_tkr, str) else ""
-                if tkr and viewed_ticker_mgr:
-                    viewed_ticker_mgr.unview(tkr)
+                if tkr:
+                    _release_ticker_view(client_id, tkr, manager.user_topics, viewed_ticker_mgr)
     except WebSocketDisconnect:
         _cleanup_dashboard_client(client_id)
     except Exception as e:
@@ -5704,6 +5749,17 @@ def _intraday_cutoff(interval: str):
     return ist_now - timedelta(days=days_back)
 
 
+# History-depth detection for get_intraday_paginated. `_intraday_cutoff()` is
+# the per-timeframe window the endpoint queries and mirrors the retention tiers
+# (config/retention_policy.py: 5m keeps the newest 60 NSE sessions, 15m/30m the
+# next bands, 1h the 180-365 band). A ticker whose OLDEST stored candle is newer
+# than that window (by more than this grace) is missing its deep history -- a gap
+# the tip/internal checks cannot detect while the market is closed, because no
+# new ticks arrive to reveal it. Backfill is bounded to the same window and
+# remains cooldown-guarded.
+_INTRADAY_DEPTH_GRACE_DAYS = 2
+
+
 def _merge_live_5m(data: list, pending_candle, forming_candle) -> list:
     """Merge the aggregator's live 5m state onto the persisted rows, keyed by
     bucket timestamp. Kept pure so it can be unit-tested.
@@ -6149,7 +6205,9 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             fill_start = None
 
             if not records:
-                fill_start = now - __import__('datetime').timedelta(days=60)
+                # Bounded to this timeframe's own window (not a blanket 60 days):
+                # 1m=7d, 5m=65d, 15m=45d, 30m=90d, 1h=120d (see _intraday_cutoff).
+                fill_start = _intraday_cutoff(interval)
                 fill_needed = True
                 print(f"[GapFill] Sync fill for {clean_ticker} {interval}: no data in DB")
             elif market_open:
@@ -6171,6 +6229,22 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     fill_start = oldest_gap_start if oldest_gap_start else records[0].timestamp
                     fill_needed = True
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
+
+            # History-depth check (independent of market hours): the main query
+            # above is capped at `limit`, so its last element is NOT the true
+            # oldest row for a ticker holding more than `limit` candles -- look
+            # up the actual oldest row with a bounded, index-backed query. A
+            # ticker whose oldest stored candle is newer than its supported
+            # window is missing deep history, which the tip/internal checks
+            # cannot see while the market is closed (no new ticks reveal it).
+            if not fill_needed:
+                depth_floor = _intraday_cutoff(interval) + timedelta(days=_INTRADAY_DEPTH_GRACE_DAYS)
+                oldest_row = q_base.order_by(model.timestamp.asc()).limit(1).first()
+                if oldest_row is not None and oldest_row.timestamp > depth_floor:
+                    fill_start = _intraday_cutoff(interval)
+                    fill_needed = True
+                    print(f"[GapFill] Sync fill for {clean_ticker} {interval}: history depth "
+                          f"(oldest stored={oldest_row.timestamp}, floor={depth_floor})")
 
             if fill_needed:
                 _bf_key = f"{clean_ticker}:{interval}"
@@ -7069,9 +7143,15 @@ def _on_angel_tick(ticker: str, data: dict):
                     angelone_service.latest_ticks[alias] = dict(tick_entry)
 
         # ── Feed tick into aggregator for candle formation ──────────────
-        # Pass the broker timestamp (if available) for stale-tick detection
+        # Pass the broker timestamp (if available) for stale-tick detection.
+        # A tick whose exchange timestamp proves it belongs to a PREVIOUS
+        # session must not reach the aggregator: process_tick() coerces any
+        # tick_ts older than 30s to "now", which is exactly how a replayed
+        # stale snapshot became a bogus candle in the CURRENT bucket. The
+        # helper only rejects a provably-stale timestamp and trusts missing/
+        # invalid ones, so legitimate same-session delayed ticks still flow.
         tick_epoch = data.get("_ts", time.time())
-        if cp > 0:
+        if cp > 0 and _tick_is_current_session(tick_entry, is_market_open_now()):
             candle_aggregator.process_tick(
                 ticker, cp, actual_tick_volume, tick_ts=tick_epoch,
                 day_open=tick_open, day_high=tick_high, day_low=tick_low,
@@ -8041,10 +8121,12 @@ async def startup():
                     if not ts or ts <= _last_aggregator_feed_ts.get(tkr, 0):
                         continue
                     cp = td.get("current_price") or td.get("current", 0)
-                    if cp > 0:
+                    if cp > 0 and _tick_is_current_session(td, is_market_open_now()):
                         # `td["volume"]` is the CUMULATIVE day volume — pass it as
                         # day_volume so the aggregator adds only the delta (never
-                        # the whole day's volume per poll).
+                        # the whole day's volume per poll). The session gate keeps
+                        # a stale replayed quote (whose exchange timestamp proves
+                        # it is from a previous session) from becoming a candle.
                         candle_aggregator.process_tick(tkr, cp, 0, tick_ts=ts, day_volume=td.get("volume", 0))
                         _last_aggregator_feed_ts[tkr] = ts
             except Exception:
