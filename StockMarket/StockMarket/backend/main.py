@@ -1120,7 +1120,13 @@ def get_stocks_version():
 
         sync_date = (now_ist - _td(days=1)).date()
 
-    return {"version": f"{sync_date}T18:00:01"}
+    # `u2` is the search-universe revision. Bump it whenever the eligible
+    # universe definition changes (e.g. the eligible-universe rollout) so a
+    # deployed change invalidates every client's localStorage stock list at
+    # once instead of waiting for the next 18:00 IST daily boundary.
+    _UNIVERSE_REVISION = "u2"
+
+    return {"version": f"{sync_date}T18:00:01|{_UNIVERSE_REVISION}"}
 
 @app.get("/api/all-stocks")
 def get_all_stocks(db: Session = Depends(get_db)):
@@ -1129,11 +1135,46 @@ def get_all_stocks(db: Session = Depends(get_db)):
     if _all_stocks_cache_bytes is not None and (now - _all_stocks_cache_ts) < _ALL_STOCKS_CACHE_TTL:
         return Response(content=_all_stocks_cache_bytes, media_type="application/json")
 
-    stocks = db.query(models.StockMetadata).filter(models.StockMetadata.is_active == True).all()
-    if not stocks:
-        stocks = db.query(models.StockMetadata).filter(models.StockMetadata.exchange.in_(['NSE', 'BSE', 'INDEX', 'NSE_INDEX'])).limit(3000).all()
-    if not stocks:
-        stocks = db.query(models.StockMetadata).limit(3000).all()
+    # Eligible search universe: currently-ACTIVE instruments, PLUS any instrument
+    # whose ticker has historical market data in `stock_data`, even when its
+    # metadata `is_active` flag is stale. That flag is set False by the yfinance
+    # failure tracker (POST /api/yfinance/sync-inactive), which de-lists any
+    # ticker whose symbol merely failed to resolve -- including recent listings
+    # (e.g. MEESHO). Search must not depend on it.
+    # A single indexed query (an IN over the distinct stock_data tickers); no
+    # per-ticker round trips and no candle rows are loaded. NSE/BSE duplicates
+    # are collapsed below (NSE wins) so the frontend gets one row per ticker.
+    from sqlalchemy import or_ as _or_allstocks
+    try:
+        meta_rows = db.query(models.StockMetadata).filter(
+            _or_allstocks(
+                models.StockMetadata.is_active == True,
+                models.StockMetadata.ticker.in_(
+                    db.query(models.StockData.ticker).distinct()
+                ),
+            )
+        ).all()
+    except Exception as _universe_err:
+        print(f"[AllStocks] eligible-universe query failed, falling back: {_universe_err}")
+        meta_rows = []
+    if not meta_rows:
+        meta_rows = db.query(models.StockMetadata).filter(
+            models.StockMetadata.is_active == True
+        ).all()
+
+    # Collapse NSE/BSE (and any other exchange) duplicates: one row per ticker,
+    # NSE preferred, so NSE/BSE records never produce duplicate search results.
+    deduped = {}
+    for _m in meta_rows:
+        _key = (_m.ticker or "").upper()
+        if not _key:
+            continue
+        _prev = deduped.get(_key)
+        if _prev is None or (
+            (_m.exchange or "").upper() == "NSE"
+            and (_prev.exchange or "").upper() != "NSE"
+        ):
+            deduped[_key] = _m
 
     market_prices = {}
     try:
@@ -1142,17 +1183,20 @@ def get_all_stocks(db: Session = Depends(get_db)):
         pass
 
     results = []
-    for s in stocks:
-        tkr_clean = s.ticker.upper().replace('.NS', '').replace('.BO', '')
+    for m in deduped.values():
+        s_ticker, s_name, s_exchange, s_logo, s_base_price = (
+            m.ticker, m.name, m.exchange, m.logo, m.base_price
+        )
+        tkr_clean = s_ticker.upper().replace('.NS', '').replace('.BO', '')
         pdata = market_prices.get(tkr_clean, {})
-        base_price = pdata.get('current') or s.base_price or 0.0
+        base_price = pdata.get('current') or s_base_price or 0.0
         chg = pdata.get('change', 0.0)
         chg_pct = pdata.get('change_pct', 0.0)
         results.append({
-            "ticker": s.ticker,
-            "name": s.name,
-            "logo": _safe_logo(s.logo, ticker=s.ticker),
-            "exchange": s.exchange,
+            "ticker": s_ticker,
+            "name": s_name,
+            "logo": _safe_logo(s_logo, ticker=s_ticker),
+            "exchange": s_exchange,
             "basePrice": round(float(base_price), 2),
             "change": round(float(chg), 2),
             "changePercent": round(float(chg_pct), 2),
@@ -3921,6 +3965,15 @@ async def news_search(query: str, limit: int = 20):
             cname = _re.sub(s, '', cname, flags=_re.IGNORECASE) if cname else ""
         cname = cname.strip() if cname else ""
 
+        # Unresolved MULTI-WORD query (e.g. "groww billionbrains", "billion
+        # brains"): treat it as a free-text brand/company search. Previously the
+        # whole query was used as ONE literal keyword, so any article that
+        # mentioned the words separately (the normal case) was rejected and the
+        # search always returned nothing. Match on the significant tokens
+        # instead, mirroring how a resolved company's words are matched.
+        q_tokens = [t for t in _normalize_stock_name(q_clean).split() if len(t) >= 4]
+        is_free_text = (not cname) and len(q_tokens) >= 2
+
         rss_queries = [
             f"scanx.trade/{ticker_no_ns.lower()}",
             f"scanx.trade {ticker_no_ns.lower()}",
@@ -3943,13 +3996,23 @@ async def news_search(query: str, limit: int = 20):
         if not cname and len(q_clean) >= 3 and not q_clean.isupper():
             rss_queries.append(f"scanx.trade {q_clean.lower()}")
 
+        # Free-text multi-word: add the distinctive tokens as separate queries
+        # to widen recall (Google News already ranks by the combined terms).
+        if is_free_text:
+            for _t in q_tokens:
+                if _t not in (q_clean.lower(), ticker_no_ns.lower()):
+                    rss_queries.append(f"scanx.trade {_t}")
+
         # Keywords that confirm relevance in article title / excerpt
-        filter_keywords = [q_clean.lower(), ticker_no_ns.lower()]
-        if cname:
-            filter_keywords.append(cname.lower())
-            for w in cname.split():
-                if len(w) >= 3 and w.lower() not in ("the", "and", "ltd", "inc", "co", "corp"):
-                    filter_keywords.append(w.lower())
+        if is_free_text:
+            filter_keywords = list(dict.fromkeys(q_tokens))
+        else:
+            filter_keywords = [q_clean.lower(), ticker_no_ns.lower()]
+            if cname:
+                filter_keywords.append(cname.lower())
+                for w in cname.split():
+                    if len(w) >= 3 and w.lower() not in ("the", "and", "ltd", "inc", "co", "corp"):
+                        filter_keywords.append(w.lower())
 
     def _is_nav_or_quote(t: str) -> bool:
         if not t or len(t) < 15:
