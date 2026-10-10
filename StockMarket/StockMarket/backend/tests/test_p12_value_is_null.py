@@ -100,8 +100,8 @@ class ValueIsNullStaticTests(unittest.TestCase):
     def test_dashboard_cache_busted(self):
         for page in HTML_PAGES:
             body = _read(os.path.join(FRONTEND_DIR, page))
-            self.assertIn("dashboard.js?v=1068", body, page)
-            self.assertNotIn("dashboard.js?v=1067", body, page)
+            self.assertIn("dashboard.js?v=1070", body, page)
+            self.assertNotIn("dashboard.js?v=1069", body, page)
 
 
 @unittest.skipUnless(_HAS_PW, "playwright not available")

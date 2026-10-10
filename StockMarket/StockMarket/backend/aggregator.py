@@ -88,6 +88,18 @@ def snap_to_nse_session(ts_epoch, bucket_minutes: int = 5,
     return session_start + (offset // bucket_sec) * bucket_sec
 
 
+def nse_session_open_epoch(ts_epoch, open_sec: int = None) -> int:
+    """Epoch (UTC seconds) of the session open on the IST calendar day containing
+    `ts_epoch`. `open_sec` overrides the open (seconds-of-day) for
+    special/shortened sessions; it defaults to the normal 09:15 NSE open.
+
+    Used to recognise the session's FIRST bucket, whose true open is the official
+    day open -- unlike any later bucket."""
+    o = _NSE_OPEN_SEC if open_sec is None else open_sec
+    ist_day_start = ((int(ts_epoch) + _IST_OFFSET_SEC) // 86400) * 86400 - _IST_OFFSET_SEC
+    return ist_day_start + o
+
+
 def validate_ohlc(o: float, h: float, l: float, c: float) -> Tuple[bool, str]:
     if h < o:
         return False, f"high ({h}) < open ({o})"
@@ -158,6 +170,13 @@ class PendingCandleManager:
                     expired.append(pending)
                     del self._pending[ticker]
         return expired
+
+    def get(self, ticker: str) -> Optional[Pending5mCandle]:
+        """Thread-safe read of a ticker's pending (bucket already closed but still
+        inside the late-tick buffer, i.e. not yet persisted) 5m candle.
+        Returns None when there is nothing pending for the ticker."""
+        with self._lock:
+            return self._pending.get(ticker)
 
     def remove(self, ticker: str):
         with self._lock:
@@ -457,13 +476,47 @@ class Live5mBuilder:
                 }
             }
 
+    def get_pending(self, ticker: str) -> Optional[Dict]:
+        """Return the ticker's completed-but-not-yet-persisted 5m candle (the one
+        held in the late-tick buffer) in the same shape as get_current().
+
+        The bucket of a pending candle has already ended -- it is finalized, just
+        not yet written to the DB -- so it is a legitimate completed candle and is
+        safe to include in an API response. Returns None when nothing is pending."""
+        pending = self._pending_mgr.get(ticker)
+        if pending is None:
+            return None
+        o, h, l, c = fix_ohlc(pending.open, pending.high, pending.low, pending.close)
+        return {
+            "5m": {
+                "time": self._ts_to_epoch(pending.bucket_start),
+                "open": o, "high": h, "low": l, "close": c,
+                "volume": pending.volume,
+            }
+        }
+
     def _init_ticker(self, now_epoch: int, ticker: str, price: float,
                      day_open: float = None, day_high: float = None, day_low: float = None,
                      open_sec: int = None, close_sec: int = None, close_grace_sec: int = None):
+        """Create a ticker's first forming 5m candle.
+
+        OPEN limitation: when a ticker is subscribed mid-bucket we have no source
+        for that bucket's true first traded price (the historical API only returns
+        completed candles and the tick cache only holds the latest quote), so a
+        LATER bucket is seeded at the first price we actually observe -- an
+        approximation, never claimed to be the bucket's first trade.
+
+        The session's FIRST bucket is the exception and is handled correctly: its
+        open is exactly the official day open, which the tick carries, so we seed
+        it from `day_open` even when we subscribe mid-bucket.
+        """
         self.active_candles[ticker] = {}
         snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
         snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
-        self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, price)
+        seed_price = price
+        if day_open and day_open > 0 and snapped_5m == nse_session_open_epoch(now_epoch, open_sec):
+            seed_price = day_open
+        self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, seed_price)
 
     def flush_all_forming(self):
         print(f"[Aggregator] Flush all: stopping worker (queue={len(self._flush_queue)} batches)")

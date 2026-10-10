@@ -83,12 +83,24 @@ class IntradayPaginatedSessionLifetimeTests(unittest.TestCase):
             _delete_test_candles(t)
             with main._backfill_lock:
                 main.backfill_locks.discard(t)
+            # Clear the per-ticker backfill cooldown so it cannot leak between
+            # tests (the cooldown guard now also gates dispatch).
+            with main._backfill_cooldown_lock:
+                for _k in list(main._backfill_cooldown):
+                    if _k.startswith(t + ":"):
+                        main._backfill_cooldown.pop(_k, None)
 
     def tearDown(self):
         for t in (TEST_TICKER, TEST_TICKER_2):
             _delete_test_candles(t)
             with main._backfill_lock:
                 main.backfill_locks.discard(t)
+            # Clear the per-ticker backfill cooldown so it cannot leak between
+            # tests (the cooldown guard now also gates dispatch).
+            with main._backfill_cooldown_lock:
+                for _k in list(main._backfill_cooldown):
+                    if _k.startswith(t + ":"):
+                        main._backfill_cooldown.pop(_k, None)
 
     def _call(self, db, ticker=TEST_TICKER, **overrides):
         kwargs = dict(ticker=ticker, interval="5m", before=None, after=None,

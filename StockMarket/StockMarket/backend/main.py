@@ -198,7 +198,7 @@ from fetch_stocks import sync_market_data
 
 from angelone_service import angelone_service
 
-from historical_service import historical_service
+from historical_service import historical_service, HistoricalFetchError
 
 from indicator_service import indicator_service
 
@@ -530,6 +530,42 @@ NSE_HOLIDAYS = set()
 _holidays_lock = threading.Lock()
 backfill_locks = set()
 _backfill_lock = threading.Lock()
+
+# Per-ticker backfill cooldown.
+# The chart frontend polls every ~10s and each poll can re-dispatch a gap-fill
+# for the same ticker/interval, which hammered AngelOne/yfinance until both
+# rate-limited us -- so "backfill doesn't happen" was largely self-inflicted.
+# A short cooldown after a SUCCESS still lets a later poll discover a *new* gap;
+# a longer one after a transient failure stops the retry storm; a permanent
+# failure (unknown/invalid symbol) is parked longest so neither provider is
+# called again for it. State is a bounded in-process dict -- no new infra.
+_backfill_cooldown: Dict[str, float] = {}
+_backfill_cooldown_lock = threading.Lock()
+_BACKFILL_OK_COOLDOWN_SEC = 60           # success: allow later polls to fill new gaps
+_BACKFILL_FAIL_COOLDOWN_SEC = 300        # transient provider failure (rate limit/network)
+_BACKFILL_PERMANENT_COOLDOWN_SEC = 1800  # invalid/unsupported symbol
+_BACKFILL_COOLDOWN_MAX_KEYS = 4000       # bounded memory
+
+
+def _backfill_cooldown_active(key: str) -> bool:
+    now = time.time()
+    with _backfill_cooldown_lock:
+        until = _backfill_cooldown.get(key, 0.0)
+        if until > now:
+            return True
+        if until:
+            _backfill_cooldown.pop(key, None)
+    return False
+
+
+def _set_backfill_cooldown(key: str, seconds: float):
+    now = time.time()
+    with _backfill_cooldown_lock:
+        if len(_backfill_cooldown) >= _BACKFILL_COOLDOWN_MAX_KEYS and key not in _backfill_cooldown:
+            # Drop the oldest quarter to stay bounded without unbounded growth.
+            for k in sorted(_backfill_cooldown, key=_backfill_cooldown.get)[:max(1, _BACKFILL_COOLDOWN_MAX_KEYS // 4)]:
+                _backfill_cooldown.pop(k, None)
+        _backfill_cooldown[key] = now + seconds
 
 def _safe_logo(val, ticker=None):
     """Return logo only if it is a valid, trusted image URL; otherwise default to local /logos/{ticker}.svg."""
@@ -1218,6 +1254,12 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
     }
     clean_ticker = canonical_index_map.get(ticker, ticker.replace('.NS', '').replace('.BO', ''))
 
+    # 0. Cooldown guard: skip a repeat dispatch for the same ticker/interval while
+    # a previous attempt is still cooling down (see _backfill_cooldown above).
+    cooldown_key = f"{clean_ticker}:{interval}"
+    if _backfill_cooldown_active(cooldown_key):
+        return
+
     # 1. Lock the ticker for sequential processing
 
     with _backfill_lock:
@@ -1271,6 +1313,8 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         # Try AngelOne first (unless it's an index which often lags)
 
         intraday_candles = []
+        angel_error = None
+        permanent_error = False
         is_index = (clean_ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP"] or
                     clean_ticker in INDEX_MAP or clean_ticker in YFINANCE_INDEX_MAP)
 
@@ -1305,16 +1349,48 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
 
             exchange_val = "BSE" if clean_ticker == "SENSEX" else "NSE"
 
-            intraday_candles = historical_service.get_historical_candles(
-                ticker=clean_ticker,
-                exchange=exchange_val,
-                interval=angel_interval,
-                from_date=backfill_start,
-                to_date=now
-            ) or []
+            # raise_on_error lets us tell a genuine empty response apart from a
+            # failed call, so a PERMANENT error (unknown/invalid symbol) skips the
+            # yfinance fallback instead of firing a second, guaranteed-futile call.
+            def _angel_fetch():
+                return historical_service.get_historical_candles(
+                    ticker=clean_ticker,
+                    exchange=exchange_val,
+                    interval=angel_interval,
+                    from_date=backfill_start,
+                    to_date=now,
+                    raise_on_error=True,
+                ) or []
 
-            # If AngelOne returned empty, retry with yfinance fallback
-            if not intraday_candles:
+            try:
+                intraday_candles = _angel_fetch()
+            except HistoricalFetchError as _he:
+                angel_error = _he
+                intraday_candles = []
+            except Exception as _e:
+                angel_error = _e
+                intraday_candles = []
+
+            # One bounded retry, ONLY when the provider returned an empty (not
+            # errored) response -- this is the documented "3s retry". An error
+            # (rate limit/network) is not retried here; it goes straight to the
+            # yfinance fallback + cooldown below, so we never retry-storm.
+            if not intraday_candles and angel_error is None:
+                time.sleep(3)
+                try:
+                    intraday_candles = _angel_fetch()
+                except HistoricalFetchError as _he:
+                    angel_error = _he
+                    intraday_candles = []
+                except Exception as _e:
+                    angel_error = _e
+                    intraday_candles = []
+
+            permanent_error = isinstance(angel_error, HistoricalFetchError) and angel_error.retryable is False
+
+            # If AngelOne returned empty (and the failure was not permanent),
+            # retry with yfinance fallback
+            if not intraday_candles and not permanent_error:
                 try:
                     yf_data = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=True)
                     if yf_data:
@@ -1362,6 +1438,15 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                         print(f"[GapFill] Resample fallback: built {len(resampled)} {interval} candles from 5m for {clean_ticker}")
             except Exception as e:
                 print(f"[GapFill] Resample fallback failed for {clean_ticker} {interval}: {e}")
+
+        # Set the cooldown based on the outcome so repeat dispatches back off
+        # instead of hammering the providers (see _backfill_cooldown).
+        if intraday_candles:
+            _set_backfill_cooldown(cooldown_key, _BACKFILL_OK_COOLDOWN_SEC)
+        elif permanent_error:
+            _set_backfill_cooldown(cooldown_key, _BACKFILL_PERMANENT_COOLDOWN_SEC)
+        else:
+            _set_backfill_cooldown(cooldown_key, _BACKFILL_FAIL_COOLDOWN_SEC)
 
         if intraday_candles:
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
@@ -5616,6 +5701,34 @@ def _intraday_cutoff(interval: str):
     return ist_now - timedelta(days=days_back)
 
 
+def _merge_live_5m(data: list, pending_candle, forming_candle) -> list:
+    """Merge the aggregator's live 5m state onto the persisted rows, keyed by
+    bucket timestamp. Kept pure so it can be unit-tested.
+
+    * `pending_candle` -- a bucket that has already closed but is still inside the
+      60s late-tick buffer (not yet persisted). Included only when no persisted
+      row exists for its timestamp, so the persisted row always wins and the same
+      candle can never be appended twice.
+    * `forming_candle` -- the still-open current bucket. Replaces the row for its
+      own timestamp when one exists, else appended only when it is newer than the
+      last row.
+
+    Returns `data` (same list object) kept ascending by time. Never fabricates a
+    candle -- both inputs come from the aggregator and may be None."""
+    if pending_candle:
+        if not any(c.get("time") == pending_candle["time"] for c in data):
+            data.append(pending_candle)
+    if forming_candle:
+        idx = next((i for i, c in enumerate(data) if c.get("time") == forming_candle["time"]), None)
+        if idx is not None:
+            data[idx] = forming_candle
+        elif forming_candle["time"] > (data[-1]["time"] if data else 0):
+            data.append(forming_candle)
+    if data:
+        data.sort(key=lambda c: c.get("time", 0))
+    return data
+
+
 @app.get("/api/stock-data/intraday")
 def get_stock_data_intraday(ticker: str = Query(...), interval: str = Query("5m"), after: int = Query(None), db: Session = Depends(get_db)):
     """Legacy intraday endpoint redirected to ChartService."""
@@ -6057,7 +6170,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
 
             if fill_needed:
-                if background_tasks is not None:
+                _bf_key = f"{clean_ticker}:{interval}"
+                if _backfill_cooldown_active(_bf_key):
+                    # A recent attempt for this ticker/interval is still cooling
+                    # down -- skip the dispatch entirely instead of re-queuing.
+                    print(f"[GapFill] Skip fill for {clean_ticker} {interval} (cooldown active)")
+                elif background_tasks is not None:
                     # Non-blocking async background backfill in production
                     background_tasks.add_task(perform_on_demand_backfill, clean_ticker, interval, fill_start, now)
                     print(f"[GapFill] Dispatched background fill for {clean_ticker} {interval} from {fill_start}")
@@ -6137,14 +6255,16 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     clean_ticker_live = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     if is_latest_request:
         if interval == "5m":
-            # 5m live candle from candle_aggregator directly
+            # Merge the aggregator's live 5m state onto the persisted rows (see
+            # _merge_live_5m): the pending candle covers a bucket that has closed
+            # but is still inside the 60s late-tick buffer (not yet written), so
+            # without it the response would skip the just-completed bucket and
+            # show the forming candle right after an older one.
+            pending = candle_aggregator.get_pending(clean_ticker_live)
+            pc = pending.get(interval) if (pending and interval in pending) else None
             live = candle_aggregator.get_current(clean_ticker_live)
-            if live and interval in live:
-                lc = live[interval]
-                if data and lc["time"] == data[-1]["time"]:
-                    data[-1] = lc
-                elif lc["time"] > (data[-1]["time"] if data else 0):
-                    data.append(lc)
+            fc = live.get(interval) if (live and interval in live) else None
+            data = _merge_live_5m(data, pc, fc)
         elif interval in ("15m", "30m", "1h"):
             # Higher-TF live forming candle from LiveTimeframeManager
             snapshot = live_timeframe_manager.get_current(clean_ticker_live, interval)

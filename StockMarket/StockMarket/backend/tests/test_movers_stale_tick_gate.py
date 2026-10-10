@@ -110,10 +110,13 @@ class OverlayGateTests(unittest.TestCase):
 
     def test_fresh_tick_is_overlaid(self):
         self._set_baseline()
+        # Use a deterministic in-session timestamp (today 10:30 IST) rather than
+        # the real wall clock, so the test is not time-of-day dependent.
+        in_session = datetime.now(IST).replace(hour=10, minute=30, second=0, microsecond=0)
         with svc.latest_ticks_lock:
             svc.latest_ticks[TICKER] = {
                 "current_price": 105.0, "prev_close": 100.0, "volume": 5000,
-                "_exch_ts": _epoch(datetime.now(IST)),
+                "_exch_ts": _epoch(in_session),
                 "_received_ts": time.time(), "_source": "angel_ws",
             }
         out = main._get_all_market_prices()[TICKER]

@@ -31,6 +31,12 @@ def _reset_backfill_state(ticker):
     clean = ticker.strip().upper()
     with main._backfill_lock:
         main.backfill_locks.discard(clean)
+    # Also clear any backfill cooldown left by this ticker so a later test is
+    # not silently skipped by the per-ticker cooldown guard.
+    with main._backfill_cooldown_lock:
+        for _k in list(main._backfill_cooldown):
+            if _k.startswith(clean + ":"):
+                main._backfill_cooldown.pop(_k, None)
 
 
 def _make_session_factory(events, existing_ts=None, five_min_rows=None, commit_error=None):
@@ -77,6 +83,10 @@ class BackfillSessionLifetimeTests(unittest.TestCase):
         self._patchers = [
             patch("main.historical_service", self.mock_historical),
             patch("main.database.SessionLocal", self.session_factory),
+            # These tests exercise backfill session lifetime, not market-hours
+            # gating; force the market open so the closed-market skip cannot make
+            # them time-dependent (they otherwise fail after 15:30 IST).
+            patch("main.is_market_open_now", lambda *a, **k: True),
         ]
         for p in self._patchers:
             p.start()

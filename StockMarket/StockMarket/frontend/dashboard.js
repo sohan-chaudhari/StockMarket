@@ -2,6 +2,20 @@
    DASHBOARD SPECIFIC LOGIC
    ========================================== */
 
+// Phase 3: pure decision for the forming candle's OPEN price. Extracted so it
+// can be unit-tested (see frontend/tests/test_forming_open.cjs).
+//   1. the backend's authoritative forming candle (seed) when available;
+//   2. the official day open for the session's first bucket;
+//   3. the PREVIOUS completed candle's close -- an APPROXIMATION of the bucket's
+//      first trade price, never the arbitrary page-load price;
+//   4. the live price only as a last resort (unverified).
+function _computeFormingOpen(seedOpen, isFirstBar, dayOpen, prevClose, liveCurrent) {
+  if (seedOpen != null && seedOpen > 0) return seedOpen;
+  if (isFirstBar && dayOpen != null && dayOpen > 0) return dayOpen;
+  if (prevClose != null && prevClose > 0) return prevClose;
+  return liveCurrent;
+}
+
 function escapeHTML(str) { var div = document.createElement('div'); div.appendChild(document.createTextNode(str)); return div.innerHTML; }
 
 // Compact Indian volume formatting: 13.94 Cr, 1.17 L, 38.00 K
@@ -3505,11 +3519,7 @@ async function initBigChart() {
         var _seed = (_chartDataCache && _chartDataCache.length > 0 &&
                      _chartDataCache[_chartDataCache.length - 1].time === barTime)
           ? _chartDataCache[_chartDataCache.length - 1] : null;
-        var openPrice = _seed
-          ? _seed.open
-          : ((_isFirstBar && live.open != null && live.open > 0)
-              ? live.open
-              : (live.current > 0 ? live.current : (window._formingCandles['i'] ? window._formingCandles['i'].close : fallbackClose)));
+        var openPrice = _computeFormingOpen(_seed ? _seed.open : null, _isFirstBar, live.open, fallbackClose, live.current);
         var _initHigh = _seed ? Math.max(_seed.high, live.current) : Math.max(openPrice, live.current);
         var _initLow  = _seed ? Math.min(_seed.low,  live.current) : Math.min(openPrice, live.current);
         window._formingCandles['i'] = { time: barTime, realTime: snappedSec, open: openPrice, high: _initHigh, low: _initLow, close: live.current, volume: 0 };
