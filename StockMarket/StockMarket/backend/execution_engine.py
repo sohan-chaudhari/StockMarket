@@ -161,6 +161,21 @@ class PriceMonitorService:
         snapshot = provider.get_price(ticker)
         return snapshot.price if snapshot else None
 
+    def resolve_execution_price(self, ticker: str) -> Optional[float]:
+        """Server-authoritative price used to EXECUTE a paper trade.
+
+        Uses the same PriceProvider pipeline as /api/live-prices and the TP/SL
+        engine (live tick -> forming 5m -> completed 5m -> daily close outside
+        hours), including its freshness gates (30 s tick / 420 s derived). Returns
+        None when no fresh authoritative price exists.
+
+        Callers MUST reject the request on None. A client-supplied price must never
+        be substituted: that is exactly what allowed arbitrary paper P&L before."""
+        price = self.get_price(ticker)
+        if price is None or price <= 0:
+            return None
+        return float(price)
+
     async def execute_order(self, db: Session, order: models.Order, execution_price: float):
         """Check if order should execute, then execute. Single locked transaction."""
         try:

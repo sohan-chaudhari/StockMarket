@@ -136,7 +136,8 @@ class OrderSafetyTests(unittest.TestCase):
         # slowapi wraps router endpoints with functools.wraps → __wrapped__ is
         # the unwrapped endpoint we actually want to exercise.
         fn = getattr(trade_router.open_position, "__wrapped__", trade_router.open_position)
-        with patch.object(TradingService, "open_position", return_value=(pos, "ok", None)):
+        with patch.object(TradingService, "open_position", return_value=(pos, "ok", None)), \
+             patch("execution_engine.price_monitor.resolve_execution_price", return_value=100.0):
             resp = fn(request=None, req=req, db=self.db, current_user=self.user)
         self.assertEqual(resp.id, pos.id)
 

@@ -190,8 +190,11 @@ class IdempotencyEndpointTests(unittest.TestCase):
         )
 
     def _place(self, key):
+        # Pricing is now server-authoritative (resolve_execution_price). Patch it to
+        # a valid price so these tests exercise idempotency, not the pricing policy
+        # (which is covered by test_candle_reset_and_trade_pricing.py).
         with patch("exchange_calendar.nse_calendar.is_market_open", return_value=True), \
-             patch("execution_engine.price_monitor.get_price", return_value=None):
+             patch("execution_engine.price_monitor.resolve_execution_price", return_value=100.0):
             return self.main.place_order(order=self._order(key), current_user=self.user, db=self.db)
 
     def test_sequential_duplicate_returns_original_position(self):

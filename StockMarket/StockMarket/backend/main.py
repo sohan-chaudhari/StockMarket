@@ -1575,17 +1575,20 @@ def place_order(
             _resp["is_duplicate"] = True
             return _resp
 
-    # ── Entry price validation & synchronization ────
-    # PriceProvider resolves the authoritative current price (live tick -> forming 5m -> completed 5m -> daily close).
+    # ── Entry price: server-authoritative only ────
+    # The executed price is ALWAYS the server's current market price, resolved via
+    # the PriceProvider pipeline (live tick -> forming 5m -> completed 5m -> daily
+    # close outside hours) with its freshness gates. A client-supplied price must
+    # never determine the executed price; if no fresh authoritative price exists we
+    # reject the order rather than silently accepting the client's value.
     from execution_engine import price_monitor
-    market_price = price_monitor.get_price(order.ticker)
-    if market_price is not None and market_price > 0:
-        PRICE_TOLERANCE = 0.05  # ±5%
-        lower_bound = market_price * (1 - PRICE_TOLERANCE)
-        upper_bound = market_price * (1 + PRICE_TOLERANCE)
-        # If client passed an outdated cached price outside tolerance, automatically sync to current authoritative price
-        if order.entry_price < lower_bound or order.entry_price > upper_bound:
-            order.entry_price = market_price
+    market_price = price_monitor.resolve_execution_price(order.ticker)
+    if market_price is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No fresh market price available for {order.ticker}; order not placed.",
+        )
+    order.entry_price = market_price
 
     position_type = order.position_type.upper()
     if position_type not in ("LONG", "SHORT"):
@@ -5181,27 +5184,27 @@ def close_position(req: schemas.ClosePositionRequest, db: Session = Depends(get_
         models.Position.user_id == current_user.user_id,
         models.Position.status == "OPEN"
     ).first()
+    closing_price = req.closing_price
     if pos:
-        try:
-            with angelone_service.latest_ticks_lock:
-                ticker_live = angelone_service.latest_ticks.get(pos.ticker)
-            if ticker_live and ticker_live.get("current_price", 0) > 0:
-                market_price = ticker_live["current_price"]
-                deviation = abs(req.closing_price - market_price) / market_price
-                if deviation > 0.05:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Closing price ₹{req.closing_price:.2f} deviates {deviation*100:.1f}% from market price ₹{market_price:.2f}. Max allowed deviation is 5%."
-                    )
-        except HTTPException:
-            raise
-        except Exception as e:
-            print(f"[ClosePosition] Price validation error: {e}")
+        # Server-authoritative exit price: the same PriceProvider pipeline as entry
+        # (live tick -> forming 5m -> completed 5m -> daily close outside hours),
+        # with its freshness gates. The client's closing_price never determines the
+        # executed price, and a missing/stale price is a clear rejection -- not a
+        # silent bypass (the previous WS-only check was skipped whenever no tick
+        # existed, letting the client set the exit price arbitrarily).
+        from execution_engine import price_monitor
+        market_price = price_monitor.resolve_execution_price(pos.ticker)
+        if market_price is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"No fresh market price available for {pos.ticker}; position not closed.",
+            )
+        closing_price = market_price
 
     position, error_msg = TradingService.close_position(
         db=db, user_id=current_user.user_id,
         position_id=req.position_id,
-        closing_price=req.closing_price,
+        closing_price=closing_price,
         close_type="MANUAL"
     )
     if not position:

@@ -430,32 +430,50 @@ class Live5mBuilder:
         with self._lock:
             self._finalize_5m_candle_unsafe(ticker)
 
+    def _expire_pending_candle(self, pending, now_epoch: float):
+        """Flush one expired pending candle, then (ONLY when the ticker has no
+        newer forming candle) seed the current bucket.
+
+        Extracted from _check_late_buffer so the exact expiry behaviour is
+        unit-testable without running the loop thread."""
+        completed = {
+            "ticker": pending.ticker,
+            "timeframe": "5m",
+            "timestamp": pending.bucket_start,
+            "open": pending.open, "high": pending.high,
+            "low": pending.low, "close": pending.close,
+            "volume": pending.volume,
+            "data_source": "ANGELONE",
+            "is_backfilled": False,
+        }
+        self._batch_add(completed)
+        event_bus.emit("candle.5m.completed", ticker=pending.ticker, candle=completed)
+        with self._lock:
+            if pending.ticker not in self.active_candles:
+                return
+            cur = self.active_candles[pending.ticker].get("5m")
+            # `_finalize_5m_candle_unsafe` already installs the NEXT bucket's forming
+            # candle the moment a new bucket starts (see process_tick). Re-seeding it
+            # here -- unconditionally, ~60s later when the pending expires -- would
+            # REPLACE that newer, actively-forming candle: its first ~60s of
+            # high/low/volume would be discarded and its open reset to the expired
+            # bucket's close. Only (re)seed when the ticker has no forming candle yet
+            # or is still on the expired bucket.
+            if cur is None or cur.get("timestamp") == pending.bucket_start:
+                open_sec, close_sec, close_grace_sec = self._session_bounds(
+                    datetime.fromtimestamp(now_epoch, tz=IST).date()
+                )
+                snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
+                snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
+                self.active_candles[pending.ticker]["5m"] = self._create_candle(snapped_dt, completed["close"])
+
     def _check_late_buffer(self):
         while self._flush_worker_running:
             time.sleep(2)
             now_epoch = time.time()
             expired = self._pending_mgr.get_expired(now_epoch)
             for pending in expired:
-                completed = {
-                    "ticker": pending.ticker,
-                    "timeframe": "5m",
-                    "timestamp": pending.bucket_start,
-                    "open": pending.open, "high": pending.high,
-                    "low": pending.low, "close": pending.close,
-                    "volume": pending.volume,
-                    "data_source": "ANGELONE",
-                    "is_backfilled": False,
-                }
-                self._batch_add(completed)
-                event_bus.emit("candle.5m.completed", ticker=pending.ticker, candle=completed)
-                with self._lock:
-                    if pending.ticker in self.active_candles:
-                        open_sec, close_sec, close_grace_sec = self._session_bounds(
-                            datetime.fromtimestamp(now_epoch, tz=IST).date()
-                        )
-                        snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
-                        snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
-                        self.active_candles[pending.ticker]["5m"] = self._create_candle(snapped_dt, completed["close"])
+                self._expire_pending_candle(pending, now_epoch)
             if expired:
                 self._flush_batch_now()
 
