@@ -2,13 +2,14 @@
 
 Root cause: `/api/all-stocks` returned only rows with `is_active == True`. The
 yfinance failure tracker flips `is_active` to False for any ticker whose symbol
-merely failed to resolve, so a genuinely listed stock that has real historical
-data (e.g. MEESHO) disappeared from the search bar entirely.
+merely failed to resolve, so a genuinely listed stock (e.g. MEESHO) disappeared
+from the search bar entirely -- and a company with no *stored* history either
+(e.g. TAPARIA / Taparia Tools Ltd., 0 rows in stock_data) could never come back.
 
-Fix: the eligible universe is "active OR has historical market data in
-`stock_data`", collapsed to one row per ticker (NSE preferred), all in a single
-indexed query. These tests run against an in-memory SQLite database -- no
-Postgres and no live providers.
+Fix: the search universe is EVERY instrument in `stock_metadata`, collapsed to
+one row per ticker (NSE preferred), built with a single query. Being searchable
+is a metadata concern, not a data-availability one. These tests run against an
+in-memory SQLite database -- no Postgres and no live providers.
 """
 import json
 import unittest
@@ -85,11 +86,14 @@ class EligibleUniverseTests(_Base):
         db.commit()
         self.assertIn("NEWCO", [r["ticker"] for r in self._call(db)])
 
-    def test_inactive_metadata_only_is_excluded(self):
+    def test_inactive_metadata_only_is_searchable(self):
+        """A genuinely listed company must stay searchable even when it is
+        flagged inactive AND has no stored history (e.g. TAPARIA / Taparia
+        Tools Ltd.: 0 rows in stock_data, 0 candles)."""
         db, _ = _make_session()
-        db.add(_md("GHOST", "Ghost Ltd", "NSE", False))
+        db.add(_md("TAPARIA", "Taparia Tools Ltd.", "BSE", False))
         db.commit()
-        self.assertNotIn("GHOST", [r["ticker"] for r in self._call(db)])
+        self.assertIn("TAPARIA", [r["ticker"] for r in self._call(db)])
 
     def test_nse_bse_duplicates_collapse_to_one_row(self):
         db, _ = _make_session()
@@ -121,8 +125,8 @@ class EligibleUniverseTests(_Base):
         metadata_selects = [s for s in stmts if "FROM stock_metadata" in s]
         self.assertEqual(len(metadata_selects), 1,
                          "the universe must be built with a single query")
-        self.assertIn("stock_data", metadata_selects[0],
-                      "eligibility must reference historical stock_data")
+        self.assertNotIn("stock_data", metadata_selects[0],
+                         "searchability must not depend on stored history")
 
     def test_cached_response_avoids_a_second_query(self):
         db, stmts = _make_session()
@@ -176,7 +180,7 @@ class StocksVersionTests(_Base):
         """A deploy that changes the universe must invalidate every client's
         localStorage stock list immediately (not at the next 18:00 IST)."""
         version = main.get_stocks_version()["version"]
-        self.assertTrue(version.endswith("|u2"), version)
+        self.assertTrue(version.endswith("|u3"), version)
 
 
 if __name__ == "__main__":

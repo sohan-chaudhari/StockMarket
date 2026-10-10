@@ -186,18 +186,17 @@ searchInput.addEventListener('input', (e) => {
     return row[b.length];
   }
 
-  // Calculate Match Score
-  function getMatchScore(stock, query) {
-    let cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Generic corporate words. A query like "RCL Ltd" must find the ticker RCL,
+  // not every company whose name happens to end in "Ltd" (previously the whole
+  // string "rclltd" was fuzzy-matched, so RCL itself scored 0 and was dropped).
+  var GENERIC_TOKENS = ['ltd', 'limited', 'inc', 'incorporated', 'corp', 'corporation',
+                        'co', 'company', 'pvt', 'private', 'industries', 'industry',
+                        'enterprise', 'enterprises', 'holdings', 'holding', 'group',
+                        'the', 'and'];
+
+  // Score one normalized query string against a stock.
+  function _scoreFor(cleanQuery, qText, ticker, cleanName, rawName) {
     if (!cleanQuery) return 0;
-
-    // Support stripping .NS or .BO if added by user (e.g. "SENSEX.NS" -> "SENSEX")
-    if (cleanQuery.endsWith('ns')) cleanQuery = cleanQuery.slice(0, -2);
-    else if (cleanQuery.endsWith('bo')) cleanQuery = cleanQuery.slice(0, -2);
-
-    const ticker = (stock.ticker || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const rawName = (stock.name || '').toLowerCase();
-    const cleanName = rawName.replace(/[^a-z0-9]/g, '');
 
     // 1. Exact Ticker Match (Highest)
     if (ticker === cleanQuery) return 1000;
@@ -220,9 +219,9 @@ searchInput.addEventListener('input', (e) => {
     if (cleanName.indexOf(cleanQuery) !== -1) return 400;
 
     // 6. Handle "NSE "/"BSE " prefix for indices (e.g. "NSE SENSEX" -> "SENSEX")
-    const isIndex = ['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(stock.ticker);
-    if (isIndex && (query.toLowerCase().startsWith('nse ') || query.toLowerCase().startsWith('bse '))) {
-      const subQuery = query.toLowerCase().split(' ').slice(1).join(' ').replace(/[^a-z0-9]/g, '');
+    const isIndex = ['NIFTY', 'BANKNIFTY', 'SENSEX'].includes(ticker);
+    if (isIndex && (qText.startsWith('nse ') || qText.startsWith('bse '))) {
+      const subQuery = qText.split(' ').slice(1).join(' ').replace(/[^a-z0-9]/g, '');
       if (subQuery && (ticker.startsWith(subQuery) || cleanName.startsWith(subQuery))) {
         return 550;
       }
@@ -236,11 +235,11 @@ searchInput.addEventListener('input', (e) => {
       var tDist = Math.min(tDistPref, tDistFull);
       if (tDist <= maxDist) return 300 - tDist * 50;
 
-      for (var i = 0; i < words.length; i++) {
-        var w = words[i].replace(/[^a-z0-9]/g, '');
-        if (w.length >= 3) {
-          var wDistPref = _levenshtein(w.slice(0, cleanQuery.length), cleanQuery);
-          var wDistFull = _levenshtein(w, cleanQuery);
+      for (var j = 0; j < words.length; j++) {
+        var wj = words[j].replace(/[^a-z0-9]/g, '');
+        if (wj.length >= 3) {
+          var wDistPref = _levenshtein(wj.slice(0, cleanQuery.length), cleanQuery);
+          var wDistFull = _levenshtein(wj, cleanQuery);
           var wDist = Math.min(wDistPref, wDistFull);
           if (wDist <= maxDist) return 250 - wDist * 50;
         }
@@ -248,6 +247,37 @@ searchInput.addEventListener('input', (e) => {
     }
 
     return 0;
+  }
+
+  // Calculate Match Score
+  function getMatchScore(stock, query) {
+    let cleanQuery = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!cleanQuery) return 0;
+
+    // Support stripping .NS or .BO if added by user (e.g. "SENSEX.NS" -> "SENSEX")
+    if (cleanQuery.endsWith('ns')) cleanQuery = cleanQuery.slice(0, -2);
+    else if (cleanQuery.endsWith('bo')) cleanQuery = cleanQuery.slice(0, -2);
+
+    const ticker = (stock.ticker || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const rawName = (stock.name || '').toLowerCase();
+    const cleanName = rawName.replace(/[^a-z0-9]/g, '');
+
+    // Score the full query, and also the query with generic corporate words
+    // removed ("RCL Ltd" -> "RCL"); keep whichever scores higher.
+    let best = _scoreFor(cleanQuery, query.toLowerCase(), ticker, cleanName, rawName);
+
+    const coreTokens = query.toLowerCase().split(/[^a-z0-9]+/).filter(function (t) {
+      return t && GENERIC_TOKENS.indexOf(t) === -1;
+    });
+    let coreQuery = coreTokens.join('').replace(/[^a-z0-9]/g, '');
+    if (coreQuery.endsWith('ns')) coreQuery = coreQuery.slice(0, -2);
+    else if (coreQuery.endsWith('bo')) coreQuery = coreQuery.slice(0, -2);
+    if (coreQuery && coreQuery !== cleanQuery) {
+      const coreScore = _scoreFor(coreQuery, coreTokens.join(' '), ticker, cleanName, rawName);
+      if (coreScore > best) best = coreScore;
+    }
+
+    return best;
   }
 
   // Get Matches with Score

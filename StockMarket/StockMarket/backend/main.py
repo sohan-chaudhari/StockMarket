@@ -1120,11 +1120,11 @@ def get_stocks_version():
 
         sync_date = (now_ist - _td(days=1)).date()
 
-    # `u2` is the search-universe revision. Bump it whenever the eligible
+    # `u3` is the search-universe revision. Bump it whenever the eligible
     # universe definition changes (e.g. the eligible-universe rollout) so a
     # deployed change invalidates every client's localStorage stock list at
     # once instead of waiting for the next 18:00 IST daily boundary.
-    _UNIVERSE_REVISION = "u2"
+    _UNIVERSE_REVISION = "u3"
 
     return {"version": f"{sync_date}T18:00:01|{_UNIVERSE_REVISION}"}
 
@@ -1135,27 +1135,19 @@ def get_all_stocks(db: Session = Depends(get_db)):
     if _all_stocks_cache_bytes is not None and (now - _all_stocks_cache_ts) < _ALL_STOCKS_CACHE_TTL:
         return Response(content=_all_stocks_cache_bytes, media_type="application/json")
 
-    # Eligible search universe: currently-ACTIVE instruments, PLUS any instrument
-    # whose ticker has historical market data in `stock_data`, even when its
-    # metadata `is_active` flag is stale. That flag is set False by the yfinance
-    # failure tracker (POST /api/yfinance/sync-inactive), which de-lists any
-    # ticker whose symbol merely failed to resolve -- including recent listings
-    # (e.g. MEESHO). Search must not depend on it.
-    # A single indexed query (an IN over the distinct stock_data tickers); no
-    # per-ticker round trips and no candle rows are loaded. NSE/BSE duplicates
-    # are collapsed below (NSE wins) so the frontend gets one row per ticker.
-    from sqlalchemy import or_ as _or_allstocks
+    # Search universe: EVERY instrument known in `stock_metadata`, collapsed to
+    # one row per ticker (NSE preferred) below. A genuinely listed company must
+    # be searchable even when its `is_active` flag is stale AND it has no stored
+    # history yet: the yfinance failure tracker (POST /api/yfinance/sync-inactive)
+    # de-lists any symbol that merely failed to resolve, and no data is then ever
+    # fetched for it -- e.g. TAPARIA / Taparia Tools Ltd. (0 rows in stock_data
+    # and 0 candles). Being searchable is a metadata concern, not a
+    # data-availability one. A single query; no per-ticker round trips and no
+    # candle rows are loaded.
     try:
-        meta_rows = db.query(models.StockMetadata).filter(
-            _or_allstocks(
-                models.StockMetadata.is_active == True,
-                models.StockMetadata.ticker.in_(
-                    db.query(models.StockData.ticker).distinct()
-                ),
-            )
-        ).all()
+        meta_rows = db.query(models.StockMetadata).all()
     except Exception as _universe_err:
-        print(f"[AllStocks] eligible-universe query failed, falling back: {_universe_err}")
+        print(f"[AllStocks] universe query failed, falling back: {_universe_err}")
         meta_rows = []
     if not meta_rows:
         meta_rows = db.query(models.StockMetadata).filter(
