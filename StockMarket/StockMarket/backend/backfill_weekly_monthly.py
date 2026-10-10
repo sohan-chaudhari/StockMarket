@@ -44,6 +44,22 @@ FIVE_YR_CUTOFF  = date(TODAY.year - 5,  TODAY.month, TODAY.day)   # 1W floor  (2
 TEN_YR_CUTOFF   = date(TODAY.year - 10, TODAY.month, TODAY.day)   # 1M floor  (2016-08-23)
 # Total fetch window: 3yr (1W range) + 5yr (1M range) = 8 years of 1D data
 
+# Bounded back-off after a confirmed AngelOne auth failure. The closed-market
+# worker runs on a 60s cadence; a dead session must not be re-attempted at that
+# rate (each attempt would log in, fail, and burn requests). 30 min matches the
+# existing `_angel_auth_refresh` task, which re-logs-in in the meantime.
+AUTH_FAILURE_BACKOFF_SEC = 1800
+
+
+class HistoricalAuthError(RuntimeError):
+    """AngelOne's session was confirmed invalid part-way through a batch.
+
+    Deliberately distinct from an ordinary per-ticker failure (missing data,
+    rate limit, transient network): when the session is dead *nothing* in the
+    remaining batch can succeed, so the caller must abort instead of issuing a
+    request for every remaining ticker/date-chunk.
+    """
+
 
 # ===========================================================================
 # PHASE 1 — SQL aggregation from stock_data
@@ -229,6 +245,14 @@ def _phase2_fetch_into_stock_data(from_d: date, to_d: date, missing_tickers: lis
                     from_date=chunk_start,
                     to_date=chunk_end,
                 )
+                # get_historical_candles() sets is_logged_in=False on a confirmed
+                # auth failure ("Invalid Token", "session expired", ...) and then
+                # returns [] for every later call. Without this check the loop
+                # keeps issuing one doomed request per remaining ticker * chunk.
+                if not historical_service.is_logged_in:
+                    raise HistoricalAuthError(
+                        f"AngelOne session invalidated while fetching {ticker}"
+                    )
                 daily_rows.extend(rows or [])
                 time.sleep(0.5)   # rate gate between chunks
 
@@ -241,6 +265,11 @@ def _phase2_fetch_into_stock_data(from_d: date, to_d: date, missing_tickers: lis
         except KeyboardInterrupt:
             print(f"\n[Phase 2] Interrupted at {ticker} ({i}/{total}). stock_data rows so far: {inserted_total:,}")
             return inserted_total
+        except HistoricalAuthError:
+            # Dead session -- propagate so the caller stops the batch and backs
+            # off. NOT counted as a per-ticker "skip": nothing was evaluated.
+            print(f"[Phase 2] {label}: aborted at {ticker} ({i}/{total}) — AngelOne session invalid.")
+            raise
         except Exception as e:
             print(f"  [WARN] {ticker}: {e}")
             skipped += 1
@@ -266,10 +295,14 @@ def phase2_fetch_missing_1w() -> None:
         print("[Phase 2] 1W: all tickers already have coverage — nothing to fetch.")
         return
 
-    fetched = _phase2_fetch_into_stock_data(
-        from_d=FIVE_YR_CUTOFF, to_d=TWO_YR_CUTOFF,
-        missing_tickers=missing, label="1W (3yr range)"
-    )
+    try:
+        fetched = _phase2_fetch_into_stock_data(
+            from_d=FIVE_YR_CUTOFF, to_d=TWO_YR_CUTOFF,
+            missing_tickers=missing, label="1W (3yr range)"
+        )
+    except HistoricalAuthError as e:
+        print(f"[Phase 2] 1W: aborted (auth) -- {e}")
+        return
 
     if fetched > 0:
         print("[Phase 2] 1W: re-running SQL aggregation with newly fetched stock_data rows...")
@@ -307,10 +340,14 @@ def phase2_fetch_missing_1m() -> None:
         print("[Phase 2] 1M: all tickers already have coverage — nothing to fetch.")
         return
 
-    fetched = _phase2_fetch_into_stock_data(
-        from_d=TEN_YR_CUTOFF, to_d=FIVE_YR_CUTOFF,
-        missing_tickers=missing, label="1M (5yr range)"
-    )
+    try:
+        fetched = _phase2_fetch_into_stock_data(
+            from_d=TEN_YR_CUTOFF, to_d=FIVE_YR_CUTOFF,
+            missing_tickers=missing, label="1M (5yr range)"
+        )
+    except HistoricalAuthError as e:
+        print(f"[Phase 2] 1M: aborted (auth) -- {e}")
+        return
 
     if fetched > 0:
         print("[Phase 2] 1M: re-running SQL aggregation with newly fetched stock_data rows...")
@@ -346,21 +383,32 @@ _attempted_tickers = set()
 
 def is_market_open_or_opening_soon() -> bool:
     """
-    Returns True if Indian market is open or will open within 30 minutes.
-    Pause window: Mon-Fri 08:45 to 15:45 IST on trading days.
+    True when the closed-market 1W/1M worker must PAUSE.
+
+    Both call sites use this as a PAUSE predicate -- main.py's worker loop skips
+    the batch when it is True, and run_controlled_closed_backfill_batch returns
+    "paused_market_hours" when it is True -- so it must be True for every moment
+    the worker must not run:
+
+      * a NON-trading day (weekend / NSE holiday): the provider is closed, so
+        re-walking the missing list can only burn requests; and
+      * the pre-market + trading window (08:45-15:45 IST) on a trading day.
+
+    It is False only inside a trading day's genuinely closed window
+    (15:45-08:45), which is exactly when this worker is meant to run.
     """
     try:
         from exchange_calendar import nse_calendar
         from datetime import time as dt_time, timezone
         now_ist = datetime.now(timezone(timedelta(hours=5, minutes=30)))
         if not nse_calendar.is_trading_day(now_ist.date()):
-            return False
+            return True
         t = now_ist.time()
         return dt_time(8, 45) <= t <= dt_time(15, 45)
     except Exception:
         now = datetime.now()
         if now.weekday() >= 5:
-            return False
+            return True
         return 8 <= now.hour < 16
 
 
@@ -421,13 +469,29 @@ def run_controlled_closed_backfill_batch(batch_size: int = 5) -> dict:
 
     if unattempted_1w:
         batch = unattempted_1w[:batch_size]
+
+        try:
+            fetched = _phase2_fetch_into_stock_data(
+                from_d=FIVE_YR_CUTOFF, to_d=TWO_YR_CUTOFF,
+                missing_tickers=batch, label=f"1W batch ({len(batch)} tickers)"
+            )
+        except HistoricalAuthError as e:
+            # Dead session -- nothing in this batch could succeed. Leave the
+            # tickers UNMARKED so they are retried once auth recovers, and ask
+            # the caller to back off instead of re-running on its 60s cadence.
+            print(f"[Phase 2] 1W batch aborted (auth): {e}")
+            return {
+                "status": "auth_failed",
+                "timeframe": "1W",
+                "processed": 0,
+                "remaining": len(unattempted_1w),
+                "retry_after": AUTH_FAILURE_BACKOFF_SEC,
+            }
+
+        # Marked only AFTER the fetch ran, so a failed batch is never recorded
+        # as successfully processed.
         for (ticker,) in batch:
             _attempted_tickers.add((ticker, '1W'))
-
-        fetched = _phase2_fetch_into_stock_data(
-            from_d=FIVE_YR_CUTOFF, to_d=TWO_YR_CUTOFF,
-            missing_tickers=batch, label=f"1W batch ({len(batch)} tickers)"
-        )
 
         if fetched > 0:
             with SessionLocal() as db:
@@ -464,13 +528,26 @@ def run_controlled_closed_backfill_batch(batch_size: int = 5) -> dict:
 
     if unattempted_1m:
         batch = unattempted_1m[:batch_size]
+
+        try:
+            fetched = _phase2_fetch_into_stock_data(
+                from_d=TEN_YR_CUTOFF, to_d=FIVE_YR_CUTOFF,
+                missing_tickers=batch, label=f"1M batch ({len(batch)} tickers)"
+            )
+        except HistoricalAuthError as e:
+            print(f"[Phase 2] 1M batch aborted (auth): {e}")
+            return {
+                "status": "auth_failed",
+                "timeframe": "1M",
+                "processed": 0,
+                "remaining": len(unattempted_1m),
+                "retry_after": AUTH_FAILURE_BACKOFF_SEC,
+            }
+
+        # Marked only AFTER the fetch ran, so a failed batch is never recorded
+        # as successfully processed.
         for (ticker,) in batch:
             _attempted_tickers.add((ticker, '1M'))
-
-        fetched = _phase2_fetch_into_stock_data(
-            from_d=TEN_YR_CUTOFF, to_d=FIVE_YR_CUTOFF,
-            missing_tickers=batch, label=f"1M batch ({len(batch)} tickers)"
-        )
 
         if fetched > 0:
             with SessionLocal() as db:

@@ -9074,6 +9074,14 @@ async def startup():
                         await asyncio.sleep(3600)
                     elif res.get("status") == "paused_market_hours":
                         await asyncio.sleep(900)
+                    elif res.get("status") == "auth_failed":
+                        # Confirmed dead AngelOne session: nothing in the batch
+                        # could be fetched. Back off instead of re-running on the
+                        # 60s cadence -- the existing _angel_auth_refresh task
+                        # re-logs-in every 30 min.
+                        _backoff = res.get("retry_after", 1800)
+                        print(f"[1W/1M Backfill] Auth failure -- backing off {_backoff}s.")
+                        await asyncio.sleep(_backoff)
                     else:
                         tf = res.get("timeframe", "")
                         proc = res.get("processed", 0)
