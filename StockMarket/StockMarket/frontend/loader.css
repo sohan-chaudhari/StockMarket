@@ -119,3 +119,46 @@
     transition: opacity 0.4s ease-out;
     pointer-events: none;
 }
+
+/* In-Chart Loading Overlay (timeframe switch & chart load) */
+#loading.loading,
+.loading#loading {
+    display: none;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 70;
+    background: rgba(13, 17, 26, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    border-radius: 8px;
+    padding: 12px 24px;
+    color: #e2e8f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    pointer-events: none;
+    text-align: center;
+}
+
+#loading.loading::before,
+.loading#loading::before {
+    content: '';
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    margin-right: 10px;
+    vertical-align: -2px;
+    border: 2px solid rgba(41, 98, 255, 0.3);
+    border-top-color: #2962ff;
+    border-radius: 50%;
+    animation: chartSpin 0.8s linear infinite;
+}
+
+@keyframes chartSpin {
+    to { transform: rotate(360deg); }
+}

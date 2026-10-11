@@ -3002,12 +3002,21 @@ async function initBigChart() {
     // Don't nullify _lastCandleClose — keep previous value so forming candle
     // can still render during loading (header/OHLC text updates continuously).
     var loader2 = document.getElementById('leverage-loader');
-    // Only veil the chart when it is still EMPTY. Re-showing this full-screen
-    // overlay on a background reload (the intraday candle-boundary
-    // reconciliation below calls loadData() itself) blanked an already-rendered
-    // chart, so live candles suddenly vanished behind the loading page.
+    var loadingEl = document.getElementById('loading');
+    var isRangeSwitch = (window._loadedRange && window._loadedRange !== range);
     var _veilNeeded = !window._chartHasRendered;
     hideChartError();
+
+    // Show loading state when switching timeframes or loading fresh chart
+    if (isRangeSwitch) {
+      if (loadingEl) {
+        loadingEl.textContent = 'Loading ' + range + ' chart data...';
+        loadingEl.style.display = 'block';
+      }
+      if (window._lvNavBarStart) {
+        try { window._lvNavBarStart(); } catch(e) {}
+      }
+    }
 
     // Cancel previous in-flight request
     if (_loadController) try { _loadController.abort(); } catch (e) {}
@@ -3099,6 +3108,9 @@ async function initBigChart() {
       if (loader2) loader2.style.display = 'none';
       var loadingEl = document.getElementById('loading');
       if (loadingEl) loadingEl.style.display = 'none';
+      if (window._lvNavBarFinish) {
+        try { window._lvNavBarFinish(); } catch(e) {}
+      }
       var cachedLiveFinal = null;
       try {
         var rawLlpFinal = localStorage.getItem('llp');
@@ -3115,7 +3127,14 @@ async function initBigChart() {
     }
   };
 
-  function hideLoader(el) { if (el) el.style.display = 'none'; var le = document.getElementById('loading'); if (le) le.style.display = 'none'; }
+  function hideLoader(el) {
+    if (el) el.style.display = 'none';
+    var le = document.getElementById('loading');
+    if (le) le.style.display = 'none';
+    if (window._lvNavBarFinish) {
+      try { window._lvNavBarFinish(); } catch(e) {}
+    }
+  }
 
   // Activate the correct range button from URL
   document.querySelectorAll('.range-item').forEach(function(el) {
