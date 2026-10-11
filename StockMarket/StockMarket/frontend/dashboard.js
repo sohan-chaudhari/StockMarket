@@ -421,9 +421,11 @@ function onPriceUpdate(evt) {
         }
       }
 
-      // Update volume
+      // Update volume. Require > 0: an LTP-only tick carries no cumulative day
+      // volume, so a 0 must never overwrite a volume already rendered from the
+      // baseline/DB (that produced "Volume: 0" on Top Gainers/Losers).
       var volEl = itemEl.querySelector('.mv-volume');
-      if (volEl && d.volume != null && Number(d.volume) >= 0) {
+      if (volEl && d.volume != null && Number(d.volume) > 0) {
         volEl.innerText = 'Volume: ' + formatVolumeCompact(d.volume);
       }
     });

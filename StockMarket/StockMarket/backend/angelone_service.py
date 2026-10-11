@@ -432,6 +432,12 @@ class AngelOneService:
                         low_rupees = _prev_tick['low']
                     if prev_close_rupees <= 0 and _prev_tick.get('prev_close', 0) > 0:
                         prev_close_rupees = _prev_tick['prev_close']
+                    # ...and the same for cumulative day volume: LTP-only packets
+                    # carry no 'volume_trade_for_the_day', so without this the
+                    # day's volume was overwritten with 0 (Top Gainers/Losers then
+                    # rendered "Volume: 0").
+                    if daily_volume <= 0 and _prev_tick.get('volume', 0) > 0:
+                        daily_volume = _prev_tick['volume']
 
                     # Decision 3: reject an exact replay of the last tick for this
                     # ticker (same exchange timestamp + price + quantity) before it

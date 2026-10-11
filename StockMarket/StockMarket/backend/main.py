@@ -2945,7 +2945,9 @@ def _get_all_market_prices() -> dict:
             pc = _safe_float(tick_data.get("prev_close", base_entry.get("prev_close", 0)))
             chg = round(cp - pc, 2) if pc else round(_safe_float(tick_data.get("change", 0)), 2)
             chg_pct = round(((cp - pc) / pc) * 100, 2) if pc and pc > 0 else round(_safe_float(tick_data.get("change_pct", 0)), 2)
-            vol = _safe_int(tick_data.get("volume", base_entry.get("volume", 0)))
+            # `or` (not a dict.get default) so a present-but-zero "volume" falls
+            # back to the baseline/DB day volume instead of rendering 0.
+            vol = _safe_int(tick_data.get("volume") or base_entry.get("volume", 0))
             p_vol = _safe_int(base_entry.get("prev_volume", 0))
             v_surge = round(vol / p_vol, 2) if (p_vol > 0 and vol > 0) else base_entry.get("vol_surge", 1.0)
             
@@ -7282,6 +7284,18 @@ def _on_angel_tick(ticker: str, data: dict):
             tick_low = data.get("low")
             daily_volume = data.get("volume", 0)
             actual_tick_volume = data.get("tick_volume", 0)
+            # An LTP-only packet carries no cumulative day volume. Keep the last
+            # known value rather than publishing 0 (which the movers/live-price
+            # readers would then show as "Volume: 0"). Bare dict read: the WS
+            # caller already holds latest_ticks_lock (RLock), and a dict.get is
+            # atomic, so no lock ordering changes.
+            if not daily_volume:
+                try:
+                    _prev_vol = int((angelone_service.latest_ticks.get(ticker) or {}).get("volume", 0) or 0)
+                except (TypeError, ValueError):
+                    _prev_vol = 0
+                if _prev_vol > 0:
+                    daily_volume = _prev_vol
             tick_entry = {
                 "current_price": cp,
                 "current": cp,
