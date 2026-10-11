@@ -35,10 +35,12 @@
             var storedUser = localStorage.getItem('user');
             if (storedUser && !sessionStorage.getItem('user')) sessionStorage.setItem('user', storedUser);
 
-            // Confirm the HttpOnly cookie / Bearer token is still valid.
-            // Only a 401/403 clears the local session.
+            var sessTok = sessionStorage.getItem('token') || localStorage.getItem('token');
+            var storedUser = localStorage.getItem('user') || sessionStorage.getItem('user');
+            // If the visitor is completely anonymous (no token or user in storage), do not fire /api/auth/me
+            if (!sessTok && !storedUser) return;
+
             var authHdr = {};
-            var sessTok = sessionStorage.getItem('token');
             if (sessTok && sessTok !== 'cookie-session') {
                 authHdr['Authorization'] = 'Bearer ' + sessTok;
             }

@@ -2378,11 +2378,16 @@ async function initBigChart() {
       currentPriceStr = window.lastLivePrice.toFixed(2);
     }
 
-    // Update floating legend OHLC
-    var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = price.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
-    var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = price.high.toFixed(2); hEl.style.color = '#089981'; }
-    var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = price.low.toFixed(2); lEl.style.color = '#f23645'; }
-    var cEl = document.getElementById('ohlc-close');    if (cEl) { cEl.innerText = price.close.toFixed(2); cEl.style.color = '#d1d4dc'; }
+    // Update floating legend OHLC safely (support both candlestick OHLC and single-value line/area series)
+    var pOpen  = price.open  != null ? price.open  : price.value;
+    var pHigh  = price.high  != null ? price.high  : price.value;
+    var pLow   = price.low   != null ? price.low   : price.value;
+    var pClose = price.close != null ? price.close : price.value;
+
+    var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = pOpen  != null ? Number(pOpen).toFixed(2)  : '--'; oEl.style.color = '#d1d4dc'; }
+    var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = pHigh  != null ? Number(pHigh).toFixed(2)  : '--'; hEl.style.color = '#089981'; }
+    var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = pLow   != null ? Number(pLow).toFixed(2)   : '--'; lEl.style.color = '#f23645'; }
+    var cEl = document.getElementById('ohlc-close');    if (cEl) { cEl.innerText = pClose != null ? Number(pClose).toFixed(2) : '--'; cEl.style.color = '#d1d4dc'; }
     var volEl = document.getElementById('ohlc-volume');
     if (volEl) {
       var vVal = vol ? (vol.value || vol.volume || 0) : 0;
