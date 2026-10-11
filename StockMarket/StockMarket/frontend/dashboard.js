@@ -2997,7 +2997,11 @@ async function initBigChart() {
     // Don't nullify _lastCandleClose — keep previous value so forming candle
     // can still render during loading (header/OHLC text updates continuously).
     var loader2 = document.getElementById('leverage-loader');
-    if (loader2) loader2.style.display = 'flex';
+    // Only veil the chart when it is still EMPTY. Re-showing this full-screen
+    // overlay on a background reload (the intraday candle-boundary
+    // reconciliation below calls loadData() itself) blanked an already-rendered
+    // chart, so live candles suddenly vanished behind the loading page.
+    var _veilNeeded = !window._chartHasRendered;
     hideChartError();
 
     // Cancel previous in-flight request
@@ -3021,6 +3025,7 @@ async function initBigChart() {
     if (memData) {
       _renderChartData(memData, range);
       hasRenderedPreview = true;
+      window._chartHasRendered = true;
       if (loader2) loader2.style.display = 'none';
       var le = document.getElementById('loading'); if (le) le.style.display = 'none';
     } else if (!isIntradayRange && !isWeeklyMonthly && window._idbGetCandles) {
@@ -3030,11 +3035,15 @@ async function initBigChart() {
           if (window._recentRanges) window._recentRanges.set(memKey, idbData);
           _renderChartData(idbData, range);
           hasRenderedPreview = true;
+          window._chartHasRendered = true;
           if (loader2) loader2.style.display = 'none';
           var le2 = document.getElementById('loading'); if (le2) le2.style.display = 'none';
         }
       } catch (e) {}
     }
+
+    // Nothing rendered yet -> it is legitimate to show the veil.
+    if (_veilNeeded && !hasRenderedPreview && loader2) loader2.style.display = 'flex';
 
     try {
       var url = '/api/stock-data/range?ticker=' + encodeURIComponent(ticker) + '&range=' + range;
@@ -3069,6 +3078,7 @@ async function initBigChart() {
       }
 
       _renderChartData(data, range);
+      if (data.length > 0) window._chartHasRendered = true;
       // Write to caches on successful API fetch (skip for intraday to avoid stale gaps)
       try {
         if (!isIntradayRange && !isWeeklyMonthly && window._recentRanges) window._recentRanges.set(memKey, data);
