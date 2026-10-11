@@ -28,16 +28,21 @@
      * ------------------------------------------------------------------ */
     (function _lvRehydrateSession() {
         try {
-            if (sessionStorage.getItem('token') || !localStorage.getItem('token')) return;
-            sessionStorage.setItem('token', localStorage.getItem('token'));
+            var locTok = localStorage.getItem('token');
+            if (locTok && locTok !== 'cookie-session' && !sessionStorage.getItem('token')) {
+                sessionStorage.setItem('token', locTok);
+            }
             var storedUser = localStorage.getItem('user');
             if (storedUser && !sessionStorage.getItem('user')) sessionStorage.setItem('user', storedUser);
 
-            // Confirm the HttpOnly cookie is still valid (e.g. the 24h token may
-            // have expired). Only a 401/403 expires the local marker; a network
-            // or 5xx error keeps the optimistic session rather than logging the
-            // user out on a transient blip.
-            fetch('/api/auth/me', { credentials: 'same-origin' }).then(function (r) {
+            // Confirm the HttpOnly cookie / Bearer token is still valid.
+            // Only a 401/403 clears the local session.
+            var authHdr = {};
+            var sessTok = sessionStorage.getItem('token');
+            if (sessTok && sessTok !== 'cookie-session') {
+                authHdr['Authorization'] = 'Bearer ' + sessTok;
+            }
+            fetch('/api/auth/me', { headers: authHdr, credentials: 'same-origin' }).then(function (r) {
                 if (r.ok) {
                     return r.json().then(function (user) {
                         try {
@@ -55,9 +60,8 @@
                         localStorage.removeItem('user');
                     } catch (e) {}
                     var p = (location.pathname.split('/').pop() || '').toLowerCase();
-                    var isAuthPage = p === 'login.html' || p === 'register.html' ||
-                        p === 'forgot-password.html' || p === 'reset-password.html' || p === 'verify-email.html';
-                    if (!isAuthPage) window.location.href = 'login.html';
+                    var isProtectedPage = /portfolio|profile|watchlist|orders/i.test(p);
+                    if (isProtectedPage) window.location.href = 'login.html';
                 }
             }).catch(function () { /* network error: keep optimistic session */ });
         } catch (e) {}

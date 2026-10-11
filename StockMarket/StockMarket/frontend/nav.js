@@ -542,14 +542,21 @@
     container.classList.toggle('active');
   };
 
-  window.handleLogout = function () {
+  window.handleLogout = async function () {
     var token = sessionStorage.getItem('token') || localStorage.getItem('token');
-    if (token) {
-      fetch('/api/auth/logout', {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
-      }).catch(function () {});
+    var headers = { 'Content-Type': 'application/json' };
+    if (token && token !== 'cookie-session') {
+      headers['Authorization'] = 'Bearer ' + token;
     }
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: headers,
+        credentials: 'same-origin',
+        keepalive: true
+      });
+    } catch (e) {}
+
     sessionStorage.removeItem('token');
     sessionStorage.removeItem('user');
     try {

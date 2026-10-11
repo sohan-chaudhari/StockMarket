@@ -1453,15 +1453,10 @@ function initNiftyChart() {
       cd = param.seriesData.get(window._niftyAreaSeries);
     }
     if (cd) {
-      var pEl = document.getElementById('niftyPrice');
       var oEl = document.getElementById('niftyO');
       var hEl = document.getElementById('niftyH');
       var lEl = document.getElementById('niftyL');
       var cEl2 = document.getElementById('niftyC');
-      var curVal = cd.close != null ? cd.close : cd.value;
-      if (pEl && curVal != null) {
-        pEl.innerText = Number(curVal).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      }
       if (oEl && cd.open != null) oEl.innerText = Number(cd.open).toFixed(2);
       if (hEl && cd.high != null) hEl.innerText = Number(cd.high).toFixed(2);
       if (lEl && cd.low != null)  lEl.innerText = Number(cd.low).toFixed(2);
@@ -2305,22 +2300,6 @@ async function initBigChart() {
       toolTip.style.display = 'none';
       var activeFc = window._formingCandles ? (window._formingCandles['i'] || window._formingCandles['d']) : null;
       if (activeFc && activeFc.close > 0) {
-        var pEl = document.getElementById('chart-ticker-price'); if (pEl) pEl.innerText = activeFc.close.toFixed(2);
-        var chEl = document.getElementById('chart-change');
-        if (chEl && _chartDataCache && _chartDataCache.length > 0) {
-          var prevClose = _chartDataCache[_chartDataCache.length - 1].close;
-          if (activeFc.time === _chartDataCache[_chartDataCache.length - 1].time && _chartDataCache.length > 1) {
-            prevClose = _chartDataCache[_chartDataCache.length - 2].close;
-          }
-          if (prevClose > 0) {
-            var diff = activeFc.close - prevClose;
-            var pct = (diff / prevClose) * 100;
-            chEl.innerText = (diff >= 0 ? '+ ' : '- ') + Math.abs(diff).toFixed(2) + ' (' + (diff >= 0 ? '+' : '') + pct.toFixed(2) + '%)';
-            var col = diff >= 0 ? '#089981' : '#f23645';
-            chEl.style.color = col;
-            if (pEl) pEl.style.color = col;
-          }
-        }
         var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = activeFc.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
         var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = activeFc.high.toFixed(2); hEl.style.color = '#089981'; }
         var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = activeFc.low.toFixed(2); lEl.style.color = '#f23645'; }
@@ -2332,19 +2311,6 @@ async function initBigChart() {
         }
       } else if (window._lastHistoricalCandle) {
         var last = window._lastHistoricalCandle;
-        var pEl = document.getElementById('chart-ticker-price'); if (pEl) pEl.innerText = last.close.toFixed(2);
-        var chEl = document.getElementById('chart-change');
-        if (chEl && _chartDataCache && _chartDataCache.length > 1) {
-          var prevClose = _chartDataCache[_chartDataCache.length - 2].close;
-          if (prevClose > 0) {
-            var diff = last.close - prevClose;
-            var pct = (diff / prevClose) * 100;
-            chEl.innerText = (diff >= 0 ? '+ ' : '- ') + Math.abs(diff).toFixed(2) + ' (' + (diff >= 0 ? '+' : '') + pct.toFixed(2) + '%)';
-            var col = diff >= 0 ? '#089981' : '#f23645';
-            chEl.style.color = col;
-            if (pEl) pEl.style.color = col;
-          }
-        }
         var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = last.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
         var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = last.high.toFixed(2); hEl.style.color = '#089981'; }
         var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = last.low.toFixed(2); lEl.style.color = '#f23645'; }
@@ -2412,20 +2378,7 @@ async function initBigChart() {
       currentPriceStr = window.lastLivePrice.toFixed(2);
     }
 
-    // Update floating legend
-    var pEl = document.getElementById('chart-ticker-price'); if (pEl) pEl.innerText = price.close.toFixed(2);
-    var chEl2 = document.getElementById('chart-change');
-    if (chEl2) {
-      var chClose = parseFloat(prevCloseStr);
-      if (!isNaN(chClose) && chClose > 0) {
-        var chDiff2 = price.close - chClose;
-        var chPct2 = (chDiff2 / chClose) * 100;
-        chEl2.innerText = (chDiff2 >= 0 ? '+ ' : '- ') + Math.abs(chDiff2).toFixed(2) + ' (' + (chDiff2 >= 0 ? '+' : '') + chPct2.toFixed(2) + '%)';
-        var col2 = chDiff2 >= 0 ? '#089981' : '#f23645';
-        chEl2.style.color = col2;
-        if (pEl) pEl.style.color = col2;
-      }
-    }
+    // Update floating legend OHLC
     var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = price.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
     var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = price.high.toFixed(2); hEl.style.color = '#089981'; }
     var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = price.low.toFixed(2); lEl.style.color = '#f23645'; }
@@ -3097,14 +3050,24 @@ async function initBigChart() {
         showChartError('Server returned ' + res.status + ' for ' + range + ' data');
         return;
       }
-      var data = await res.json();
-      if (data && data.data) { data = data.data; }
+      var jsonResp = await res.json();
+      var data = (jsonResp && jsonResp.data) ? jsonResp.data : jsonResp;
+      var backfillStatus = (jsonResp && jsonResp.backfill_status) ? jsonResp.backfill_status : null;
 
       if (!Array.isArray(data)) {
         showChartError('Unexpected response format for ' + range + ' data');
         return;
       }
       if (myLoadId !== _loadId) { hideLoader(loader2); return; }
+
+      // If initial response is empty but the backend is actively backfilling in the background,
+      // schedule a single bounded retry to render candles once backfill completes
+      if (data.length === 0 && backfillStatus === 'backfilling' && _retryAttempt < 2) {
+        if (_retryLoadData(range, _retryAttempt, myLoadId)) {
+          return;
+        }
+      }
+
       _renderChartData(data, range);
       // Write to caches on successful API fetch (skip for intraday to avoid stale gaps)
       try {
@@ -3947,10 +3910,10 @@ async function fetchWatchlist() {
     var _wlToken = '';
     try { _wlToken = sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e) {}
     var headers = {};
-    if (_wlToken && _wlToken !== 'null' && _wlToken !== 'undefined' && _wlToken.trim() !== '') {
+    if (_wlToken && _wlToken !== 'null' && _wlToken !== 'undefined' && _wlToken !== 'cookie-session' && _wlToken.trim() !== '') {
       headers['Authorization'] = 'Bearer ' + _wlToken.trim();
     }
-    var res = await fetch('/api/watchlist', { headers: headers });
+    var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
     if (res.ok) {
       var data = await res.json();
       if (data && Array.isArray(data.watchlist) && data.watchlist.length > 0) {

@@ -454,6 +454,10 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
             # instant. The browser still re-validates with the server when
             # doing a fresh forward navigation.
             response.headers['Cache-Control'] = 'private, must-revalidate'
+        elif path.startswith(('/api/portfolio', '/api/trade', '/api/watchlist', '/api/auth', '/api/user')):
+            # Security hardening: ensure authenticated user responses are NEVER stored by intermediate caches
+            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
+            response.headers['Pragma'] = 'no-cache'
         return response
 
 app.add_middleware(CacheControlMiddleware)
@@ -1398,11 +1402,21 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             }
             angel_interval = angel_interval_map.get(interval, "FIVE_MINUTE")
 
-            exchange_val = "BSE" if clean_ticker == "SENSEX" else "NSE"
+            # Resolve real listed exchange from stock_metadata or instrument master
+            exchange_val = "NSE"
+            try:
+                with database.SessionLocal() as _meta_db:
+                    _resolved = _resolve_ticker_exchange(_meta_db, clean_ticker)
+                    if _resolved in ("BSE", "NSE"):
+                        exchange_val = _resolved
+                    elif clean_ticker == "SENSEX":
+                        exchange_val = "BSE"
+            except Exception as _res_err:
+                print(f"[GapFill] Exchange resolution fallback for {clean_ticker}: {_res_err}")
+                exchange_val = "BSE" if clean_ticker == "SENSEX" else "NSE"
 
             # raise_on_error lets us tell a genuine empty response apart from a
-            # failed call, so a PERMANENT error (unknown/invalid symbol) skips the
-            # yfinance fallback instead of firing a second, guaranteed-futile call.
+            # failed call.
             def _angel_fetch():
                 return historical_service.get_historical_candles(
                     ticker=clean_ticker,
@@ -1437,13 +1451,12 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                     angel_error = _e
                     intraday_candles = []
 
-            permanent_error = isinstance(angel_error, HistoricalFetchError) and angel_error.retryable is False
-
-            # If AngelOne returned empty (and the failure was not permanent),
-            # retry with yfinance fallback
-            if not intraday_candles and not permanent_error:
+            # A failure in AngelOne does not preclude yfinance fallback
+            yf_fallback_attempted = False
+            if not intraday_candles:
                 try:
-                    yf_data = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=True)
+                    yf_fallback_attempted = True
+                    yf_data = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=True, exchange=exchange_val)
                     if yf_data:
                         for row in yf_data:
                             dt = row.timestamp
@@ -1458,6 +1471,13 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                                 })
                 except Exception as e:
                     print(f"[GapFill] YFinance fallback failed for {clean_ticker}: {e}")
+
+            # Permanent error only if both providers are exhausted or symbol is genuinely invalid
+            permanent_error = (
+                isinstance(angel_error, HistoricalFetchError) and
+                angel_error.retryable is False and
+                (yf_fallback_attempted and not intraday_candles)
+            )
 
         # ---- Phase 2: open the DB session only now, after every network call
         # (AngelOne login, both get_historical_candles attempts, the 3s retry
@@ -3994,34 +4014,85 @@ async def news_search(query: str, limit: int = 20):
         if cname and cname.lower() not in (q_clean.lower(), ticker_no_ns.lower()):
             rss_queries.append(f"scanx.trade {cname.lower()}")
             rss_queries.append(f"scanx.trade \"{cname}\"")
-            # Also add primary brand word if multi-word company
-            words = cname.split()
-            if len(words) > 1 and len(words[0]) >= 3:
-                brand = words[0].lower()
-                if brand not in (q_clean.lower(), ticker_no_ns.lower()):
-                    rss_queries.append(f"scanx.trade {brand}")
+        # Curated aliases and entity search terms for major tickers
+        TICKER_ALIASES = {
+            "SBIN": ["sbin", "sbi", "state bank of india", "state bank"],
+            "RELIANCE": ["reliance", "ril", "reliance industries", "reliance retail", "reliance jio"],
+            "TCS": ["tcs", "tata consultancy services", "tata consultancy"],
+            "INFY": ["infy", "infosys"],
+            "HDFCBANK": ["hdfcbank", "hdfc bank", "hdfc"],
+            "ICICIBANK": ["icicibank", "icici bank", "icici"],
+            "AXISBANK": ["axisbank", "axis bank"],
+            "KOTAKBANK": ["kotakbank", "kotak bank", "kotak mahindra bank"],
+            "TATAMOTORS": ["tatamotors", "tata motors"],
+            "TATASTEEL": ["tatasteel", "tata steel"],
+            "TATAPOWER": ["tatapower", "tata power"],
+            "TATACHEM": ["tatachem", "tata chemicals"],
+            "BAJFINANCE": ["bajfinance", "bajaj finance"],
+            "BAJAJFINSV": ["bajajfinsv", "bajaj finserv"],
+            "BAJAJ-AUTO": ["bajaj auto", "bajaj-auto"],
+            "MARUTI": ["maruti", "maruti suzuki"],
+            "M&M": ["m&m", "mahindra & mahindra", "mahindra and mahindra"],
+            "LT": ["l&t", "larsen & toubro", "larsen and toubro"],
+            "BHARTIARTL": ["bharti artl", "bharti airtel", "airtel"],
+            "ITC": ["itc", "itc limited"],
+            "DRREDDY": ["drreddy", "dr reddy", "dr. reddy", "dr reddys", "dr. reddy's"],
+            "SUNPHARMA": ["sunpharma", "sun pharma"],
+            "CIPLA": ["cipla"],
+            "ZOMATO": ["zomato"],
+            "PAYTM": ["paytm", "one97"],
+            "SUZLON": ["suzlon", "suzlon energy"],
+            "YESBANK": ["yesbank", "yes bank"],
+            "IRCTC": ["irctc"],
+            "ADANIENT": ["adanient", "adani enterprises"],
+            "ADANIPORTS": ["adaniports", "adani ports"],
+            "WIPRO": ["wipro"],
+            "HCLTECH": ["hcltech", "hcl technologies", "hcl tech"],
+            "TECHM": ["techm", "tech mahindra"],
+            "ASIANPAINT": ["asianpaint", "asian paints"],
+            "TITAN": ["titan", "titan company"],
+            "ULTRACEMCO": ["ultracemco", "ultratech cement", "ultratech"],
+            "COALINDIA": ["coalindia", "coal india"],
+            "NTPC": ["ntpc"],
+            "POWERGRID": ["powergrid", "power grid"],
+            "ONGC": ["ongc"],
+            "BPCL": ["bpcl", "bharat petroleum"],
+            "IOC": ["ioc", "indian oil"],
+            "SYNCOMF": ["syncomf", "syncom formulations", "syncom"],
+            "TAPARIA": ["taparia", "taparia tools"],
+        }
 
-        # If user passed a general company name query like "Syncom" or "Tata Motors"
-        if not cname and len(q_clean) >= 3 and not q_clean.isupper():
-            rss_queries.append(f"scanx.trade {q_clean.lower()}")
+        # Build strict word-boundary regex patterns for entity matching
+        entity_patterns = []
+        aliases = TICKER_ALIASES.get(ticker_no_ns, [])
+        for a in aliases:
+            entity_patterns.append(_re.compile(r'\b' + _re.escape(a) + r'\b', _re.IGNORECASE))
 
-        # Free-text multi-word: add the distinctive tokens as separate queries
-        # to widen recall (Google News already ranks by the combined terms).
+        # Always include the clean ticker symbol and user query with word boundaries
+        entity_patterns.append(_re.compile(r'\b' + _re.escape(ticker_no_ns) + r'\b', _re.IGNORECASE))
+        if q_clean and q_clean.upper() != ticker_no_ns:
+            entity_patterns.append(_re.compile(r'\b' + _re.escape(q_clean) + r'\b', _re.IGNORECASE))
+
+        # If company name is available and has distinctive tokens
+        GENERIC_STOPWORDS = {
+            "the", "and", "ltd", "limited", "inc", "co", "corp", "corporation",
+            "private", "pvt", "india", "state", "bank", "industries", "services",
+            "enterprises", "holdings", "group", "international", "finance", "commercial",
+            "power", "energy", "oil", "steel", "motors", "technologies", "infra"
+        }
+        if cname:
+            entity_patterns.append(_re.compile(r'\b' + _re.escape(cname) + r'\b', _re.IGNORECASE))
+            words = [w for w in cname.split() if w.lower() not in GENERIC_STOPWORDS and len(w) >= 3]
+            # If the company has a distinctive brand stem (e.g. "Taparia", "Syncom", "Reliance", "Infosys")
+            if words:
+                entity_patterns.append(_re.compile(r'\b' + _re.escape(words[0]) + r'\b', _re.IGNORECASE))
+
         if is_free_text:
             for _t in q_tokens:
-                if _t not in (q_clean.lower(), ticker_no_ns.lower()):
-                    rss_queries.append(f"scanx.trade {_t}")
+                if _t.lower() not in GENERIC_STOPWORDS:
+                    entity_patterns.append(_re.compile(r'\b' + _re.escape(_t) + r'\b', _re.IGNORECASE))
 
-        # Keywords that confirm relevance in article title / excerpt
-        if is_free_text:
-            filter_keywords = list(dict.fromkeys(q_tokens))
-        else:
-            filter_keywords = [q_clean.lower(), ticker_no_ns.lower()]
-            if cname:
-                filter_keywords.append(cname.lower())
-                for w in cname.split():
-                    if len(w) >= 3 and w.lower() not in ("the", "and", "ltd", "inc", "co", "corp"):
-                        filter_keywords.append(w.lower())
+        filter_keywords = []  # superseded by entity_patterns
 
     def _is_nav_or_quote(t: str) -> bool:
         if not t or len(t) < 15:
@@ -4114,10 +4185,16 @@ async def news_search(query: str, limit: int = 20):
                 if "scanx.trade" not in link.lower() and "scanx" not in source_title and "scanx.trade" not in rq:
                     continue
 
-                # If filtering by ticker/company keywords, ensure match
-                if filter_keywords:
-                    full_text = f"{title} {desc}".lower()
-                    if not any(k in full_text for k in filter_keywords):
+                # If filtering by ticker/company keywords or strict entity patterns, ensure match
+                if entity_patterns or filter_keywords:
+                    full_text = f"{title} {desc}"
+                    matched_rel = False
+                    if entity_patterns:
+                        matched_rel = any(p.search(full_text) for p in entity_patterns)
+                    elif filter_keywords:
+                        full_lower = full_text.lower()
+                        matched_rel = any(k in full_lower for k in filter_keywords)
+                    if not matched_rel:
                         continue
 
                 clean_title = _clean_article_title(title, desc, ticker_no_ns)
@@ -4166,9 +4243,15 @@ async def news_search(query: str, limit: int = 20):
                     if not title or len(title) < 15 or link in _seen or _is_nav_or_quote(title):
                         continue
 
-                    if filter_keywords:
-                        full_text = f"{title} {desc}".lower()
-                        if not any(k in full_text for k in filter_keywords):
+                    if entity_patterns or filter_keywords:
+                        full_text = f"{title} {desc}"
+                        matched_rel = False
+                        if entity_patterns:
+                            matched_rel = any(p.search(full_text) for p in entity_patterns)
+                        elif filter_keywords:
+                            full_lower = full_text.lower()
+                            matched_rel = any(k in full_lower for k in filter_keywords)
+                        if not matched_rel:
                             continue
 
                     clean_title = _clean_article_title(title, desc, ticker_no_ns)
@@ -5868,7 +5951,7 @@ def _yf_intraday_df_to_candles(yf_int, clean_ticker: str, interval: str) -> list
     return intraday_candles_5min
 
 
-def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg_semaphore: bool = False):
+def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg_semaphore: bool = False, exchange: str = "NSE"):
     """Fetch intraday data from yfinance. No DB persistence — returned in-memory only.
     Uses centralized YFinanceDownloader for consistent error handling and retry.
     Tiered TTL: 5m market hours, 1h off-hours, 6h weekends.
@@ -5877,7 +5960,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
         return []
     # Validation removed to allow dynamically fetching valid symbols missing from stocks_temp.json
     now_ts = time.time()
-    cache_key = (clean_ticker, interval)
+    cache_key = (clean_ticker, interval, exchange)
     if cache_key in _yf_intraday_cache:
         cached_at, cached_data = _yf_intraday_cache[cache_key]
         if now_ts - cached_at < _get_yf_cache_ttl():
@@ -5896,7 +5979,7 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
 
     from aggregator import snap_to_nse_session, fix_ohlc
 
-    yf_ticker = _yfinance_ticker(clean_ticker)
+    yf_ticker = _yfinance_ticker(clean_ticker, exchange=exchange)
     period_map = {"1m": "7d", "5m": "60d", "15m": "60d", "30m": "60d", "1h": "730d"}
     yf_period = period_map.get(interval, "60d")
 
@@ -6609,7 +6692,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         _merged.sort(key=lambda _c: _c.get("time", 0))
         data = _merged
 
-    return {"data": data, "has_more": has_more}
+    # Signal whether a background backfill is actively in flight for cold tickers
+    bf_status = "idle"
+    if fill_needed:
+        bf_status = "backfilling"
+
+    return {"data": data, "has_more": has_more, "backfill_status": bf_status}
 
 
 @app.get("/api/stock-data/range/paginated")

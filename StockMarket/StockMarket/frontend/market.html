@@ -687,7 +687,8 @@
             
             if (!window._formingCandle || window._formingCandle.time !== snappedSec) {
               var fallbackC = (_chartDataCache && _chartDataCache.length > 0) ? _chartDataCache[_chartDataCache.length - 1].close : p;
-              var openPrice = (d.current > 0) ? d.current : (window._formingCandle ? window._formingCandle.close : fallbackC);
+              var isFirstBucket = (snappedMs === sessionStartMs);
+              var openPrice = (isFirstBucket && d.open != null && d.open > 0) ? d.open : (fallbackC > 0 ? fallbackC : p);
               window._formingCandle = { time: snappedSec, open: openPrice, high: Math.max(openPrice, p), low: Math.min(openPrice, p), close: p };
             } else {
               window._formingCandle.high = Math.max(window._formingCandle.high, p);
@@ -709,7 +710,7 @@
             
             if (!window._formingCandle || window._formingCandle.time !== snappedSec) {
               var fallbackC = (_chartDataCache && _chartDataCache.length > 0) ? _chartDataCache[_chartDataCache.length - 1].close : p;
-              var openPrice = (d.current > 0) ? d.current : (window._formingCandle ? window._formingCandle.close : fallbackC);
+              var openPrice = (d.open != null && d.open > 0) ? d.open : (fallbackC > 0 ? fallbackC : p);
               window._formingCandle = { time: snappedSec, open: openPrice, high: Math.max(openPrice, p), low: Math.min(openPrice, p), close: p };
             } else {
               window._formingCandle.high = Math.max(window._formingCandle.high, p);

@@ -109,7 +109,7 @@ def iter_request_tokens(request: Optional[Request],
     seen = set()
     if credentials is not None and credentials.credentials:
         c = credentials.credentials.strip()
-        if c and c.lower() not in ("null", "undefined") and c not in seen:
+        if c and c.lower() not in ("null", "undefined", "cookie-session", "bearer") and c not in seen:
             seen.add(c)
             yield c
     if request is not None:
