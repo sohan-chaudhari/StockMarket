@@ -7592,7 +7592,7 @@ def _backfill_index_daily(days_back: int = 20) -> int:
                 "WHERE ticker=:t AND timeframe='1D' AND close>0 AND timestamp >= :s"
             ), {"t": tkr, "s": start_dt}).fetchall()}
 
-            rows = {}  # date -> (o, h, l, c, src)
+            rows = {}  # date -> (o, h, l, c, src, vol)
             # 1) AngelOne official daily candles
             try:
                 if not historical_service.is_logged_in:
@@ -7610,7 +7610,8 @@ def _backfill_index_daily(days_back: int = 20) -> int:
                         o = float(ac.get('open', 0) or 0); h = float(ac.get('high', 0) or 0)
                         l = float(ac.get('low', 0) or 0);  c = float(ac.get('close', 0) or 0)
                         if o > 0 and c > 0:
-                            rows[d] = (o, max(o, h, c), min(o, l, c), c, 'ANGELONE')
+                            rows[d] = (o, max(o, h, c), min(o, l, c), c, 'ANGELONE',
+                                       int(ac.get('volume', 0) or 0))
             except Exception as e:
                 print(f"[IndexDailyBackfill] AngelOne {tkr}: {e}")
 
@@ -7620,29 +7621,30 @@ def _backfill_index_daily(days_back: int = 20) -> int:
                     SELECT timestamp::date AS d,
                            (array_agg(open  ORDER BY timestamp ASC))[1]  AS o,
                            max(high) AS h, min(low) AS l,
-                           (array_agg(close ORDER BY timestamp DESC))[1] AS c
+                           (array_agg(close ORDER BY timestamp DESC))[1] AS c,
+                           coalesce(sum(volume), 0) AS v
                     FROM candles
                     WHERE ticker=:t AND timeframe='5m' AND close>0 AND timestamp >= :s
                     GROUP BY 1
                 """), {"t": tkr, "s": start_dt}).fetchall()
-                for d, o, h, l, c in agg:
+                for d, o, h, l, c, v in agg:
                     if d in have or d in rows:
                         continue
                     try:
-                        o = float(o); h = float(h); l = float(l); c = float(c)
+                        o = float(o); h = float(h); l = float(l); c = float(c); v = int(v or 0)
                     except Exception:
                         continue
                     if o > 0 and c > 0:
-                        rows[d] = (o, max(o, h, c), min(o, l, c), c, 'BACKFILL')
+                        rows[d] = (o, max(o, h, c), min(o, l, c), c, 'BACKFILL', v)
 
-            for d, (o, h, l, c, src) in rows.items():
+            for d, (o, h, l, c, src, vol) in rows.items():
                 db.execute(sa_text("""
                     INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
                                          volume, is_completed, data_source, is_backfilled)
-                    VALUES (:t, '1D', :ts, :o, :h, :l, :c, 0, true, :src, false)
+                    VALUES (:t, '1D', :ts, :o, :h, :l, :c, :v, true, :src, false)
                     ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
                 """), {"t": tkr, "ts": datetime(d.year, d.month, d.day),
-                       "o": o, "h": h, "l": l, "c": c, "src": src})
+                       "o": o, "h": h, "l": l, "c": c, "src": src, "v": vol})
                 inserted += 1
             db.commit()
             print(f"[IndexDailyBackfill] {tkr}: +{len(rows)} 1D row(s)")
@@ -7676,7 +7678,7 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
                    (array_agg(c.open  ORDER BY c.timestamp ASC))[1],
                    max(c.high), min(c.low),
                    (array_agg(c.close ORDER BY c.timestamp DESC))[1],
-                   0, true, 'BACKFILL', false
+                   coalesce(sum(c.volume), 0), true, 'BACKFILL', false
             FROM candles c
             WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
               AND c.timestamp >= :s
