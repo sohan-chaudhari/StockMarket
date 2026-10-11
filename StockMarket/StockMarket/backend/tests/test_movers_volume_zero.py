@@ -93,9 +93,14 @@ class OnAngelTickVolumePreservationTests(unittest.TestCase):
             main.angelone_service.latest_ticks[self.TICKER] = {"volume": 42000, "current_price": 101.0}
         self._agg = patch.object(main.candle_aggregator, "process_tick", side_effect=lambda *a, **k: None)
         self._agg.start()
+        # Deterministic regardless of the real weekday: the publish path now also
+        # requires a trading day, so pin it (this class tests volume, not gating).
+        self._td = patch.object(main, "is_trading_day_now", lambda *a, **k: True)
+        self._td.start()
 
     def tearDown(self):
         self._agg.stop()
+        self._td.stop()
         main._angel_tick_buffer.clear()
         main._angel_tick_buffer.update(self.buf_backup)
         with main.angelone_service.latest_ticks_lock:

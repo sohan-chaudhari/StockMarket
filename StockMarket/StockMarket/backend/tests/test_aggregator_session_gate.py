@@ -43,9 +43,15 @@ class OnAngelTickAggregatorGateTests(unittest.TestCase):
             side_effect=lambda *a, **k: self.calls.append((a, k)),
         )
         self._patch.start()
+        # These tests cover the per-tick session gate; pin the trading-day rule
+        # so they never depend on the real weekday (the publish path now also
+        # requires a trading day).
+        self._td_patch = patch.object(main, "is_trading_day_now", lambda *a, **k: True)
+        self._td_patch.start()
 
     def tearDown(self):
         self._patch.stop()
+        self._td_patch.stop()
         with svc.latest_ticks_lock:
             svc.latest_ticks.pop(TICKER, None)
         main._last_aggregator_feed_ts.pop(TICKER, None)
@@ -104,8 +110,11 @@ class GatePreservesOhlcvTests(unittest.TestCase):
         main._last_aggregator_feed_ts.pop(TICKER, None)
         with main._angel_tick_buffer_lock:
             main._angel_tick_buffer.pop(TICKER, None)
+        self._td_patch = patch.object(main, "is_trading_day_now", lambda *a, **k: True)
+        self._td_patch.start()
 
     def tearDown(self):
+        self._td_patch.stop()
         main.candle_aggregator = self._orig_agg
         self.builder._flush_worker_running = False
         if self.builder._flush_thread.is_alive():

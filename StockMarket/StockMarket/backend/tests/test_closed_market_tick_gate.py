@@ -36,6 +36,9 @@ class ClosedMarketTickGateTests(unittest.TestCase):
             # Closed market (the reported situation): only a provably
             # earlier-session timestamp is rejected.
             patch.object(main, "is_market_open_now", lambda *a, **k: False),
+            # ...but on a TRADING day, so the per-tick session gate is what is
+            # under test here (non-trading days are covered separately below).
+            patch.object(main, "is_trading_day_now", lambda *a, **k: True),
         ]
         for p in self._patchers:
             p.start()
@@ -107,6 +110,23 @@ class ClosedMarketTickGateTests(unittest.TestCase):
         # consumers agree about what counts as a live quote.
         self.assertFalse(main._tick_is_current_session({"_exch_ts": time.time() - 86400}, False))
         self.assertTrue(main._tick_is_current_session({"_exch_ts": time.time()}, False))
+
+    def test_non_trading_day_publishes_nothing_even_without_a_timestamp(self):
+        # Weekend/holiday: the broker's replayed packets often carry NO exchange
+        # timestamp, so per-tick staleness cannot be proven. No quote received on
+        # such a day can be a live price, so nothing may be published.
+        with patch.object(main, "is_trading_day_now", lambda *a, **k: False):
+            t = self._tick(time.time())
+            del t["_ts"]
+            main._on_angel_tick(TICKER, t)
+        self.assertNotIn(TICKER, main._angel_tick_buffer)
+        self.proc.assert_not_called()
+
+    def test_trading_day_outside_hours_still_publishes(self):
+        # Pre-open / post-close on a TRADING day must keep flowing so the prices
+        # settle (is_market_open_now() is False there too).
+        main._on_angel_tick(TICKER, self._tick(time.time()))
+        self.assertIn(TICKER, main._angel_tick_buffer)
 
 
 if __name__ == "__main__":

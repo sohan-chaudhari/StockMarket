@@ -2753,6 +2753,20 @@ def is_market_open_now(dt=None):
     market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return market_start <= now <= market_end
 
+
+def is_trading_day_now(dt=None) -> bool:
+    """True when today is an NSE trading day (weekday and not a holiday).
+
+    Used by the websocket publish path: on a non-trading day no quote received
+    today can be a live price, even when the broker's replayed packet carries no
+    exchange timestamp (so per-tick staleness cannot be proven).
+    """
+    today = (dt if dt is not None else database.get_ist_now()).date()
+    if today.weekday() >= 5:
+        return False
+    with _holidays_lock:
+        return today not in NSE_HOLIDAYS
+
 MOVER_TICKERS: list = []  # loaded from DB at startup (premium + indices)
 ALL_WS_TICKERS: list = []  # all NSE stocks subscribed to AngelOne WS for candle building
 
@@ -7306,7 +7320,15 @@ def _on_angel_tick(ticker: str, data: dict):
     # It is still recorded in latest_ticks (the live-price readers apply this
     # same gate themselves) and is already excluded from candle formation, so
     # this closes the last ungated consumer without changing any other contract.
-    session_current = _tick_is_current_session({"_exch_ts": data.get("_ts")}, is_market_open_now())
+    #
+    # On a NON-TRADING day (weekend/holiday) the broker's replayed packets often
+    # carry no exchange timestamp at all, so per-tick staleness cannot be proven
+    # and the predicate above would trust them. No quote received on such a day
+    # can be a live price, so nothing is published at all.
+    session_current = (
+        is_trading_day_now()
+        and _tick_is_current_session({"_exch_ts": data.get("_ts")}, is_market_open_now())
+    )
     try:
         cp = data.get("current_price", 0)
         pc = data.get("prev_close", 0)
@@ -7391,7 +7413,7 @@ def _on_angel_tick(ticker: str, data: dict):
         # helper only rejects a provably-stale timestamp and trusts missing/
         # invalid ones, so legitimate same-session delayed ticks still flow.
         tick_epoch = data.get("_ts", time.time())
-        if cp > 0 and _tick_is_current_session(tick_entry, is_market_open_now()):
+        if cp > 0 and session_current:
             candle_aggregator.process_tick(
                 ticker, cp, actual_tick_volume, tick_ts=tick_epoch,
                 day_open=tick_open, day_high=tick_high, day_low=tick_low,
