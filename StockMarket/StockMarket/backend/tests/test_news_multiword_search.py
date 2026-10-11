@@ -101,7 +101,11 @@ class MultiWordNewsSearchTests(unittest.TestCase):
 
     def test_split_word_article_is_found(self):
         r1, r2 = self._run("groww billionbrains", [self._SPLIT])
-        self.assertEqual(r1, [])  # cold-cache contract unchanged
+        # Cold-cache contract CHANGED (deliberately): the first request for a
+        # query now waits briefly for the in-flight refresh instead of returning
+        # [] immediately. Returning [] was what made overview.html show "no
+        # news" while news.html (warmed by progressive typing) worked.
+        self.assertTrue(r1, "a cold miss must now return the refreshed articles")
         self.assertTrue(r2, "multi-word query must find a split-word article")
         self.assertIn("Groww", r2[0]["title"])
 

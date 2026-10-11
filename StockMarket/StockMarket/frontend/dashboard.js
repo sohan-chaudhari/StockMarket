@@ -344,6 +344,11 @@ function updateNiftyLiveCandle(ticker, price, serverMs) {
 
 /* ── WS event handlers ───────────────────────────────────────────────────── */
 function onPriceUpdate(evt) {
+  // When the market is closed the backend can still relay the broker's last
+  // snapshot, and applying it kept the ticker strip, minichart and Top
+  // Gainers/Losers rows visibly changing after the session ended. Match the
+  // REST fallback's guard below so a closed market renders a static snapshot.
+  if (window._marketOpen === false) return;
   var raw = evt.detail;
   if (!raw) return;
   var prices = raw.prices || raw;

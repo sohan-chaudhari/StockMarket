@@ -3667,6 +3667,7 @@ def _calculate_news_sentiment(text: str) -> dict:
 
 _news_search_cache: dict = {}   # key → {data, ts}
 _NEWS_SEARCH_TTL = 300          # 5-minute cache
+_NEWS_COLD_WAIT_SEC = 8         # bounded wait for a COLD (no-cache) refresh
 _news_inflight_tasks: dict = {} # key → asyncio.Task
 _news_task_lock: asyncio.Lock = asyncio.Lock()
 
@@ -4199,16 +4200,37 @@ async def news_search(query: str, limit: int = 20):
             async with _news_task_lock:
                 _news_inflight_tasks.pop(cache_key, None)
 
+    cold_miss = cached is None
+    task = None
     async with _news_task_lock:
         cached = _news_search_cache.get(cache_key)
         if cached and (time.time() - cached["ts"]) < _NEWS_SEARCH_TTL:
             return cached["data"]
         task = _news_inflight_tasks.get(cache_key)
         if task is None or task.done():
-            _news_inflight_tasks[cache_key] = asyncio.create_task(_refresh_news_search())
+            task = asyncio.create_task(_refresh_news_search())
+            _news_inflight_tasks[cache_key] = task
 
     if cached and cached.get("data"):
         return cached["data"]
+
+    # A COLD miss (no cache entry at all) used to ALWAYS return [] while the
+    # Google News refresh ran in the background. A page that fetches a ticker's
+    # news exactly once (overview.html) then fell back to the synthetic quote
+    # article and looked like it had "no news", while a page that queried
+    # repeatedly (news.html, warmed by progressive typing) worked. Wait briefly
+    # for the in-flight refresh so the FIRST request can return real articles.
+    # Bounded, and shield()ed so a slow provider can neither cancel the shared
+    # task nor hold the request open indefinitely.
+    if cold_miss and task is not None:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=_NEWS_COLD_WAIT_SEC)
+        except Exception:
+            pass
+        cached = _news_search_cache.get(cache_key)
+        if cached and cached.get("data"):
+            return cached["data"]
+
     return []
 
 
@@ -4518,7 +4540,10 @@ async def proxy_news_general(db: Session = Depends(get_db)):
         # ── Fallback to live prices when StockData is empty ──
         if not has_data:
             try:
-                import asyncio
+                # NOTE: do NOT `import asyncio` here. A function-local import made
+                # `asyncio` local for the WHOLE function, so the earlier
+                # `await asyncio.to_thread(fetch_latest)` raised
+                # UnboundLocalError and /api/news/general always failed.
                 # Fallback to only top 5 tickers to save time, with 10s timeout
                 live = await asyncio.wait_for(fetch_batch_live_data(ticker_list[:5]), timeout=10.0)
                 live_items = []
