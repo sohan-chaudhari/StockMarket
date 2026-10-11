@@ -3872,6 +3872,14 @@ async def news_search(query: str, limit: int = 20):
     is_ipo = q_lower in ("ipo", "ipos", "listing", "listings")
     is_economy = q_lower in ("economy", "economics", "economic", "budget", "rbi", "macro")
 
+    # entity_patterns is built in the per-ticker branch below, but the shared
+    # _parse_rss_queries() closure reads it. The market/earnings/ipo/economy
+    # branches skip that construction, so the background refresh for those
+    # queries raised UnboundLocalError ("free variable 'entity_patterns'
+    # referenced before assignment in enclosing scope") and never populated the
+    # cache -- /api/news/search/market served stale data forever.
+    entity_patterns = []
+
     if is_market:
         rss_queries = [
             "scanx.trade/market",
@@ -6510,14 +6518,19 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     raw_clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     clean_ticker = canonical_index_map.get(raw_clean, raw_clean)
 
+    # NOTE: these MUST be initialised OUTSIDE the `is_latest_request` branch
+    # below. A paginated (before=...) request skips that whole block, so
+    # `fill_needed` used to be unbound and the trailing `if fill_needed:` raised
+    # UnboundLocalError -> HTTP 500 on EVERY lazy-load page. That is exactly why
+    # scrolling left on a chart never loaded candles older than the first page.
+    fill_needed = False
+    fill_start = None
+
     if is_latest_request:
         try:
             now = database.get_ist_now()
             market_open = is_market_open_now(now)
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
-
-            fill_needed = False
-            fill_start = None
 
             if not records:
                 # Bounded to this timeframe's own window (not a blanket 60 days):
