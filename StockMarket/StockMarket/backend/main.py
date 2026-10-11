@@ -7298,6 +7298,15 @@ def _on_angel_tick(ticker: str, data: dict):
     global _last_angel_tick_time
     _last_angel_tick_time = time.time()
     _last_angel_ts_per_ticker[ticker] = time.time()
+    # Session gate. A quote whose broker/exchange timestamp proves it belongs to
+    # an EARLIER session must never be BUFFERED: `_angel_tick_buffer` is exactly
+    # what _broadcast_angel_ticks pushes to every websocket client, and
+    # republishing replayed snapshots kept a closed market visibly moving (ticker
+    # strip, minichart, Top Gainers/Losers rows) long after the session ended.
+    # It is still recorded in latest_ticks (the live-price readers apply this
+    # same gate themselves) and is already excluded from candle formation, so
+    # this closes the last ungated consumer without changing any other contract.
+    session_current = _tick_is_current_session({"_exch_ts": data.get("_ts")}, is_market_open_now())
     try:
         cp = data.get("current_price", 0)
         pc = data.get("prev_close", 0)
@@ -7350,7 +7359,8 @@ def _on_angel_tick(ticker: str, data: dict):
             if tick_open is not None and tick_open > 0: tick_entry["open"] = tick_open
             if tick_high is not None and tick_high > 0: tick_entry["high"] = tick_high
             if tick_low is not None and tick_low > 0:  tick_entry["low"]  = tick_low
-            _angel_tick_buffer[ticker] = tick_entry
+            if session_current:
+                _angel_tick_buffer[ticker] = tick_entry
 
             # Mirror to index aliases so both NIFTY and NIFTY50 (and other index pairs) always receive the tick
             INDEX_MIRRORS = {
@@ -7362,7 +7372,7 @@ def _on_angel_tick(ticker: str, data: dict):
                 "MIDCAP": ["MIDCPNIFTY"],
                 "SMALLCAP": ["NIFTYSMLCAP100"],
             }
-            if ticker in INDEX_MIRRORS:
+            if session_current and ticker in INDEX_MIRRORS:
                 for alias in INDEX_MIRRORS[ticker]:
                     _angel_tick_buffer[alias] = dict(tick_entry)
 
