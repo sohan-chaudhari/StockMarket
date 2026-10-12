@@ -1316,17 +1316,12 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         backfill_locks.add(clean_ticker)
         backfill_locks.add(ticker)
 
-    # Closed-market safety guard (SHALLOW fills only):
-    # If the market is closed and recent candles (within the last 5 days)
-    # already exist, skip a background network backfill to prevent false
-    # gap-fill storms during off-market hours. This applies ONLY to a
-    # shallow/tip fill (backfill_start near the tip). A DEEP-history fill --
-    # dispatched by the history-depth check in get_intraday_paginated, with
-    # backfill_start well in the past -- is a genuine missing tier and must not
-    # be silently skipped, or a sparse ticker would never recover its history
-    # while the market is closed. Repeats remain bounded by the cooldown above.
-    shallow_fill = backfill_start >= (now - timedelta(days=5))
-    if not is_market_open_now() and shallow_fill:
+    # Closed-market safety guard (SHALLOW tip-only fills):
+    # Only skip if the market is closed AND the request was a tip fill (backfill_start within 2 hours of market close)
+    # AND recent candles exist. A backfill_start pointing to morning (09:15) or an earlier session is a genuine
+    # session gap and must be fetched even after market hours so historical charts show complete days.
+    shallow_tip_fill = (now - backfill_start).total_seconds() < 7200
+    if not is_market_open_now() and shallow_tip_fill:
         try:
             with database.SessionLocal() as check_db:
                 five_days_ago = now - timedelta(days=5)
@@ -1339,7 +1334,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                     with _backfill_lock:
                         backfill_locks.discard(clean_ticker)
                         backfill_locks.discard(ticker)
-                    print(f"[GapFill] Closed market: {clean_ticker} {interval} already has {recent_count} recent candles, skipping backfill.")
+                    print(f"[GapFill] Closed market: {clean_ticker} {interval} already has {recent_count} recent candles, skipping shallow tip backfill.")
                     return
         except Exception as e:
             print(f"[GapFill] Error checking recent candles for {clean_ticker}: {e}")
@@ -6538,25 +6533,60 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 fill_start = _intraday_cutoff(interval)
                 fill_needed = True
                 print(f"[GapFill] Sync fill for {clean_ticker} {interval}: no data in DB")
-            elif market_open:
-                # 1. Check tip gap: only meaningful when market is OPEN
-                tip_gap_minutes = (now - records[0].timestamp).total_seconds() / 60
-                has_tip_gap = tip_gap_minutes > (bucket_min * 2)
+            else:
+                # 1. Tip gap: if market is open and newest candle is stale
+                if market_open:
+                    tip_gap_minutes = (now - records[0].timestamp).total_seconds() / 60
+                    if tip_gap_minutes > (bucket_min * 2):
+                        fill_start = records[0].timestamp
+                        fill_needed = True
 
-                # 2. Check internal gaps in the fetched window on the SAME DAY
-                oldest_gap_start = None
-                for i in range(len(records) - 1):
+                # 2. Today's morning session opening gap:
+                # If trading today, verify that today's earliest candle starts near market open (09:15)
+                today_date = now.date()
+                today_candles = [r for r in records if r.timestamp.date() == today_date]
+                if today_candles:
+                    earliest_today = today_candles[-1].timestamp
+                    session_open_dt = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=9, minutes=15)
+                    # If earliest candle is > 2 buckets past session open, morning session is missing
+                    if earliest_today > (session_open_dt + timedelta(minutes=bucket_min * 2)):
+                        fill_start = session_open_dt if fill_start is None else min(fill_start, session_open_dt)
+                        fill_needed = True
+                        print(f"[GapFill] Morning session gap detected for {clean_ticker} {interval}: earliest={earliest_today}, filling from {session_open_dt}")
+                elif market_open and is_trading_day(today_date, NSE_HOLIDAYS):
+                    # Market is currently open today, but zero candles recorded for today yet
+                    session_open_dt = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=9, minutes=15)
+                    fill_start = session_open_dt if fill_start is None else min(fill_start, session_open_dt)
+                    fill_needed = True
+                    print(f"[GapFill] Entire today session missing for {clean_ticker} {interval}: filling from {session_open_dt}")
+
+                # 3. Check internal gaps in the fetched window (same day and recent trading session transitions)
+                cutoff_5d = now - timedelta(days=5)
+                for i in range(min(len(records) - 1, 300)):
                     t_new = records[i].timestamp
                     t_old = records[i+1].timestamp
-                    internal_gap = (t_new - t_old).total_seconds() / 60
+                    # Stop checking older history beyond 5 days to avoid false alarms on historical low-liquidity days
+                    if t_old < cutoff_5d:
+                        break
                     same_day = t_new.date() == t_old.date()
-                    if same_day and (internal_gap > bucket_min * 2):
-                        oldest_gap_start = t_old
+                    if same_day:
+                        internal_gap = (t_new - t_old).total_seconds() / 60
+                        if internal_gap > bucket_min * 2:
+                            fill_start = t_old if fill_start is None else min(fill_start, t_old)
+                            fill_needed = True
+                    else:
+                        # Recent day transition: only flag if a recent session on an active trading day
+                        # ended severely early (before 14:00) or started past 11:00, indicating an incomplete session
+                        if is_trading_day(t_old.date(), NSE_HOLIDAYS) and t_old.time() < datetime.strptime("14:00", "%H:%M").time():
+                            fill_start = t_old if fill_start is None else min(fill_start, t_old)
+                            fill_needed = True
+                        if is_trading_day(t_new.date(), NSE_HOLIDAYS) and t_new.time() > datetime.strptime("11:00", "%H:%M").time():
+                            day_open_dt = datetime.combine(t_new.date(), datetime.min.time()) + timedelta(hours=9, minutes=15)
+                            fill_start = day_open_dt if fill_start is None else min(fill_start, day_open_dt)
+                            fill_needed = True
 
-                if has_tip_gap or oldest_gap_start:
-                    fill_start = oldest_gap_start if oldest_gap_start else records[0].timestamp
-                    fill_needed = True
-                    print(f"[GapFill] Sync fill for {clean_ticker} {interval}: gap from {fill_start}")
+                if fill_needed:
+                    print(f"[GapFill] Sync fill needed for {clean_ticker} {interval}: gap from {fill_start}")
 
             # History-depth check (independent of market hours): the main query
             # above is capped at `limit`, so its last element is NOT the true
@@ -6589,7 +6619,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     db.close()
                     perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
                     q_fresh = q_base
-                    if after is not None:
+                    if after is not None and isinstance(after, (int, float)):
                         q_fresh = q_fresh.filter(model.timestamp > _epoch_to_ist_dt(after))
                     records = q_fresh.order_by(model.timestamp.desc()).limit(limit + 1).all()
                     print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")

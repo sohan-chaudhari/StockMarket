@@ -3093,6 +3093,59 @@ async function initBigChart() {
 
       _renderChartData(data, range);
       if (data.length > 0) window._chartHasRendered = true;
+
+      // Seamless background update: if backend reported backfilling, re-poll bounded in background
+      // to seamlessly merge newly recovered historical bars without resetting zoom, pan, or veiling the chart
+      if (backfillStatus === 'backfilling' && isIntradayRange && !_retryAttempt) {
+        var _bgPollCount = 0;
+        var _bgInitialCount = data.length;
+        var _bgInitialEarliest = (data.length > 0) ? data[0].time : null;
+        var _bgInitialLatest = (data.length > 0) ? data[data.length - 1].time : null;
+
+        function _pollBackgroundFill() {
+          _bgPollCount++;
+          setTimeout(function() {
+            if (myLoadId !== _loadId || window._pendingRange) return;
+            fetch(url, { signal: signal })
+              .then(function(r) { return r.ok ? r.json() : null; })
+              .then(function(refreshed) {
+                if (!refreshed || myLoadId !== _loadId) return;
+                var refData = (refreshed && refreshed.data) ? refreshed.data : refreshed;
+                var refStatus = (refreshed && refreshed.backfill_status) ? refreshed.backfill_status : null;
+                if (Array.isArray(refData)) {
+                  var newEarliest = (refData.length > 0) ? refData[0].time : null;
+                  var newLatest = (refData.length > 0) ? refData[refData.length - 1].time : null;
+                  var hasNewBars = (refData.length !== _bgInitialCount) || (newEarliest !== _bgInitialEarliest) || (newLatest !== _bgInitialLatest);
+                  
+                  if (hasNewBars) {
+                    var prevLogical = (bigChart && bigChart.timeScale) ? bigChart.timeScale().getVisibleLogicalRange() : null;
+                    var addedBars = refData.length - _bgInitialCount;
+                    _renderChartData(refData, range);
+                    if (prevLogical && addedBars > 0 && bigChart && bigChart.timeScale) {
+                      bigChart.timeScale().setVisibleLogicalRange({
+                        from: prevLogical.from + addedBars,
+                        to: prevLogical.to + addedBars
+                      });
+                    }
+                    _bgInitialCount = refData.length;
+                    _bgInitialEarliest = newEarliest;
+                    _bgInitialLatest = newLatest;
+                    // Re-apply live forming candle on top of updated history so current price is never lost
+                    if (window.lastLivePrice) {
+                      processBigChartPrice({ current: window.lastLivePrice }, ticker);
+                    }
+                  }
+                }
+                // Bounded second poll (max 2 attempts) if still backfilling and hasn't settled
+                if (refStatus === 'backfilling' && _bgPollCount < 2) {
+                  _pollBackgroundFill();
+                }
+              })
+              .catch(function() {});
+          }, 3500);
+        }
+        _pollBackgroundFill();
+      }
       // Write to caches on successful API fetch (skip for intraday to avoid stale gaps)
       try {
         if (!isIntradayRange && !isWeeklyMonthly && window._recentRanges) window._recentRanges.set(memKey, data);
