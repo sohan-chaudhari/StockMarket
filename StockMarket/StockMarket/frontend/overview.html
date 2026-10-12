@@ -706,9 +706,13 @@
 
       async function checkWatchlistState() {
           var token = _token();
+          if (!token) {
+              inWatchlist = false;
+              updateWatchlistButtonUI();
+              return;
+          }
           var localList = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
-          var headers = {};
-          if (token) headers['Authorization'] = 'Bearer ' + token;
+          var headers = { 'Authorization': 'Bearer ' + token };
           
           try {
               var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
@@ -719,7 +723,7 @@
                   var tList = list.map(function(i){ return i.ticker || i; });
                   _syncWatchlistCache(tList);
               } else {
-                  inWatchlist = localList.indexOf(ticker) >= 0;
+                  inWatchlist = false;
               }
           } catch(e) {
               inWatchlist = localList.indexOf(ticker) >= 0;
@@ -744,6 +748,14 @@
       
       window.toggleWatchlist = async function() {
           var token = _token();
+          if (!token) {
+              showToast('Please login to manage your watchlist', 'warn');
+              try {
+                  sessionStorage.setItem('auth_return_url', window.location.href);
+                  setTimeout(function() { window.location.href = 'login.html'; }, 1000);
+              } catch(e) {}
+              return;
+          }
           var localList = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
           
           if (inWatchlist) {

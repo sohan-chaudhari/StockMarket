@@ -1277,6 +1277,7 @@ function _resolveBarEpochSec(time, range) {
   
   return _num;
 }
+window._resolveBarEpochSec = _resolveBarEpochSec;
 
 function formatIST(time, isTimeOnly) {
     if (time == null) return '';
@@ -3993,37 +3994,65 @@ async function fetchWatchlist() {
   var tickers = DEFAULT_WATCHLIST.slice();
   var wlItems = [];
 
-  var _fetchedFromApi = false;
-  try {
-    var _wlToken = '';
-    try { _wlToken = sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e) {}
-    var headers = {};
-    if (_wlToken && _wlToken !== 'null' && _wlToken !== 'undefined' && _wlToken !== 'cookie-session' && _wlToken.trim() !== '') {
-      headers['Authorization'] = 'Bearer ' + _wlToken.trim();
-    }
-    var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
-    if (res.ok) {
-      var data = await res.json();
-      if (data && Array.isArray(data.watchlist) && data.watchlist.length > 0) {
-        wlItems = data.watchlist;
-        tickers = wlItems.map(function(i) { return i.ticker || i; }).slice(0, 5);
-        // Keep localStorage cache in sync so dashboard works even if API fails
-        try { localStorage.setItem('_wl_cache', JSON.stringify(tickers)); } catch(e) {}
-        _fetchedFromApi = true;
-      }
-    }
-  } catch(e) {
-    // Not logged in or network error — try cache below
+  var _hasAuthToken = false;
+  var _wlToken = '';
+  try { _wlToken = sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e) {}
+  if (_wlToken && _wlToken !== 'null' && _wlToken !== 'undefined' && _wlToken !== 'cookie-session' && _wlToken.trim() !== '') {
+    _hasAuthToken = true;
   }
 
-  // Fallback: localStorage cache from watchlist page when API fails
-  if (!_fetchedFromApi) try {
-    var cached = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
-    if (cached.length > 0) {
-      tickers = cached.slice(0, 5);
-      wlItems = tickers.map(function(t) { return { ticker: t }; });
+  if (!_hasAuthToken) {
+    // Strictly unauthenticated guest session: enforce default market leaders and wipe stale private watchlist cache
+    tickers = DEFAULT_WATCHLIST.slice();
+    wlItems = tickers.map(function(t) { return { ticker: t }; });
+    try {
+      localStorage.removeItem('_wl_cache');
+      localStorage.removeItem('_wl_updated');
+    } catch(e) {}
+  } else {
+    var _fetchedFromApi = false;
+    try {
+      var headers = { 'Authorization': 'Bearer ' + _wlToken.trim() };
+      var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
+      if (res.ok) {
+        var data = await res.json();
+        if (data && Array.isArray(data.watchlist)) {
+          wlItems = data.watchlist;
+          if (wlItems.length > 0) {
+            tickers = wlItems.map(function(i) { return i.ticker || i; }).slice(0, 5);
+            try { localStorage.setItem('_wl_cache', JSON.stringify(tickers)); } catch(e) {}
+          } else {
+            tickers = DEFAULT_WATCHLIST.slice();
+            try { localStorage.setItem('_wl_cache', JSON.stringify([])); } catch(e) {}
+          }
+          _fetchedFromApi = true;
+        }
+      } else if (res.status === 401 || res.status === 403) {
+        // Expired/invalid session: treat as logged out and reset to default
+        tickers = DEFAULT_WATCHLIST.slice();
+        wlItems = tickers.map(function(t) { return { ticker: t }; });
+        try {
+          localStorage.removeItem('_wl_cache');
+          localStorage.removeItem('_wl_updated');
+          localStorage.removeItem('token');
+          sessionStorage.removeItem('token');
+        } catch(e) {}
+        _fetchedFromApi = true;
+      }
+    } catch(e) {
+      // Offline/network glitch while authenticated: fallback to local cache
     }
-  } catch(e) {}
+
+    if (!_fetchedFromApi) {
+      try {
+        var cached = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
+        if (cached.length > 0) {
+          tickers = cached.slice(0, 5);
+          wlItems = tickers.map(function(t) { return { ticker: t }; });
+        }
+      } catch(e) {}
+    }
+  }
 
   // Look up logos from ALL_STOCKS for items that don't have one yet
   if (typeof ALL_STOCKS !== 'undefined') {

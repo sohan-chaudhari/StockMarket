@@ -562,6 +562,8 @@
     try {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
+      localStorage.removeItem('_wl_cache');
+      localStorage.removeItem('_wl_updated');
     } catch(e) {}
     window.location.href = 'home.html';
   };

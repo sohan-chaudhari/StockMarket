@@ -1871,6 +1871,35 @@ try {
             }
             if (this.currentDrawing && typeof this.currentDrawing.drawAxisBadges === 'function') {
                 this.currentDrawing.drawAxisBadges(this.ctx, chartState, true, false);
+            } else if (this.activeTool && this.activeTool.type !== 'cursor' && this.activeTool.key !== 'eraser' && !this.isDrawing && this.lastMousePos) {
+                // When drawing tool is active and hovering before click 1: display live date on X-axis and price on Y-axis
+                var cursorPixel = this.lastMousePos;
+                var cursorTimeText = BaseDrawing.prototype._formatTime(cursorPixel.x, chartState);
+                if (!cursorTimeText && chartState && typeof chartState.pixelToCoord === 'function') {
+                    var cc = chartState.pixelToCoord(cursorPixel.x, cursorPixel.y);
+                    if (cc) cursorTimeText = BaseDrawing.prototype._formatTime(cc.time != null ? cc.time : cc.logical, chartState);
+                }
+                if (cursorTimeText) {
+                    var badgeColor = (this.activeTool && this.activeTool.color) || '#2962ff';
+                    BaseDrawing.prototype._drawAxisLabel.call(
+                        {
+                            style: { color: badgeColor },
+                            getPriceLabel: function() {
+                                if (chartState && typeof chartState.pixelToCoord === 'function') {
+                                    var cc2 = chartState.pixelToCoord(cursorPixel.x, cursorPixel.y);
+                                    return (cc2 && cc2.price != null && !isNaN(cc2.price)) ? cc2.price.toFixed(2) : null;
+                                }
+                                return null;
+                            },
+                            getTimeLabel: function() { return cursorTimeText; }
+                        },
+                        this.ctx,
+                        cursorPixel,
+                        0,
+                        chartState,
+                        dims
+                    );
+                }
             }
         }
 
@@ -2833,13 +2862,27 @@ try {
         }
 
         getTimeLabel(idx, pixel, chartState) {
-            if (this.coords && this.coords[idx] && this.coords[idx].logical != null) {
-                return this._formatTime(this.coords[idx].logical, chartState);
+            if (this.coords && this.coords[idx]) {
+                if (this.coords[idx].time != null) {
+                    var ft = this._formatTime(this.coords[idx].time, chartState);
+                    if (ft) return ft;
+                }
+                if (this.coords[idx].logical != null) {
+                    var fl = this._formatTime(this.coords[idx].logical, chartState);
+                    if (fl) return fl;
+                }
             }
             if (pixel && chartState && typeof chartState.pixelToCoord === 'function') {
                 var c = chartState.pixelToCoord(pixel.x, pixel.y);
-                if (c && c.logical != null) {
-                    return this._formatTime(c.logical, chartState);
+                if (c) {
+                    if (c.time != null) {
+                        var fct = this._formatTime(c.time, chartState);
+                        if (fct) return fct;
+                    }
+                    if (c.logical != null) {
+                        var fcl = this._formatTime(c.logical, chartState);
+                        if (fcl) return fcl;
+                    }
                 }
             }
             if (pixel && chartState && typeof chartState.xToLogical === 'function') {
@@ -2912,17 +2955,86 @@ try {
         }
 
         // Axis coordinate readout (shared — every line-type tool uses this)
-        _formatTime(logical, chartState) {
-            if (logical == null) return null;
-            if (window.coordinateMapper) {
-                var time = window.coordinateMapper._logicalToTime(logical);
-                if (time != null && typeof time === 'number' && isFinite(time) && time > 946684800) {
-                    var d = new Date(time * 1000);
-                    var month = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()];
-                    return d.getUTCDate() + ' ' + month + ' ' + d.getUTCFullYear();
+        _formatTime(logicalOrTime, chartState) {
+            if (logicalOrTime == null) return null;
+            var epochSec = null;
+
+            if (typeof logicalOrTime === 'object' && logicalOrTime !== null) {
+                if (logicalOrTime.time != null) logicalOrTime = logicalOrTime.time;
+                else if (logicalOrTime.logical != null) logicalOrTime = logicalOrTime.logical;
+            }
+
+            if (typeof logicalOrTime === 'string') {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(logicalOrTime)) {
+                    var p = Date.parse(logicalOrTime + 'T00:00:00Z');
+                    if (!isNaN(p)) epochSec = p / 1000;
+                } else {
+                    var p2 = Date.parse(logicalOrTime);
+                    if (!isNaN(p2)) epochSec = p2 / 1000;
+                }
+            } else if (typeof logicalOrTime === 'number' && isFinite(logicalOrTime)) {
+                if (logicalOrTime > 1e11) {
+                    epochSec = logicalOrTime / 1000;
+                } else if (logicalOrTime > 946684800) {
+                    epochSec = logicalOrTime;
+                } else {
+                    var idx = Math.round(logicalOrTime);
+                    if (window._intradayBarTimes && window._intradayBarTimes.length > 0) {
+                        if (idx >= 0 && idx < window._intradayBarTimes.length) {
+                            epochSec = window._intradayBarTimes[idx];
+                        } else if (window._intradayBarSecs && Math.round(logicalOrTime / window._intradayBarSecs) >= 0 && Math.round(logicalOrTime / window._intradayBarSecs) < window._intradayBarTimes.length) {
+                            epochSec = window._intradayBarTimes[Math.round(logicalOrTime / window._intradayBarSecs)];
+                        }
+                    }
+                    if (epochSec == null && typeof window._resolveBarEpochSec === 'function') {
+                        epochSec = window._resolveBarEpochSec(logicalOrTime);
+                    }
+                    if (epochSec == null && window.coordinateMapper && typeof window.coordinateMapper.logicalToTime === 'function') {
+                        var cmTime = window.coordinateMapper.logicalToTime(logicalOrTime);
+                        if (cmTime != null) {
+                            if (typeof window._resolveBarEpochSec === 'function') {
+                                epochSec = window._resolveBarEpochSec(cmTime);
+                            } else if (cmTime > 946684800) {
+                                epochSec = cmTime;
+                            }
+                        }
+                    }
+                    if (epochSec == null && window._chartCandles && Array.isArray(window._chartCandles)) {
+                        var bar = window._chartCandles[idx];
+                        if (bar && bar.time != null) {
+                            if (typeof window._resolveBarEpochSec === 'function') {
+                                epochSec = window._resolveBarEpochSec(bar.time);
+                            } else if (typeof bar.time === 'number' && bar.time > 946684800) {
+                                epochSec = bar.time;
+                            } else if (typeof bar.time === 'string') {
+                                var p3 = Date.parse(bar.time + 'T00:00:00Z');
+                                if (!isNaN(p3)) epochSec = p3 / 1000;
+                            }
+                        }
+                    }
                 }
             }
-            return null;
+
+            if (epochSec == null || isNaN(epochSec) || epochSec <= 0) return null;
+
+            var IST_MS = 5.5 * 3600 * 1000;
+            var d = new Date(epochSec * 1000 + IST_MS);
+            if (isNaN(d.getTime())) return null;
+
+            var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            var day = String(d.getUTCDate()).padStart(2, '0');
+            var mon = months[d.getUTCMonth()];
+            var yr = d.getUTCFullYear();
+            var hours = String(d.getUTCHours()).padStart(2, '0');
+            var mins = String(d.getUTCMinutes()).padStart(2, '0');
+
+            var range = (window.activeRange || window._loadedRange || '').toLowerCase();
+            var isIntraday = ['1m','3m','5m','10m','15m','30m','1h','2h','4h'].indexOf(range) !== -1 || (hours !== '00' || mins !== '00');
+
+            if (isIntraday) {
+                return day + ' ' + mon + " '" + String(yr).slice(-2) + '  ' + hours + ':' + mins;
+            }
+            return day + ' ' + mon + ' ' + yr;
         }
 
         // Default: all anchor points belong to a single highlight span. Tools
@@ -3020,7 +3132,8 @@ try {
                 var pad2 = 6, bh2 = Math.min(20, Math.max(16, timeScaleHeight - 4));
                 var bw2 = tw2 + pad2 * 2;
                 var bx2 = Math.max(2, Math.min(plotWidth - bw2 - 2, pixel.x - bw2 / 2));
-                var by2 = plotHeight + 2;
+                var timeScaleTop = dims.totalHeight - timeScaleHeight;
+                var by2 = Math.round(timeScaleTop + Math.max(2, (timeScaleHeight - bh2) / 2));
 
                 ctx.fillStyle = color;
                 ctx.beginPath();
@@ -12882,8 +12995,8 @@ try {
             if (x === null || x === undefined || isNaN(x) || !text) return;
             var dims = this._getPlotDimensions(ctx.canvas);
             var plotWidth = dims.plotWidth;
-            var plotHeight = dims.plotHeight;
             var timeScaleHeight = dims.timeScaleHeight;
+            var timeScaleTop = dims.totalHeight - timeScaleHeight;
 
             ctx.save();
             ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -12891,7 +13004,7 @@ try {
             var pad = 6, bh = Math.min(20, Math.max(16, timeScaleHeight - 4));
             var bw = tw + pad * 2;
             var bx = Math.max(2, Math.min(plotWidth - bw - 2, x - bw / 2));
-            var by = plotHeight + 2;
+            var by = Math.round(timeScaleTop + Math.max(2, (timeScaleHeight - bh) / 2));
 
             ctx.fillStyle = bgColor || '#2962ff';
             ctx.beginPath();
@@ -12912,72 +13025,7 @@ try {
         _formatTimeBadge(pixelX, entryY, chartState) {
             if (!chartState) return null;
             var coord = chartState.pixelToCoord ? chartState.pixelToCoord(pixelX, entryY) : null;
-            var timeSec = null;
-            var logical = coord ? coord.logical : null;
-
-            if (logical === null || logical === undefined || isNaN(logical)) {
-                if (chartState.xToLogical) logical = chartState.xToLogical(pixelX);
-            }
-
-            var candles = window._chartCandles || window.candleData || [];
-            if (candles.length > 0 && logical !== null && logical !== undefined && !isNaN(logical)) {
-                var idx = Math.round(logical);
-                if (idx >= 0 && idx < candles.length && candles[idx]) {
-                    var ct = candles[idx].time;
-                    if (typeof ct === 'number') timeSec = ct > 1e11 ? ct / 1000 : ct;
-                    else if (typeof ct === 'string') {
-                        var p = Date.parse(ct);
-                        if (!isNaN(p)) timeSec = p / 1000;
-                    }
-                } else if (idx >= candles.length && candles.length > 1) {
-                    var lastC = candles[candles.length - 1];
-                    var prevC = candles[candles.length - 2];
-                    var tLast = typeof lastC.time === 'number' ? (lastC.time > 1e11 ? lastC.time / 1000 : lastC.time) : (Date.parse(lastC.time) / 1000);
-                    var tPrev = typeof prevC.time === 'number' ? (prevC.time > 1e11 ? prevC.time / 1000 : prevC.time) : (Date.parse(prevC.time) / 1000);
-                    var interval = (!isNaN(tLast) && !isNaN(tPrev) && tLast > tPrev) ? (tLast - tPrev) : 300;
-                    timeSec = tLast + (idx - (candles.length - 1)) * interval;
-                } else if (idx < 0 && candles.length > 1) {
-                    var firstC = candles[0];
-                    var secondC = candles[1];
-                    var tFirst = typeof firstC.time === 'number' ? (firstC.time > 1e11 ? firstC.time / 1000 : firstC.time) : (Date.parse(firstC.time) / 1000);
-                    var tSecond = typeof secondC.time === 'number' ? (secondC.time > 1e11 ? secondC.time / 1000 : secondC.time) : (Date.parse(secondC.time) / 1000);
-                    var interval = (!isNaN(tSecond) && !isNaN(tFirst) && tSecond > tFirst) ? (tSecond - tFirst) : 300;
-                    timeSec = tFirst - (0 - idx) * interval;
-                }
-            }
-
-            if (timeSec === null && coord && coord.time !== undefined && coord.time !== null) {
-                if (typeof coord.time === 'number') {
-                    timeSec = coord.time > 1e11 ? coord.time / 1000 : coord.time;
-                } else if (typeof coord.time === 'string') {
-                    var parsed = Date.parse(coord.time);
-                    if (!isNaN(parsed)) timeSec = parsed / 1000;
-                }
-            }
-
-            if (timeSec === null && logical !== null && logical !== undefined && window.coordinateMapper && typeof window.coordinateMapper._logicalToTime === 'function') {
-                var cmTime = window.coordinateMapper._logicalToTime(logical);
-                if (cmTime != null) {
-                    timeSec = typeof cmTime === 'number' ? (cmTime > 1e11 ? cmTime / 1000 : cmTime) : (Date.parse(cmTime) / 1000);
-                }
-            }
-
-            if (timeSec === null || isNaN(timeSec) || timeSec <= 0) return null;
-
-            var d = new Date(timeSec * 1000);
-            var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            var dayName = days[d.getDay()];
-            var dayNum = String(d.getDate()).padStart(2, '0');
-            var mon = months[d.getMonth()];
-            var yr = "'" + String(d.getFullYear()).slice(-2);
-            var hrs = String(d.getHours()).padStart(2, '0');
-            var mins = String(d.getMinutes()).padStart(2, '0');
-
-            if (hrs === '00' && mins === '00' && (window.activeRange === '1D' || window.activeRange === '1W' || window.activeRange === '1M')) {
-                return `${dayName} ${dayNum} ${mon} ${yr}`;
-            }
-            return `${dayName} ${dayNum} ${mon} ${yr}  ${hrs}:${mins}`;
+            return BaseDrawing.prototype._formatTime((coord && coord.time != null) ? coord.time : ((coord && coord.logical != null) ? coord.logical : pixelX), chartState);
         }
 
         _drawTooltipWithPointer(ctx, x, y, text, bgColor, pointerDirection) {
@@ -13670,8 +13718,8 @@ try {
             if (x === null || x === undefined || isNaN(x) || !text) return;
             var dims = this._getPlotDimensions(ctx.canvas);
             var plotWidth = dims.plotWidth;
-            var plotHeight = dims.plotHeight;
             var timeScaleHeight = dims.timeScaleHeight;
+            var timeScaleTop = dims.totalHeight - timeScaleHeight;
 
             ctx.save();
             ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -13679,7 +13727,7 @@ try {
             var pad = 6, bh = Math.min(20, Math.max(16, timeScaleHeight - 4));
             var bw = tw + pad * 2;
             var bx = Math.max(2, Math.min(plotWidth - bw - 2, x - bw / 2));
-            var by = plotHeight + 2;
+            var by = Math.round(timeScaleTop + Math.max(2, (timeScaleHeight - bh) / 2));
 
             ctx.fillStyle = bgColor || '#2962ff';
             ctx.beginPath();
@@ -13700,72 +13748,7 @@ try {
         _formatTimeBadge(pixelX, entryY, chartState) {
             if (!chartState) return null;
             var coord = chartState.pixelToCoord ? chartState.pixelToCoord(pixelX, entryY) : null;
-            var timeSec = null;
-            var logical = coord ? coord.logical : null;
-
-            if (logical === null || logical === undefined || isNaN(logical)) {
-                if (chartState.xToLogical) logical = chartState.xToLogical(pixelX);
-            }
-
-            var candles = window._chartCandles || window.candleData || [];
-            if (candles.length > 0 && logical !== null && logical !== undefined && !isNaN(logical)) {
-                var idx = Math.round(logical);
-                if (idx >= 0 && idx < candles.length && candles[idx]) {
-                    var ct = candles[idx].time;
-                    if (typeof ct === 'number') timeSec = ct > 1e11 ? ct / 1000 : ct;
-                    else if (typeof ct === 'string') {
-                        var p = Date.parse(ct);
-                        if (!isNaN(p)) timeSec = p / 1000;
-                    }
-                } else if (idx >= candles.length && candles.length > 1) {
-                    var lastC = candles[candles.length - 1];
-                    var prevC = candles[candles.length - 2];
-                    var tLast = typeof lastC.time === 'number' ? (lastC.time > 1e11 ? lastC.time / 1000 : lastC.time) : (Date.parse(lastC.time) / 1000);
-                    var tPrev = typeof prevC.time === 'number' ? (prevC.time > 1e11 ? prevC.time / 1000 : prevC.time) : (Date.parse(prevC.time) / 1000);
-                    var interval = (!isNaN(tLast) && !isNaN(tPrev) && tLast > tPrev) ? (tLast - tPrev) : 300;
-                    timeSec = tLast + (idx - (candles.length - 1)) * interval;
-                } else if (idx < 0 && candles.length > 1) {
-                    var firstC = candles[0];
-                    var secondC = candles[1];
-                    var tFirst = typeof firstC.time === 'number' ? (firstC.time > 1e11 ? firstC.time / 1000 : firstC.time) : (Date.parse(firstC.time) / 1000);
-                    var tSecond = typeof secondC.time === 'number' ? (secondC.time > 1e11 ? secondC.time / 1000 : secondC.time) : (Date.parse(secondC.time) / 1000);
-                    var interval = (!isNaN(tSecond) && !isNaN(tFirst) && tSecond > tFirst) ? (tSecond - tFirst) : 300;
-                    timeSec = tFirst - (0 - idx) * interval;
-                }
-            }
-
-            if (timeSec === null && coord && coord.time !== undefined && coord.time !== null) {
-                if (typeof coord.time === 'number') {
-                    timeSec = coord.time > 1e11 ? coord.time / 1000 : coord.time;
-                } else if (typeof coord.time === 'string') {
-                    var parsed = Date.parse(coord.time);
-                    if (!isNaN(parsed)) timeSec = parsed / 1000;
-                }
-            }
-
-            if (timeSec === null && logical !== null && logical !== undefined && window.coordinateMapper && typeof window.coordinateMapper._logicalToTime === 'function') {
-                var cmTime = window.coordinateMapper._logicalToTime(logical);
-                if (cmTime != null) {
-                    timeSec = typeof cmTime === 'number' ? (cmTime > 1e11 ? cmTime / 1000 : cmTime) : (Date.parse(cmTime) / 1000);
-                }
-            }
-
-            if (timeSec === null || isNaN(timeSec) || timeSec <= 0) return null;
-
-            var d = new Date(timeSec * 1000);
-            var days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            var dayName = days[d.getDay()];
-            var dayNum = String(d.getDate()).padStart(2, '0');
-            var mon = months[d.getMonth()];
-            var yr = "'" + String(d.getFullYear()).slice(-2);
-            var hrs = String(d.getHours()).padStart(2, '0');
-            var mins = String(d.getMinutes()).padStart(2, '0');
-
-            if (hrs === '00' && mins === '00' && (window.activeRange === '1D' || window.activeRange === '1W' || window.activeRange === '1M')) {
-                return `${dayName} ${dayNum} ${mon} ${yr}`;
-            }
-            return `${dayName} ${dayNum} ${mon} ${yr}  ${hrs}:${mins}`;
+            return BaseDrawing.prototype._formatTime((coord && coord.time != null) ? coord.time : ((coord && coord.logical != null) ? coord.logical : pixelX), chartState);
         }
 
         _drawTooltipWithPointer(ctx, x, y, text, bgColor, pointerDirection) {
