@@ -673,10 +673,15 @@
       window.addEventListener('stocksLoaded', _applyExchangeBadge); // re-run once stocks.js finishes
 
       // ---- Watchlist State Management ----
-      function _token() { return sessionStorage.getItem('token'); }
+      function _token() {
+          try {
+              var t = sessionStorage.getItem('token') || localStorage.getItem('token') || '';
+              return (t && t !== 'null' && t !== 'undefined' && t !== 'cookie-session') ? t.trim() : '';
+          } catch(e) { return ''; }
+      }
       async function _fetchCsrf() {
           try {
-              var r = await fetch('/api/csrf-token');
+              var r = await fetch('/api/csrf-token', { credentials: 'same-origin' });
               var d = await r.json();
               return d.csrf_token || '';
           } catch(e) { return ''; }
@@ -691,25 +696,32 @@
       }
       
       var inWatchlist = false;
+      function _syncWatchlistCache(newTickers) {
+          try {
+              localStorage.setItem('_wl_cache', JSON.stringify(newTickers));
+              localStorage.setItem('_wl_updated', Date.now().toString());
+              window.dispatchEvent(new CustomEvent('watchlist_updated', { detail: { tickers: newTickers } }));
+          } catch(e) {}
+      }
+
       async function checkWatchlistState() {
           var token = _token();
           var localList = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
+          var headers = {};
+          if (token) headers['Authorization'] = 'Bearer ' + token;
           
-          if (token) {
-              try {
-                  var res = await fetch('/api/watchlist', { headers: { 'Authorization': 'Bearer ' + token } });
-                  if (res.ok) {
-                      var data = await res.json();
-                      var list = data.watchlist || [];
-                      inWatchlist = list.some(function(i){ return i.ticker === ticker; });
-                      try { localStorage.setItem('_wl_cache', JSON.stringify(list.map(function(i){ return i.ticker; }))); } catch(e){}
-                  } else {
-                      inWatchlist = localList.indexOf(ticker) >= 0;
-                  }
-              } catch(e) {
+          try {
+              var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
+              if (res.ok) {
+                  var data = await res.json();
+                  var list = (data && data.watchlist) || [];
+                  inWatchlist = list.some(function(i){ return (i.ticker || i) === ticker; });
+                  var tList = list.map(function(i){ return i.ticker || i; });
+                  _syncWatchlistCache(tList);
+              } else {
                   inWatchlist = localList.indexOf(ticker) >= 0;
               }
-          } else {
+          } catch(e) {
               inWatchlist = localList.indexOf(ticker) >= 0;
           }
           updateWatchlistButtonUI();
@@ -736,46 +748,67 @@
           
           if (inWatchlist) {
               // Remove
-              if (token) {
-                  var csrf = await _fetchCsrf();
-                  try {
-                      var res = await fetch('/api/watchlist/remove?ticker=' + encodeURIComponent(ticker), {
-                          method: 'DELETE',
-                          headers: { 'Authorization': 'Bearer ' + token, 'X-CSRF-Token': csrf }
-                      });
-                      if (res.ok) {
-                          inWatchlist = false;
-                          showToast('Removed ' + ticker + ' from watchlist', 'success');
-                      } else {
-                          showToast('Error removing stock from watchlist', 'warn');
-                      }
-                  } catch(e) { showToast('Network error', 'warn'); }
-              } else {
+              var headers = {};
+              if (token) headers['Authorization'] = 'Bearer ' + token;
+              var csrf = await _fetchCsrf();
+              if (csrf) headers['X-CSRF-Token'] = csrf;
+
+              try {
+                  var res = await fetch('/api/watchlist/remove?ticker=' + encodeURIComponent(ticker), {
+                      method: 'DELETE',
+                      headers: headers,
+                      credentials: 'same-origin'
+                  });
+                  if (res.ok || res.status === 404) {
+                      inWatchlist = false;
+                      localList = localList.filter(function(t){ return t !== ticker; });
+                      _syncWatchlistCache(localList);
+                      showToast('Removed ' + ticker + ' from watchlist', 'success');
+                  } else {
+                      showToast('Error removing stock from watchlist', 'warn');
+                  }
+              } catch(e) {
+                  // Fallback for offline/guest
                   localList = localList.filter(function(t){ return t !== ticker; });
-                  localStorage.setItem('_wl_cache', JSON.stringify(localList));
+                  _syncWatchlistCache(localList);
                   inWatchlist = false;
                   showToast('Removed ' + ticker + ' from watchlist', 'success');
               }
           } else {
               // Add
-              if (token) {
-                  var csrf = await _fetchCsrf();
-                  try {
-                      var res = await fetch('/api/watchlist/add?ticker=' + encodeURIComponent(ticker), {
-                          method: 'POST',
-                          headers: { 'Authorization': 'Bearer ' + token, 'X-CSRF-Token': csrf }
-                      });
-                      if (res.ok) {
+              var headers = {};
+              if (token) headers['Authorization'] = 'Bearer ' + token;
+              var csrf = await _fetchCsrf();
+              if (csrf) headers['X-CSRF-Token'] = csrf;
+
+              try {
+                  var res = await fetch('/api/watchlist/add?ticker=' + encodeURIComponent(ticker), {
+                      method: 'POST',
+                      headers: headers,
+                      credentials: 'same-origin'
+                  });
+                  if (res.ok) {
+                      inWatchlist = true;
+                      localList = localList.filter(function(t){ return t !== ticker; });
+                      localList.unshift(ticker);
+                      _syncWatchlistCache(localList.slice(0, 15));
+                      showToast('Added ' + ticker + ' to watchlist', 'success');
+                  } else {
+                      var errData = await res.json().catch(function(){ return {}; });
+                      if (res.status === 400 && (errData.detail || '').includes('already in watchlist')) {
                           inWatchlist = true;
-                          showToast('Added ' + ticker + ' to watchlist', 'success');
+                          if (localList.indexOf(ticker) === -1) localList.unshift(ticker);
+                          _syncWatchlistCache(localList.slice(0, 15));
+                          showToast(ticker + ' already in watchlist', 'warn');
                       } else {
-                          var errData = await res.json().catch(function(){ return {}; });
                           showToast(errData.detail || 'Error adding stock to watchlist', 'warn');
                       }
-                  } catch(e) { showToast('Network error', 'warn'); }
-              } else {
+                  }
+              } catch(e) {
+                  // Fallback for offline/guest
+                  localList = localList.filter(function(t){ return t !== ticker; });
                   localList.unshift(ticker);
-                  localStorage.setItem('_wl_cache', JSON.stringify(localList.slice(0, 15)));
+                  _syncWatchlistCache(localList.slice(0, 15));
                   inWatchlist = true;
                   showToast('Added ' + ticker + ' to watchlist', 'success');
               }

@@ -1545,23 +1545,29 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                 v = int(c.get("volume", 0))
                 o, h, l, cl = fix_ohlc(o, h, l, cl)
                 
-                if snapped_dt not in existing_ts_set:
-                    record_kwargs = {
-                        "ticker": clean_ticker,
-                        "timestamp": snapped_dt,
-                        "open": o, "high": h, "low": l, "close": cl, "volume": v,
-                        "timeframe": interval,
+                record_kwargs = {
+                    "ticker": clean_ticker,
+                    "timestamp": snapped_dt,
+                    "open": o, "high": h, "low": l, "close": cl, "volume": v,
+                    "timeframe": interval,
+                    "is_completed": True,
+                    "is_backfilled": True,
+                    "data_source": "YFINANCE" if is_index else "ANGELONE"
+                }
+                # When official historical candles arrive, insert new candles or update
+                # live-aggregated uncompleted/non-backfilled candles to ensure 100% exact broker OHLC
+                _stmt = _pg_ins(models.Candle).values(**record_kwargs).on_conflict_do_update(
+                    constraint="uix_candle_key",
+                    set_={
+                        "open": o, "high": h, "low": l, "close": cl,
+                        "volume": v,
                         "is_completed": True,
                         "is_backfilled": True,
                         "data_source": "YFINANCE" if is_index else "ANGELONE"
-                    }
-                    # B-2: Use ON CONFLICT DO NOTHING instead of db.add() to eliminate
-                    # the TOCTOU race where a concurrent writer (daily sync or live
-                    # aggregator) inserts the same candle between our existing_ts_set
-                    # snapshot and this commit, causing an IntegrityError that rolls
-                    # back the entire batch.
-                    _stmt = _pg_ins(models.Candle).values(**record_kwargs).on_conflict_do_nothing(constraint="uix_candle_key")
-                    db.execute(_stmt)
+                    },
+                    where=(models.Candle.is_backfilled == False)
+                )
+                db.execute(_stmt)
             db.commit()
             print(f"[Intraday] [BG] Saved ~{len(intraday_candles)} intraday candles for {clean_ticker}")
 
@@ -6541,8 +6547,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                         fill_start = records[0].timestamp
                         fill_needed = True
 
-                # 2. Today's morning session opening gap:
-                # If trading today, verify that today's earliest candle starts near market open (09:15)
+                # 2. Today's session gaps (morning opening gap & post-market closing gap)
                 today_date = now.date()
                 today_candles = [r for r in records if r.timestamp.date() == today_date]
                 if today_candles:
@@ -6553,12 +6558,28 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                         fill_start = session_open_dt if fill_start is None else min(fill_start, session_open_dt)
                         fill_needed = True
                         print(f"[GapFill] Morning session gap detected for {clean_ticker} {interval}: earliest={earliest_today}, filling from {session_open_dt}")
+                    
+                    # Post-market closing gap: if market has closed today on an active trading day,
+                    # verify that today's candles reached the afternoon close (at least 15:15 for 15m/5m)
+                    if (not market_open) and is_trading_day(today_date, NSE_HOLIDAYS) and now.time() >= datetime.strptime("15:30", "%H:%M").time():
+                        latest_today = today_candles[0].timestamp
+                        close_threshold = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=15, minutes=15)
+                        if latest_today < close_threshold:
+                            fill_start = latest_today if fill_start is None else min(fill_start, latest_today)
+                            fill_needed = True
+                            print(f"[GapFill] Post-market closing gap detected for {clean_ticker} {interval}: latest={latest_today}, filling to market close")
                 elif market_open and is_trading_day(today_date, NSE_HOLIDAYS):
                     # Market is currently open today, but zero candles recorded for today yet
                     session_open_dt = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=9, minutes=15)
                     fill_start = session_open_dt if fill_start is None else min(fill_start, session_open_dt)
                     fill_needed = True
                     print(f"[GapFill] Entire today session missing for {clean_ticker} {interval}: filling from {session_open_dt}")
+                elif (not market_open) and is_trading_day(today_date, NSE_HOLIDAYS) and now.time() >= datetime.strptime("15:30", "%H:%M").time():
+                    # Market closed today on a trading day, but zero candles for today
+                    session_open_dt = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=9, minutes=15)
+                    fill_start = session_open_dt if fill_start is None else min(fill_start, session_open_dt)
+                    fill_needed = True
+                    print(f"[GapFill] Post-market complete today session missing for {clean_ticker} {interval}: filling from {session_open_dt}")
 
                 # 3. Check internal gaps in the fetched window (same day and recent trading session transitions)
                 cutoff_5d = now - timedelta(days=5)

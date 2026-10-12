@@ -3993,6 +3993,7 @@ async function fetchWatchlist() {
   var tickers = DEFAULT_WATCHLIST.slice();
   var wlItems = [];
 
+  var _fetchedFromApi = false;
   try {
     var _wlToken = '';
     try { _wlToken = sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e) {}
@@ -4008,7 +4009,7 @@ async function fetchWatchlist() {
         tickers = wlItems.map(function(i) { return i.ticker || i; }).slice(0, 5);
         // Keep localStorage cache in sync so dashboard works even if API fails
         try { localStorage.setItem('_wl_cache', JSON.stringify(tickers)); } catch(e) {}
-        var _fetchedFromApi = true;
+        _fetchedFromApi = true;
       }
     }
   } catch(e) {
@@ -4124,6 +4125,19 @@ async function fetchWatchlist() {
       .catch(function(){ /* non-critical */ });
   }
   _fetchingWatchlist = false;
+}
+
+// Instant synchronization when watchlist is updated on overview.html or watchlist.html
+if (!window._wlSyncListenersAttached) {
+  window._wlSyncListenersAttached = true;
+  window.addEventListener('storage', function(e) {
+    if (e.key === '_wl_cache' || e.key === '_wl_updated') {
+      try { fetchWatchlist(); } catch(err) {}
+    }
+  });
+  window.addEventListener('watchlist_updated', function() {
+    try { fetchWatchlist(); } catch(err) {}
+  });
 }
 
 /* ==========================================

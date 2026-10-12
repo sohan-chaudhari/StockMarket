@@ -86,7 +86,7 @@ class HistoricalCandleBackfillRegressionTests(unittest.TestCase):
             
             candles = []
             curr = t0915
-            for i in range(70):
+            for i in range(75):
                 candles.append({
                     "timestamp": curr, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5
                 })
