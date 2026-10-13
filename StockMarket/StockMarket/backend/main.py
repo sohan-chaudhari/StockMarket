@@ -563,6 +563,23 @@ _BACKFILL_FAIL_COOLDOWN_SEC = 300        # transient provider failure (rate limi
 _BACKFILL_PERMANENT_COOLDOWN_SEC = 1800  # invalid/unsupported symbol
 _BACKFILL_COOLDOWN_MAX_KEYS = 4000       # bounded memory
 
+# Tickers a user just opened that are missing recent intraday data. The request
+# path only ENQUEUES them; the background gap sweep does the fetching, paced by
+# historical_service._throttle_historical_call(). That keeps the request fast and
+# the provider usage under Angel One's rate limit, while still filling the ticker
+# the user is looking at first -- and once stored, every later visitor gets it
+# straight from the DB with no provider call at all.
+_gap_sweep_queue: set = set()
+
+
+def _request_gap_sweep(ticker: str):
+    try:
+        t = (ticker or '').strip().upper().replace('.NS', '').replace('.BO', '')
+        if t:
+            _gap_sweep_queue.add(t)
+    except Exception:
+        pass
+
 
 def _backfill_cooldown_active(key: str) -> bool:
     now = time.time()
@@ -6626,6 +6643,19 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 if fill_needed:
                     print(f"[GapFill] Sync fill needed for {clean_ticker} {interval}: gap from {fill_start}")
 
+                # Independent of the fill decision above: if this ticker's intraday
+                # data stops days ago, ask the background sweep to fetch it (paced,
+                # off the request path). Once stored, the next visitor gets the
+                # candles straight from the DB with no provider call at all.
+                if interval in ("1m", "5m", "15m", "30m", "1h"):
+                    try:
+                        _newest = q_base.order_by(model.timestamp.desc()).limit(1).first()
+                        if _newest is not None and _newest.timestamp < (now - timedelta(days=3)):
+                            _request_gap_sweep(clean_ticker)
+                            print(f"[GapSweep] queued {clean_ticker} {interval} (data stops {_newest.timestamp})")
+                    except Exception:
+                        pass
+
             # History-depth check (independent of market hours): the main query
             # above is capped at `limit`, so its last element is NOT the true
             # oldest row for a ticker holding more than `limit` candles -- look
@@ -7934,6 +7964,82 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
     return n
 
 
+# ---- Background intraday gap sweep ---------------------------------------
+# Fills multi-day intraday holes on its own, so a user opening a chart tomorrow
+# gets the candles straight from the DB instead of waiting on a provider call.
+# Every provider call is paced by historical_service._throttle_historical_call(),
+# so this runs continuously without tripping Angel One's rate limit.
+_gap_sweep_cursor = 0
+_GAP_SWEEP_BATCH = 60            # tickers inspected per cycle
+_GAP_SWEEP_INTERVAL_SEC = 300    # cycle period
+
+
+def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
+    """Fill the tickers users just opened (priority), then a rotating batch."""
+    global _gap_sweep_cursor
+    from database import SessionLocal
+    from sqlalchemy import text as _sa_text
+    now = database.get_ist_now()
+    filled = 0
+    db = SessionLocal()
+    try:
+        # Priority: tickers a user is looking at right now.
+        priority = sorted(_gap_sweep_queue)
+        _gap_sweep_queue.clear()
+        tickers = [r[0] for r in db.execute(_sa_text(
+            "SELECT ticker FROM stock_metadata WHERE ticker IS NOT NULL ORDER BY ticker")).fetchall()]
+        if priority:
+            tickers = priority + [t for t in tickers if t not in set(priority)]
+        if not tickers:
+            return 0
+        if _gap_sweep_cursor >= len(tickers):
+            _gap_sweep_cursor = 0
+        chunk = tickers[_gap_sweep_cursor:_gap_sweep_cursor + batch]
+        _gap_sweep_cursor = (_gap_sweep_cursor + batch) % max(1, len(tickers))
+        today_open = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=9, minutes=15)
+        for raw in chunk:
+            t = (raw or '').upper().replace('.NS', '').replace('.BO', '')
+            if not t or _backfill_cooldown_active(f"{t}:5m"):
+                continue
+            newest = db.execute(_sa_text(
+                "SELECT max(timestamp) FROM candles WHERE ticker=:t AND timeframe='5m'"
+            ), {"t": t}).scalar()
+            if newest is not None and newest >= today_open:
+                continue                      # current session present -> nothing to do
+            start = newest or _intraday_cutoff('5m')
+            if (today_open - start) < timedelta(days=3):
+                continue                      # normal weekend/holiday gap, not a hole
+            try:
+                perform_on_demand_backfill(t, '5m', start, now)
+                filled += 1
+            except Exception as e:
+                print(f"[GapSweep] {t} failed: {e}")
+    finally:
+        db.close()
+    return filled
+
+
+async def _intraday_gap_sweep_loop():
+    """Background: fill intraday holes so users rarely wait.
+
+    A ticker a user just opened is handled on the next tick (~20s); the full
+    rotating sweep runs every ~5 minutes. Every provider call is paced by
+    historical_service._throttle_historical_call()."""
+    await asyncio.sleep(180)   # let the startup jobs settle first
+    tick = 0
+    while True:
+        try:
+            priority = bool(_gap_sweep_queue)
+            if priority or tick % 15 == 0:
+                n = await asyncio.to_thread(_sweep_intraday_gaps_once, 3 if priority else _GAP_SWEEP_BATCH)
+                if n:
+                    print(f"[GapSweep] filled {n} ticker(s)")
+            tick += 1
+        except Exception as e:
+            print(f"[GapSweep] loop error: {e}")
+        await asyncio.sleep(20)
+
+
 async def _index_daily_backfill_loop():
     """Index 1D backfill + DB-only 5m->1D pass: shortly after startup, then daily."""
     await asyncio.sleep(45)   # let AngelOne login / instrument load settle
@@ -8732,6 +8838,7 @@ async def startup():
     daily_sync.add_done_callback(_log_task_error)
 
     idx_daily = _track_task(asyncio.create_task(_index_daily_backfill_loop()))
+    gap_sweep = _track_task(asyncio.create_task(_intraday_gap_sweep_loop()))
     idx_daily.add_done_callback(_log_task_error)
 
     # NOTE (Phase 15A audit): a second, independent nightly 1D→1W/1W→1M

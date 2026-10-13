@@ -60,6 +60,27 @@ def _looks_rate_limited(message) -> bool:
     return any(kw in m for kw in _RATE_LIMIT_KEYWORDS)
 
 
+# ---- Global call pacing ---------------------------------------------------
+# Angel One throttles the historical endpoint per account. The app's own
+# background jobs (intraday prefill, dashboard index backfill, 1W/1M backfill)
+# plus on-demand chart fills were bursting past the limit together (measured: 81
+# throttles in 30 minutes), which is why fills kept failing. Serialising calls to
+# one per _HISTORICAL_MIN_INTERVAL_SEC keeps the app under the limit so a fill
+# actually lands -- and it is what lets the background gap sweep run safely.
+_HISTORICAL_MIN_INTERVAL_SEC = 1.2
+_hist_last_call = 0.0
+
+
+def _throttle_historical_call():
+    """Sleep just enough that consecutive historical calls stay under the limit."""
+    global _hist_last_call
+    now = time.time()
+    wait = _hist_last_call + _HISTORICAL_MIN_INTERVAL_SEC - now
+    if wait > 0:
+        time.sleep(min(wait, 3.0))
+    _hist_last_call = time.time()
+
+
 def rate_limit_backoff_remaining() -> float:
     """Seconds left in the global historical-API backoff (0 when clear)."""
     return max(0.0, _rate_limit_until - time.time())
@@ -244,6 +265,9 @@ class HistoricalDataService:
             if raise_on_error:
                 raise HistoricalFetchError(msg, retryable=True)
             return []
+
+        # Pace every call so the app stays under Angel One's limit.
+        _throttle_historical_call()
 
         # Import angelone_service to use its token lookup
         from angelone_service import angelone_service

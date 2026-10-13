@@ -52,21 +52,47 @@ class SessionOpenGapTests(unittest.TestCase):
         for p in self._patchers:
             p.stop()
 
+    @staticmethod
+    def _session_bars(day_open):
+        """All 75 five-minute buckets of a session (09:15 .. 15:25)."""
+        return [day_open + timedelta(minutes=5 * k) for k in range(75)]
+
     def _seed(self, minutes):
-        """Seed 5m candles at 09:15 + m minutes, plus one deep-history row so the
-        independent history-depth check cannot fire and mask the assertions."""
+        """Today's bars at 09:15 + m minutes, plus 70 FULL previous sessions so the
+        fixture looks like real data: no internal holes, no early finish, no
+        late start, and deep enough that the history-depth check cannot fire."""
         db = self.Session()
         try:
-            deep = SESSION_OPEN - timedelta(days=90)
-            db.add(models.Candle(ticker=TICKER, timeframe="5m",
-                                 timestamp=deep.replace(hour=15, minute=25),
-                                 open=100.0, high=101.0, low=99.0, close=100.5,
-                                 volume=1000, is_completed=True))
+            for d in range(1, 71):
+                day_open = SESSION_OPEN - timedelta(days=d)
+                for ts in self._session_bars(day_open):
+                    db.add(models.Candle(ticker=TICKER, timeframe="5m", timestamp=ts,
+                                         open=100.0, high=101.0, low=99.0, close=100.5,
+                                         volume=1000, is_completed=True))
             for m in minutes:
                 db.add(models.Candle(ticker=TICKER, timeframe="5m",
                                      timestamp=SESSION_OPEN + timedelta(minutes=m),
                                      open=100.0, high=101.0, low=99.0, close=100.5,
                                      volume=1000, is_completed=True))
+            db.commit()
+        finally:
+            db.close()
+
+    def _seed_with_hole(self):
+        """Today's session plus two isolated older sessions (30 and 70 days back)
+        with a multi-day hole between -- the RPSGVENT shape."""
+        db = self.Session()
+        try:
+            for m in (0, 5, 10, 15, 20, 25):
+                db.add(models.Candle(ticker=TICKER, timeframe="5m",
+                                     timestamp=SESSION_OPEN + timedelta(minutes=m),
+                                     open=100.0, high=101.0, low=99.0, close=100.5,
+                                     volume=1000, is_completed=True))
+            for d in (30, 70):
+                for ts in self._session_bars(SESSION_OPEN - timedelta(days=d)):
+                    db.add(models.Candle(ticker=TICKER, timeframe="5m", timestamp=ts,
+                                         open=100.0, high=101.0, low=99.0, close=100.5,
+                                         volume=1000, is_completed=True))
             db.commit()
         finally:
             db.close()
@@ -107,6 +133,38 @@ class SessionOpenGapTests(unittest.TestCase):
         self._seed([0, 15, 20, 25])
         self._call()
         self.assertTrue(self.calls, "an internal same-day hole must still trigger a backfill")
+
+    def test_opened_ticker_with_stale_data_is_queued_for_the_sweep(self):
+        # The request path ENQUEUES rather than fetching: the background sweep does
+        # the paced fetching, so the request stays fast and provider usage stays
+        # under Angel One's rate limit. Once stored, the next visitor gets it from
+        # the DB with no provider call.
+        db = self.Session()
+        try:
+            for ts in self._session_bars(SESSION_OPEN - timedelta(days=10)):
+                db.add(models.Candle(ticker=TICKER, timeframe="5m", timestamp=ts,
+                                     open=100.0, high=101.0, low=99.0, close=100.5,
+                                     volume=1000, is_completed=True))
+            db.commit()
+        finally:
+            db.close()
+        main._gap_sweep_queue.clear()
+        self._call()
+        self.assertIn(TICKER, main._gap_sweep_queue,
+                      "opening a ticker whose intraday data stops days ago must queue it")
+
+    def test_fresh_ticker_is_not_queued(self):
+        self._seed([0, 5, 10, 15, 20, 25])
+        main._gap_sweep_queue.clear()
+        self._call()
+        self.assertNotIn(TICKER, main._gap_sweep_queue,
+                         "a ticker with current data must not be queued")
+
+    def test_weekend_gap_is_not_a_hole(self):
+        # Fri -> Mon is 3 calendar days and must NOT be treated as missing data.
+        self._seed([0, 5, 10, 15, 20, 25])
+        self._call()
+        self.assertEqual(self.calls, [], "a normal weekend gap must not trigger a backfill")
 
 
 if __name__ == "__main__":
