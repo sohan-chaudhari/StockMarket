@@ -2296,35 +2296,51 @@ async function initBigChart() {
   toolTip.style.pointerEvents = 'none';
   document.getElementById('chart-container').appendChild(toolTip);
 
+  // ── Legend ownership ──────────────────────────────────────────────────────
+  // The legend must show the bar the pointer is on and KEEP showing it. The
+  // chart fires subscribeCrosshairMove on every series DATA UPDATE too, with an
+  // empty point/time -- so the old code treated each live tick as "pointer left
+  // the bar", cleared the hover lock and repainted the FORMING candle, which is
+  // why a hovered candle showed its own OHLC and then flipped to the current
+  // candle's a couple of seconds later. Ownership is therefore driven by real
+  // pointer presence on the chart element, not by the event payload.
+  function _renderLegendIdle() {
+    var activeFc = window._formingCandles ? (window._formingCandles['i'] || window._formingCandles['d']) : null;
+    var last = activeFc && activeFc.close > 0 ? activeFc : window._lastHistoricalCandle;
+    if (!last) return;
+    var oEl = document.getElementById('ohlc-open');  if (oEl) { oEl.innerText = Number(last.open).toFixed(2);  oEl.style.color = '#d1d4dc'; }
+    var hEl = document.getElementById('ohlc-high');  if (hEl) { hEl.innerText = Number(last.high).toFixed(2);  hEl.style.color = '#089981'; }
+    var lEl = document.getElementById('ohlc-low');   if (lEl) { lEl.innerText = Number(last.low).toFixed(2);   lEl.style.color = '#f23645'; }
+    var cEl = document.getElementById('ohlc-close'); if (cEl) { cEl.innerText = Number(last.close).toFixed(2); cEl.style.color = '#d1d4dc'; }
+    var volEl = document.getElementById('ohlc-volume');
+    if (volEl) {
+      volEl.innerText = last.volume ? (activeFc ? Number(last.volume).toLocaleString('en-IN') : fmtCompact(last.volume)) : '--';
+      volEl.style.color = '#d1d4dc';
+    }
+  }
+
+  window._crosshairMouseInside = false;
+  (function _trackPointerPresence() {
+    var el = document.getElementById('chart') || document.getElementById('chart-container');
+    if (!el) return;
+    el.addEventListener('mouseenter', function () { window._crosshairMouseInside = true; });
+    el.addEventListener('mousemove',  function () { window._crosshairMouseInside = true; });
+    el.addEventListener('mouseleave', function () {
+      window._crosshairMouseInside = false;
+      // Pointer really left the chart: the live/forming candle owns the legend again.
+      window._crosshairBarActive = false;
+      _renderLegendIdle();
+    });
+  })();
+
   bigChart.subscribeCrosshairMove(function(param) {
     if (!param.time || param.point.x < 0 || param.point.y < 0) {
       toolTip.style.display = 'none';
-      // Crosshair is no longer over a bar, so the live tick updater and the
-      // chart re-render may drive the OHLC legend again.
+      // While the pointer is still on the chart this is just a data update --
+      // keep the hovered bar's legend untouched.
+      if (window._crosshairMouseInside) return;
       window._crosshairBarActive = false;
-      var activeFc = window._formingCandles ? (window._formingCandles['i'] || window._formingCandles['d']) : null;
-      if (activeFc && activeFc.close > 0) {
-        var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = activeFc.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
-        var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = activeFc.high.toFixed(2); hEl.style.color = '#089981'; }
-        var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = activeFc.low.toFixed(2); lEl.style.color = '#f23645'; }
-        var cEl = document.getElementById('ohlc-close');    if (cEl) { cEl.innerText = activeFc.close.toFixed(2); cEl.style.color = '#d1d4dc'; }
-        var volEl = document.getElementById('ohlc-volume');
-        if (volEl && activeFc.volume) {
-          volEl.innerText = Number(activeFc.volume).toLocaleString('en-IN');
-          volEl.style.color = '#d1d4dc';
-        }
-      } else if (window._lastHistoricalCandle) {
-        var last = window._lastHistoricalCandle;
-        var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = last.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
-        var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = last.high.toFixed(2); hEl.style.color = '#089981'; }
-        var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = last.low.toFixed(2); lEl.style.color = '#f23645'; }
-        var cEl = document.getElementById('ohlc-close');    if (cEl) { cEl.innerText = last.close.toFixed(2); cEl.style.color = '#d1d4dc'; }
-        var volEl = document.getElementById('ohlc-volume');
-        if (volEl) {
-          volEl.innerText = last.volume ? fmtCompact(last.volume) : '--';
-          volEl.style.color = '#d1d4dc';
-        }
-      }
+      _renderLegendIdle();
       return;
     }
     var price = param.seriesData.get(bigCandleSeries);
@@ -3020,6 +3036,9 @@ async function initBigChart() {
     var loadingEl = document.getElementById('loading');
     var isRangeSwitch = (window._loadedRange && window._loadedRange !== range);
     var _veilNeeded = !window._chartHasRendered;
+    // A new range/ticker means a new chart: the hovered-bar legend no longer
+    // owns the legend until the pointer lands on a bar again.
+    window._crosshairBarActive = false;
     hideChartError();
 
     // Show loading state when switching timeframes or loading fresh chart

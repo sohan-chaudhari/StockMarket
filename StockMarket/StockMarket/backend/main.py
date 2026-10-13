@@ -454,6 +454,16 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
             # instant. The browser still re-validates with the server when
             # doing a fresh forward navigation.
             response.headers['Cache-Control'] = 'private, must-revalidate'
+        elif path.startswith('/api/stock-data'):
+            # Chart/intraday data must ALWAYS reach the app. The server-side gap
+            # fill is dispatched asynchronously and the client re-polls to merge
+            # the recovered bars, but nginx's 10s micro-cache
+            # (proxy_cache_valid 200 10s, keyed by the full URI) answered that
+            # re-poll with the PRE-fill body -- so a chart stayed incomplete
+            # until the user manually refreshed. X-Accel-Expires:0 is nginx's own
+            # "do not cache this response" directive.
+            response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+            response.headers['X-Accel-Expires'] = '0'
         elif path.startswith(('/api/portfolio', '/api/trade', '/api/watchlist', '/api/auth', '/api/user')):
             # Security hardening: ensure authenticated user responses are NEVER stored by intermediate caches
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
