@@ -2299,6 +2299,9 @@ async function initBigChart() {
   bigChart.subscribeCrosshairMove(function(param) {
     if (!param.time || param.point.x < 0 || param.point.y < 0) {
       toolTip.style.display = 'none';
+      // Crosshair is no longer over a bar, so the live tick updater and the
+      // chart re-render may drive the OHLC legend again.
+      window._crosshairBarActive = false;
       var activeFc = window._formingCandles ? (window._formingCandles['i'] || window._formingCandles['d']) : null;
       if (activeFc && activeFc.close > 0) {
         var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = activeFc.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
@@ -2334,6 +2337,7 @@ async function initBigChart() {
       }
       if (!price) {
         toolTip.style.display = 'none';
+        window._crosshairBarActive = false;
         return;
       }
     }
@@ -2378,6 +2382,12 @@ async function initBigChart() {
     if (window.lastLivePrice != null) {
       currentPriceStr = window.lastLivePrice.toFixed(2);
     }
+
+    // The legend now shows THIS bar. While the crosshair is on a bar, the live
+    // tick updater and the chart re-render must NOT clobber it -- that is what
+    // made a hovered 09:15 candle show the right OHLC and then "suddenly
+    // change" (the next WS tick replaced it with the day's running OHLC).
+    window._crosshairBarActive = true;
 
     // Update floating legend OHLC safely (support both candlestick OHLC and single-value line/area series)
     var pOpen  = price.open  != null ? price.open  : price.value;
@@ -2926,6 +2936,9 @@ async function initBigChart() {
           if (pEl) pEl.style.color = col3;
         }
       }
+      // Chart (re)rendered: show the newest bar in the legend, but never while
+      // the crosshair is parked on a bar (the legend then belongs to that bar).
+      if (!window._crosshairBarActive) {
       var oEl = document.getElementById('ohlc-open');     if (oEl) { oEl.innerText = last.open.toFixed(2); oEl.style.color = '#d1d4dc'; }
       var hEl = document.getElementById('ohlc-high');     if (hEl) { hEl.innerText = last.high.toFixed(2); hEl.style.color = '#089981'; }
       var lEl = document.getElementById('ohlc-low');      if (lEl) { lEl.innerText = last.low.toFixed(2); lEl.style.color = '#f23645'; }
@@ -2934,6 +2947,7 @@ async function initBigChart() {
       if (volEl) {
         volEl.innerText = last.volume ? Number(last.volume).toLocaleString('en-IN') : '--';
         volEl.style.color = '#d1d4dc';
+      }
       }
     }
   }
@@ -3372,7 +3386,10 @@ async function initBigChart() {
     // Only overwrite when live has valid (>0) values so chart-candle
     // OHLC is preserved when the data source (e.g. AngelOne WS for
     // indices) doesn't provide daily open/high/low.
-    if (live.open != null && live.open > 0 && oEl2) { oEl2.innerText = live.open.toFixed(2); oEl2.style.color = '#d1d4dc'; }
+    // While the crosshair sits on a bar the legend belongs to THAT bar, so a
+    // live tick must not overwrite it.
+    var _legendLive = !window._crosshairBarActive;
+    if (_legendLive && live.open != null && live.open > 0 && oEl2) { oEl2.innerText = live.open.toFixed(2); oEl2.style.color = '#d1d4dc'; }
 
     var vwapEl = document.getElementById('header-vwap');
     var ucEl = document.getElementById('header-uc');
@@ -3392,11 +3409,11 @@ async function initBigChart() {
         if (ucEl) ucEl.innerText = (live.prev_close * 1.10).toFixed(2);
         if (lcEl) lcEl.innerText = (live.prev_close * 0.90).toFixed(2);
     }
-    if (live.high != null && live.high > 0 && hEl2) { hEl2.innerText = live.high.toFixed(2); hEl2.style.color = '#089981'; }
-    if (live.low  != null && live.low  > 0 && lEl2) { lEl2.innerText = live.low.toFixed(2); lEl2.style.color = '#f23645'; }
-    if (cEl2) { cEl2.innerText = price.toFixed(2); cEl2.style.color = '#d1d4dc'; }
+    if (_legendLive && live.high != null && live.high > 0 && hEl2) { hEl2.innerText = live.high.toFixed(2); hEl2.style.color = '#089981'; }
+    if (_legendLive && live.low  != null && live.low  > 0 && lEl2) { lEl2.innerText = live.low.toFixed(2); lEl2.style.color = '#f23645'; }
+    if (_legendLive && cEl2) { cEl2.innerText = price.toFixed(2); cEl2.style.color = '#d1d4dc'; }
     var volEl2 = document.getElementById('ohlc-volume');
-    if (volEl2) {
+    if (_legendLive && volEl2) {
       volEl2.innerText = live.volume ? Number(live.volume).toLocaleString('en-IN') : '--';
       volEl2.style.color = '#d1d4dc';
     }
