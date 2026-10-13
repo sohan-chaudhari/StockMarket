@@ -6735,8 +6735,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     try:
                         _floor = now - timedelta(days={"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120}.get(interval, 30))
                         if _has_multiday_intraday_hole(db, clean_ticker, interval, _floor):
-                            _request_gap_sweep(clean_ticker)
-                            print(f"[GapSweep] queued {clean_ticker} {interval} (multi-day hole)")
+                            # Schedule an EXACT-range repair for the whole window and
+                            # return the chart immediately with what is stored. The
+                            # user's request never waits on a long historical fetch.
+                            import backfill_jobs as _bj
+                            if _bj.enqueue(clean_ticker, interval, _floor, now, reason="chart_open"):
+                                print(f"[BackfillJob] queued {clean_ticker} {interval} ({_floor.date()}..{now.date()})")
                     except Exception:
                         pass
 
@@ -8122,13 +8126,14 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
                 # Newest is current; the hole is older, so fill the whole window.
                 start = _intraday_cutoff('5m')
             try:
-                # Count only a VERIFIED repair: perform_on_demand_backfill returns
-                # the number of rows actually persisted for the requested range.
-                added = perform_on_demand_backfill(t, '5m', start, now) or 0
-                if added > 0:
+                # Enqueue an EXACT-range job. The leased worker computes the missing
+                # 5m buckets, fetches only those, and counts a repair only after the
+                # persisted rows are re-read and verified.
+                import backfill_jobs as _bj
+                if _bj.enqueue(t, '5m', start, now, reason="sweep"):
                     filled += 1
             except Exception as e:
-                print(f"[GapSweep] {t} failed: {e}")
+                print(f"[GapSweep] {t} enqueue failed: {e}")
     finally:
         db.close()
     return filled
@@ -8163,6 +8168,31 @@ async def _intraday_gap_sweep_loop():
         except Exception as e:
             print(f"[GapSweep] loop error: {e}")
         await asyncio.sleep(20)
+
+
+async def _backfill_job_worker():
+    """Execute leased exact-range repairs from the persistent job store.
+
+    Market hours: one job at a time, so live prices and user charts own the
+    provider quota. Outside hours: a small bounded batch. Every fetch inside a job
+    still passes the shared account-wide limiter and cooldown, and a job is only
+    marked complete after its persisted rows are re-read and verified.
+    """
+    import backfill_jobs as bj
+    await asyncio.sleep(210)
+    while True:
+        market_open = False
+        try:
+            market_open = is_market_open_now()
+            await asyncio.to_thread(bj.ensure_table)
+            batch = 1 if market_open else int(os.getenv("BACKFILL_WORKER_BATCH", "4"))
+            done = await asyncio.to_thread(bj.run_batch, batch)
+            if done:
+                print(f"[BackfillWorker] {len(done)} job(s) processed (market_open={market_open})")
+            await asyncio.to_thread(bj.cleanup)
+        except Exception as e:
+            print(f"[BackfillWorker] error: {e}")
+        await asyncio.sleep(20 if market_open else 15)
 
 
 async def _index_daily_backfill_loop():
@@ -8964,6 +8994,7 @@ async def startup():
 
     idx_daily = _track_task(asyncio.create_task(_index_daily_backfill_loop()))
     gap_sweep = _track_task(asyncio.create_task(_intraday_gap_sweep_loop()))
+    job_worker = _track_task(asyncio.create_task(_backfill_job_worker()))
     idx_daily.add_done_callback(_log_task_error)
 
     # NOTE (Phase 15A audit): a second, independent nightly 1D→1W/1W→1M

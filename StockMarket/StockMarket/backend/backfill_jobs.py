@@ -1,0 +1,415 @@
+"""Reliable 5-minute historical gap repair.
+
+Two things live here:
+
+1. **Exact, session-aware missing-bucket detection.** Given a ticker and a range
+   it computes the 5-minute buckets the NSE session actually defines (09:15 ..
+   15:25 IST, trading days only, the still-forming bucket excluded) and subtracts
+   what is stored. Only genuinely missing buckets become a fetch range -- so
+   weekends, holidays, out-of-session time and the current incomplete candle are
+   never "repaired", and a short chart-open range can never stand in for an older
+   historical gap.
+
+2. **Persistent, leased jobs** (`backfill_jobs`) so a repair survives restarts and
+   cannot be run twice concurrently. A job is only `complete` after the persisted
+   rows are re-read and the expected buckets are confirmed present.
+
+All provider access goes through historical_service.get_historical_candles(),
+which owns the account-wide pacing, the shared cooldown and request dedup.
+"""
+import datetime as _dt
+import os
+import random
+import threading
+import time
+from datetime import datetime, timedelta
+
+from sqlalchemy import text
+
+import database
+
+# ── tunables (env, no code change needed) ──────────────────────────────────
+JOB_LEASE_SEC = int(os.getenv("BACKFILL_JOB_LEASE_SEC", "600"))
+JOB_MAX_ATTEMPTS = int(os.getenv("BACKFILL_JOB_MAX_ATTEMPTS", "6"))
+JOB_BASE_BACKOFF_SEC = int(os.getenv("BACKFILL_JOB_BASE_BACKOFF_SEC", "120"))
+JOB_MAX_BACKOFF_SEC = int(os.getenv("BACKFILL_JOB_MAX_BACKOFF_SEC", "3600"))
+JOB_RETENTION_DAYS = int(os.getenv("BACKFILL_JOB_RETENTION_DAYS", "14"))
+# Provider maximum span per request, by interval (mirrors perform_on_demand_backfill).
+MAX_SPAN_DAYS = {"1m": 7, "5m": 60, "15m": 60, "30m": 60, "1h": 730}
+
+SESSION_START = (9, 15)     # NSE opens 09:15 IST
+SESSION_END = (15, 30)      # ... and closes 15:30 IST
+
+_DDL = """
+CREATE TABLE IF NOT EXISTS backfill_jobs (
+    id               BIGSERIAL PRIMARY KEY,
+    ticker           VARCHAR(32)  NOT NULL,
+    exchange         VARCHAR(8)   NOT NULL DEFAULT 'NSE',
+    interval         VARCHAR(8)   NOT NULL,
+    range_start      TIMESTAMP    NOT NULL,
+    range_end        TIMESTAMP    NOT NULL,
+    status           VARCHAR(20)  NOT NULL DEFAULT 'queued',
+    attempts         INTEGER      NOT NULL DEFAULT 0,
+    next_attempt_at  TIMESTAMP,
+    last_attempt_at  TIMESTAMP,
+    lease_expires_at TIMESTAMP,
+    claimed_by       VARCHAR(64),
+    last_error       VARCHAR(400),
+    failure_kind     VARCHAR(24),
+    expected_count   INTEGER,
+    fetched_count    INTEGER,
+    persisted_count  INTEGER,
+    remaining_count  INTEGER,
+    created_at       TIMESTAMP    NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uix_backfill_jobs_open
+    ON backfill_jobs (ticker, exchange, interval, range_start, range_end)
+    WHERE status IN ('queued','running','retry_wait','partially_complete');
+CREATE INDEX IF NOT EXISTS ix_backfill_jobs_claimable
+    ON backfill_jobs (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS ix_backfill_jobs_ticker
+    ON backfill_jobs (ticker, interval);
+"""
+
+_ddl_lock = threading.Lock()
+_ddl_done = False
+
+
+def ensure_table():
+    """Idempotent DDL (safe on every start; no migration runner required)."""
+    global _ddl_done
+    if _ddl_done:
+        return
+    with _ddl_lock:
+        if _ddl_done:
+            return
+        db = database.SessionLocal()
+        try:
+            for stmt in _DDL.strip().split(";"):
+                if stmt.strip():
+                    db.execute(text(stmt))
+            db.commit()
+            _ddl_done = True
+        finally:
+            db.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Session-aware expected buckets
+# ─────────────────────────────────────────────────────────────────────────────
+def _is_trading_day(d) -> bool:
+    try:
+        from main import is_trading_day, NSE_HOLIDAYS
+        return bool(is_trading_day(d, NSE_HOLIDAYS))
+    except Exception:
+        return d.weekday() < 5
+
+
+def session_buckets(day) -> list:
+    """Every 5-minute bucket label the NSE session defines for `day` (IST-naive)."""
+    out = []
+    cur = datetime(day.year, day.month, day.day, SESSION_START[0], SESSION_START[1])
+    end = datetime(day.year, day.month, day.day, SESSION_END[0], SESSION_END[1])
+    while cur < end:
+        out.append(cur)
+        cur = cur + timedelta(minutes=5)
+    return out
+
+
+def expected_buckets(range_start, range_end, now=None) -> list:
+    """All 5m buckets a correct store must hold in [range_start, range_end].
+
+    Excludes weekends/holidays, anything outside 09:15..15:30, and -- while the
+    market is open -- the still-forming bucket, which is legitimately absent.
+    """
+    now = now or database.get_ist_now()
+    out = []
+    d = range_start.date()
+    last = range_end.date()
+    while d <= last:
+        if _is_trading_day(d):
+            for b in session_buckets(d):
+                if b < range_start or b > range_end:
+                    continue
+                if b <= now < b + timedelta(minutes=5):
+                    continue          # still forming -> not "missing"
+                out.append(b)
+        d = d + timedelta(days=1)
+    return out
+
+
+def _stored_buckets(db, ticker, interval, range_start, range_end) -> set:
+    rows = db.execute(text(
+        "SELECT timestamp FROM candles WHERE ticker = :t AND timeframe = :tf "
+        "AND timestamp >= :s AND timestamp <= :e"
+    ), {"t": ticker, "tf": interval, "s": range_start, "e": range_end}).fetchall()
+    return {r[0] for r in rows}
+
+
+def missing_ranges(db, ticker, interval, range_start, range_end, now=None):
+    """Exact missing ranges, merged into provider-sized requests.
+
+    Returns (missing_buckets:set, ranges:list[(start,end)]). Buckets are merged
+    only while the merged span stays inside the provider's per-request limit, so
+    an older multi-week gap becomes one or more bounded requests -- never a
+    substitute "today only" range.
+    """
+    expected = expected_buckets(range_start, range_end, now=now)
+    stored = _stored_buckets(db, ticker, interval, range_start, range_end)
+    missing = [b for b in expected if b not in stored]
+    if not missing:
+        return set(), []
+    span = timedelta(days=MAX_SPAN_DAYS.get(interval, 60) - 1)
+    ranges, start, prev = [], missing[0], missing[0]
+    for b in missing[1:]:
+        if (b - prev) == timedelta(minutes=5) and (b - start) <= span:
+            prev = b
+            continue
+        ranges.append((start, prev + timedelta(minutes=5)))
+        start = prev = b
+    ranges.append((start, prev + timedelta(minutes=5)))
+    return set(missing), ranges
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job store
+# ─────────────────────────────────────────────────────────────────────────────
+def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="gap"):
+    """Idempotent: an identical open job is reused rather than duplicated."""
+    ensure_table()
+    t = (ticker or "").strip().upper().replace(".NS", "").replace(".BO", "")
+    if not t or interval not in MAX_SPAN_DAYS:
+        return None
+    db = database.SessionLocal()
+    try:
+        row = db.execute(text("""
+            INSERT INTO backfill_jobs (ticker, exchange, interval, range_start, range_end,
+                                       status, next_attempt_at, last_error)
+            VALUES (:t, :x, :i, :s, :e, 'queued', NOW(), :r)
+            ON CONFLICT (ticker, exchange, interval, range_start, range_end)
+              WHERE status IN ('queued','running','retry_wait','partially_complete')
+            DO UPDATE SET updated_at = NOW()
+            RETURNING id, status
+        """), {"t": t, "x": exchange, "i": interval, "s": range_start, "e": range_end,
+               "r": reason}).fetchone()
+        db.commit()
+        return row[0] if row else None
+    except Exception as e:
+        db.rollback()
+        print(f"[BackfillJob] enqueue {t} {interval} failed: {e}")
+        return None
+    finally:
+        db.close()
+
+
+def claim(worker_id, limit=1):
+    """Atomically lease up to `limit` due jobs. Safe across workers/restarts:
+    a job is only claimable when queued, or when its lease has expired."""
+    ensure_table()
+    db = database.SessionLocal()
+    try:
+        rows = db.execute(text("""
+            WITH due AS (
+                SELECT id FROM backfill_jobs
+                WHERE (status = 'queued' OR status = 'retry_wait' OR status = 'partially_complete'
+                       OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW())))
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+                ORDER BY COALESCE(next_attempt_at, created_at) ASC
+                LIMIT :n
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE backfill_jobs j
+               SET status = 'running', claimed_by = :w, last_attempt_at = NOW(),
+                   attempts = j.attempts + 1,
+                   lease_expires_at = NOW() + make_interval(secs => :lease),
+                   updated_at = NOW()
+              FROM due
+             WHERE j.id = due.id
+            RETURNING j.id, j.ticker, j.exchange, j.interval, j.range_start, j.range_end, j.attempts
+        """), {"w": worker_id, "n": limit, "lease": JOB_LEASE_SEC}).fetchall()
+        db.commit()
+        return [dict(id=r[0], ticker=r[1], exchange=r[2], interval=r[3],
+                     range_start=r[4], range_end=r[5], attempts=r[6]) for r in rows]
+    except Exception as e:
+        db.rollback()
+        print(f"[BackfillJob] claim failed: {e}")
+        return []
+    finally:
+        db.close()
+
+
+def _backoff_seconds(attempts, retry_after=0.0):
+    base = min(JOB_BASE_BACKOFF_SEC * (2 ** max(0, attempts - 1)), JOB_MAX_BACKOFF_SEC)
+    jittered = base * (0.5 + random.random() * 0.5)
+    return max(jittered, retry_after)
+
+
+def finish(job_id, status, *, fetched=0, persisted=0, remaining=0, expected=None,
+           error=None, failure_kind=None, retry_after=0.0, attempts=1):
+    db = database.SessionLocal()
+    try:
+        nxt = None
+        if status in ("retry_wait", "partially_complete"):
+            nxt = datetime.now() + timedelta(seconds=_backoff_seconds(attempts, retry_after))
+        db.execute(text("""
+            UPDATE backfill_jobs
+               SET status = :st, fetched_count = :f, persisted_count = :p,
+                   remaining_count = :rm, expected_count = COALESCE(:ex, expected_count),
+                   last_error = :err, failure_kind = :fk, next_attempt_at = :nxt,
+                   lease_expires_at = NULL, updated_at = NOW()
+             WHERE id = :id
+        """), {"st": status, "f": fetched, "p": persisted, "rm": remaining, "ex": expected,
+               "err": (error or "")[:400] or None, "fk": failure_kind, "nxt": nxt,
+               "id": job_id})
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[BackfillJob] finish {job_id} failed: {e}")
+    finally:
+        db.close()
+
+
+def cleanup(days=None):
+    """Retention: completed/permanently-failed jobs are not kept forever."""
+    ensure_table()
+    days = days or JOB_RETENTION_DAYS
+    db = database.SessionLocal()
+    try:
+        r = db.execute(text(
+            "DELETE FROM backfill_jobs WHERE status IN ('complete','permanently_failed') "
+            "AND updated_at < NOW() - make_interval(days => :d)"), {"d": days})
+        db.commit()
+        return r.rowcount or 0
+    except Exception as e:
+        db.rollback()
+        return 0
+    finally:
+        db.close()
+
+
+def stats():
+    ensure_table()
+    db = database.SessionLocal()
+    try:
+        rows = db.execute(text(
+            "SELECT status, count(*) FROM backfill_jobs GROUP BY status ORDER BY status")).fetchall()
+        return {r[0]: r[1] for r in rows}
+    except Exception:
+        return {}
+    finally:
+        db.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Executing a job: fetch exactly the missing ranges, persist, then verify
+# ─────────────────────────────────────────────────────────────────────────────
+_ANGEL_INTERVAL = {"1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "15m": "FIFTEEN_MINUTE",
+                   "30m": "THIRTY_MINUTE", "1h": "ONE_HOUR", "1D": "ONE_DAY"}
+
+
+def run_job(job):
+    """Returns (status, detail). Only `complete` means the range is genuinely filled."""
+    import historical_service as hs
+    from historical_service import HistoricalFetchError
+
+    db = database.SessionLocal()
+    try:
+        missing, ranges = missing_ranges(db, job["ticker"], job["interval"],
+                                        job["range_start"], job["range_end"])
+    finally:
+        db.close()
+
+    expected_n = len(missing)
+    if not missing:
+        finish(job["id"], "complete", fetched=0, persisted=0, remaining=0,
+               expected=0, failure_kind=None)
+        return "complete", {"expected": 0, "persisted": 0, "remaining": 0}
+
+    # Respect the shared cooldown before spending a request.
+    if hs.rate_limit_backoff_remaining() > 0:
+        finish(job["id"], "retry_wait", expected=expected_n, remaining=expected_n,
+               error="shared provider cooldown active", failure_kind="throttled",
+               retry_after=hs.rate_limit_backoff_remaining(), attempts=job["attempts"])
+        return "retry_wait", {"reason": "cooldown"}
+
+    fetched = persisted = 0
+    last_err = None
+    kind = None
+    retry_after = 0.0
+    svc = hs.historical_service
+    for (r_start, r_end) in ranges:
+        try:
+            if not svc.is_logged_in:
+                svc.login()
+            candles = svc.get_historical_candles(
+                ticker=job["ticker"], exchange=job["exchange"],
+                interval=_ANGEL_INTERVAL[job["interval"]],
+                from_date=r_start, to_date=r_end, raise_on_error=True)
+        except HistoricalFetchError as e:
+            last_err, kind = str(e), ("throttled" if hs._looks_rate_limited(e) else "provider")
+            retry_after = max(retry_after, hs._retry_after_seconds(e))
+            break
+        except Exception as e:
+            last_err, kind = str(e), "provider"
+            break
+        fetched += len(candles or [])
+        if candles:
+            try:
+                from aggregator import batch_flush_candles
+                batch_flush_candles([{
+                    "ticker": job["ticker"], "timeframe": job["interval"],
+                    "timestamp": c["timestamp"], "open": c["open"], "high": c["high"],
+                    "low": c["low"], "close": c["close"], "volume": c["volume"],
+                    "is_completed": True, "data_source": "ANGELONE", "is_backfilled": True,
+                } for c in candles])
+            except Exception as e:
+                last_err, kind = f"persist failed: {e}", "persist"
+                break
+
+    # ── verification: re-read what is ACTUALLY stored for the requested range ──
+    db = database.SessionLocal()
+    try:
+        still_missing, _ = missing_ranges(db, job["ticker"], job["interval"],
+                                          job["range_start"], job["range_end"])
+        persisted = expected_n - len(still_missing)
+    finally:
+        db.close()
+
+    if not still_missing:
+        finish(job["id"], "complete", fetched=fetched, persisted=persisted,
+               remaining=0, expected=expected_n)
+        return "complete", {"expected": expected_n, "fetched": fetched, "persisted": persisted}
+    if persisted > 0:
+        finish(job["id"], "partially_complete", fetched=fetched, persisted=persisted,
+               remaining=len(still_missing), expected=expected_n,
+               error=last_err or "provider returned no data for part of the range",
+               failure_kind=kind or "empty_response", retry_after=retry_after,
+               attempts=job["attempts"])
+        return "partially_complete", {"remaining": len(still_missing), "persisted": persisted}
+    if job["attempts"] >= JOB_MAX_ATTEMPTS:
+        finish(job["id"], "permanently_failed", fetched=fetched, persisted=0,
+               remaining=len(still_missing), expected=expected_n,
+               error=last_err or "no data after max attempts", failure_kind=kind or "unknown")
+        return "permanently_failed", {"remaining": len(still_missing), "error": last_err}
+    finish(job["id"], "retry_wait", fetched=fetched, persisted=0,
+           remaining=len(still_missing), expected=expected_n,
+           error=last_err or "no candles returned", failure_kind=kind or "empty_response",
+           retry_after=retry_after, attempts=job["attempts"])
+    return "retry_wait", {"remaining": len(still_missing), "error": last_err}
+
+
+def run_batch(limit=3, worker_id=None):
+    """Claim and execute a bounded batch. Returns a small result summary."""
+    worker_id = worker_id or f"w{os.getpid()}"
+    out = []
+    for job in claim(worker_id, limit=limit):
+        try:
+            status, detail = run_job(job)
+        except Exception as e:
+            status, detail = "error", {"error": str(e)}
+            finish(job["id"], "retry_wait", error=str(e), failure_kind="internal",
+                   attempts=job["attempts"])
+        out.append((job["ticker"], job["interval"], status, detail))
+        print(f"[BackfillJob] {job['ticker']} {job['interval']} -> {status} {detail}")
+    return out

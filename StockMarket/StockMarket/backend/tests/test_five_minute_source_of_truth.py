@@ -105,11 +105,13 @@ class ArchitectureTests(unittest.TestCase):
         self.assertIn("if priority:", block,
                       "user-opened tickers still get served during market hours")
 
-    def test_sweep_counts_only_verified_persisted_repairs(self):
+    def test_sweep_enqueues_exact_range_jobs(self):
         i = self.src.find("def _sweep_intraday_gaps_once")
-        block = self.src[i:i + 3000]
-        self.assertIn("added > 0", block,
-                      "a repair must only be counted when rows were actually persisted")
+        block = self.src[i:i + 3200]
+        self.assertIn("_bj.enqueue(t, '5m', start, now", block,
+                      "the sweep must schedule an exact-range repair job")
+        self.assertNotIn("perform_on_demand_backfill(t, '5m'", block,
+                         "the sweep must not fetch inline; the leased worker owns fetching")
 
 
 if __name__ == "__main__":
