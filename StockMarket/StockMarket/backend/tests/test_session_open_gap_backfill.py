@@ -137,13 +137,13 @@ class SessionOpenGapTests(unittest.TestCase):
     def test_opened_ticker_with_a_hole_is_queued_for_the_sweep(self):
         # The request path ENQUEUES an exact-range job (the leased worker does the
         # paced fetching), so the request returns immediately and the gap is
-        # scheduled separately. The hole query is Postgres-only, so the detector is
-        # patched; the enqueue target is asserted directly.
+        # scheduled separately. The exact missing-set check is what gates it; it is
+        # patched here so the assertion is about the enqueue target, not the query.
         self._seed([0, 5, 10, 15, 20, 25])
-        with patch.object(main, "_has_multiday_intraday_hole", lambda *a, **k: True), \
+        with patch("backfill_jobs.has_missing", return_value=True), \
              patch("backfill_jobs.enqueue", return_value=1) as enq:
             self._call()
-        self.assertTrue(enq.called, "opening a ticker with a multi-day hole must enqueue a repair job")
+        self.assertTrue(enq.called, "opening a ticker with a missing bucket must enqueue a repair job")
         _a, kw = enq.call_args
         self.assertEqual(_a[0], TICKER)
         self.assertEqual(_a[1], "5m")

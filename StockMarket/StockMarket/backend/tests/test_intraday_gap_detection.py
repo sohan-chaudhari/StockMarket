@@ -106,14 +106,17 @@ class DetectorThresholdTests(unittest.TestCase):
         db = _StubDb([(dt(2026, 10, 9, 9, 15), dt(2026, 10, 5, 15, 25))])
         self.assertTrue(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1)))
 
-    def test_scattered_small_gap_not_swept_but_repairable_on_demand(self):
+    def test_scattered_small_gap_is_below_the_sweep_threshold(self):
         # 2 consecutive buckets missing (an illiquid no-trade window).
         db = _StubDb([(dt(2026, 10, 6, 10, 15), dt(2026, 10, 6, 10, 0))])
         self.assertFalse(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1)),
                          "the universe sweep must not chase a 2-bucket hole")
-        self.assertTrue(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1),
-                                                         min_buckets=1),
-                        "a chart open must still repair ANY missing bucket")
+
+    def test_partially_missing_morning_session_is_seen_by_the_sweep(self):
+        # 09:15-11:00 missing: prev session close 15:25 -> next bar 11:05 is 19h40m,
+        # which a 20h pre-filter would have missed entirely.
+        db = _StubDb([(dt(2026, 10, 6, 11, 5), dt(2026, 10, 5, 15, 25))])
+        self.assertTrue(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1)))
 
     def test_older_intraday_gap_is_detected(self):
         # A 40-minute hole 3 months back must still be found (the chart-open
@@ -359,11 +362,22 @@ class FrontendRepairSignalTests(unittest.TestCase):
         self.assertIn("has_open_job", src)
         self.assertIn('bf_status = "backfilling"', src)
 
-    def test_chart_open_repairs_any_missing_bucket_but_gates_on_has_missing(self):
+    def test_chart_open_uses_the_exact_missing_check(self):
         src = self._main_src()
-        self.assertIn("min_buckets=1", src)
         self.assertIn("has_missing", src)
         self.assertIn("_stable_job_range", src)
+        # The session-scale heuristic must NOT gate on-demand repair: its SQL
+        # pre-filter only sees jumps > 12h, so a scattered intraday hole would be
+        # silently ignored. The exact missing-set check is used instead.
+        self.assertNotIn("min_buckets=1", src)
+        self.assertNotIn("_has_multiday_intraday_hole", src,
+                         "on-demand repair must not depend on the session-scale detector")
+
+    def test_sweep_still_uses_the_session_scale_threshold(self):
+        src = inspect.getsource(main._sweep_intraday_gaps_once)
+        self.assertIn("_has_multiday_intraday_hole(db, t, '5m', floor)", src)
+        self.assertNotIn("min_buckets=1", src,
+                         "the universe sweep must stay at the 30-minute threshold")
 
     def test_frontend_polling_stays_bounded_and_merges(self):
         p = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(

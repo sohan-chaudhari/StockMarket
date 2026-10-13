@@ -6755,21 +6755,19 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 # candles straight from the DB with no provider call at all.
                 if interval in ("1m", "5m", "15m", "30m", "1h"):
                     try:
-                        _floor = now - timedelta(days={"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120}.get(interval, 30))
-                        # min_buckets=1: ANY missing session bucket makes this
-                        # ticker repairable on demand, so a scattered 1-5 bucket
-                        # gap is never silently ignored. The universe-wide sweep
-                        # keeps the stricter 30-minute threshold, so on-demand
-                        # repair stays cheap and bounded.
-                        if _has_multiday_intraday_hole(db, clean_ticker, interval, _floor, min_buckets=1):
-                            import backfill_jobs as _bj
-                            _js, _je = _stable_job_range(interval, now)
-                            # Only queue when something is genuinely missing --
-                            # no no-op jobs.
-                            if _bj.has_missing(db, clean_ticker, interval, _js, _je):
-                                if _bj.enqueue(clean_ticker, interval, _js, _je, reason="chart_open"):
-                                    job_queued = True
-                                    print(f"[BackfillJob] queued {clean_ticker} {interval} ({_js.date()}..{_je.date()})")
+                        import backfill_jobs as _bj
+                        _js, _je = _stable_job_range(interval, now)
+                        # EXACT check, not a session-scale heuristic. `has_missing`
+                        # computes the real expected-minus-stored set, so ANY missing
+                        # bucket -- including a scattered 1-5 bucket no-trade hole --
+                        # makes the ticker repairable on demand. It already excludes
+                        # buckets recorded in backfill_absent, so a ticker whose
+                        # holes are all proven absent does not re-queue. One bounded
+                        # query, on the request's own interval only.
+                        if _bj.has_missing(db, clean_ticker, interval, _js, _je):
+                            if _bj.enqueue(clean_ticker, interval, _js, _je, reason="chart_open"):
+                                job_queued = True
+                                print(f"[BackfillJob] queued {clean_ticker} {interval} ({_js.date()}..{_je.date()})")
                     except Exception:
                         pass
 
@@ -8123,22 +8121,28 @@ def _max_absent_run(db, ticker: str, interval: str, floor) -> int:
 
     Consecutive stored bars bound a contiguous run by construction, so the largest
     per-pair count IS the largest run. One bounded, index-backed query: the SQL
-    pre-filters to overnight-and-longer jumps (a normal intraday step is <= 5 min)
-    and the calendar decision is made in Python.
+    pre-filters to 12 hours or more, which is safely above any intraday jump (the
+    session is at most 6h15m) and below the shortest overnight gap (17h50m) -- so a
+    partially missing morning session is still seen -- and the calendar decision is
+    made in Python.
     """
     from sqlalchemy import text as _sa_text
+    from backfill_jobs import _as_dt
     try:
         rows = db.execute(_sa_text(
             "SELECT timestamp, prev FROM ("
             "  SELECT timestamp, lag(timestamp) OVER (ORDER BY timestamp) AS prev"
             "  FROM candles WHERE ticker=:t AND timeframe=:tf AND timestamp >= :floor"
-            ") g WHERE prev IS NOT NULL AND timestamp - prev > interval '20 hours' "
+            ") g WHERE prev IS NOT NULL AND timestamp - prev > interval '12 hours' "
             "ORDER BY timestamp DESC LIMIT 50"
         ), {"t": ticker, "tf": interval, "floor": floor}).fetchall()
     except Exception:
         return 0
     best = 0
     for cur, prev in rows:
+        cur, prev = _as_dt(cur), _as_dt(prev)
+        if cur is None or prev is None:
+            continue
         n = _absent_session_buckets(prev, cur)
         if n > best:
             best = n

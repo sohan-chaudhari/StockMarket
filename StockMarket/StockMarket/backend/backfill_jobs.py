@@ -150,8 +150,11 @@ def session_buckets(day) -> list:
 def expected_buckets(range_start, range_end, now=None) -> list:
     """All 5m buckets a correct store must hold in [range_start, range_end].
 
-    Excludes weekends/holidays, anything outside 09:15..15:30, and -- while the
-    market is open -- the still-forming bucket, which is legitimately absent.
+    Excludes weekends/holidays, anything outside 09:15..15:30, and any bucket that
+    has not finished yet -- the still-forming bucket AND every future bucket of the
+    current session. Job windows end at end-of-day (see main._stable_job_range), so
+    without this the buckets later in today's session would be reported as missing
+    until the close, and the job could never reach `complete`.
     """
     now = now or database.get_ist_now()
     out = []
@@ -162,11 +165,29 @@ def expected_buckets(range_start, range_end, now=None) -> list:
             for b in session_buckets(d):
                 if b < range_start or b > range_end:
                     continue
-                if b <= now < b + timedelta(minutes=5):
-                    continue          # still forming -> not "missing"
+                if b + timedelta(minutes=5) > now:
+                    continue          # still forming, or not started yet
                 out.append(b)
         d = d + timedelta(days=1)
     return out
+
+
+def _as_dt(v):
+    """Normalise a driver-returned timestamp to a datetime.
+
+    Raw `text()` queries bypass SQLAlchemy's type coercion, so the driver hands
+    back whatever it has: psycopg2 gives a datetime, SQLite gives a string.
+    Comparing a str against the expected datetimes would silently mark EVERY
+    bucket missing, so normalise here.
+    """
+    if isinstance(v, datetime):
+        return v
+    if v is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(v))
+    except Exception:
+        return None
 
 
 def _stored_buckets(db, ticker, interval, range_start, range_end) -> set:
@@ -174,7 +195,7 @@ def _stored_buckets(db, ticker, interval, range_start, range_end) -> set:
         "SELECT timestamp FROM candles WHERE ticker = :t AND timeframe = :tf "
         "AND timestamp >= :s AND timestamp <= :e"
     ), {"t": ticker, "tf": interval, "s": range_start, "e": range_end}).fetchall()
-    return {r[0] for r in rows}
+    return {d for d in (_as_dt(r[0]) for r in rows) if d is not None}
 
 
 def _absent_buckets(db, ticker, interval, range_start, range_end) -> set:
@@ -190,7 +211,7 @@ def _absent_buckets(db, ticker, interval, range_start, range_end) -> set:
             "SELECT bucket FROM backfill_absent WHERE ticker = :t AND interval = :tf "
             "AND bucket >= :s AND bucket <= :e"
         ), {"t": ticker, "tf": interval, "s": range_start, "e": range_end}).fetchall()
-        return {r[0] for r in rows}
+        return {d for d in (_as_dt(r[0]) for r in rows) if d is not None}
     except Exception:
         return set()          # table absent (e.g. a bare test schema) -> nothing recorded
 
@@ -213,10 +234,11 @@ def _pre_data_floor(db, ticker, interval, range_start):
             "SELECT listing_date FROM stock_metadata WHERE ticker = :t LIMIT 1"),
             {"t": ticker}).fetchone()
         if row and row[0]:
-            ld = row[0]
-            if not isinstance(ld, datetime):
-                ld = datetime(ld.year, ld.month, ld.day, SESSION_START[0], SESSION_START[1])
-            return ld
+            ld = _as_dt(row[0])
+            if ld is not None:
+                if not isinstance(row[0], datetime):
+                    ld = datetime(ld.year, ld.month, ld.day, SESSION_START[0], SESSION_START[1])
+                return ld
     except Exception:
         pass                  # no listing_date column in this schema
     try:
@@ -224,7 +246,7 @@ def _pre_data_floor(db, ticker, interval, range_start):
             "SELECT min(timestamp) FROM candles WHERE ticker = :t AND timeframe = :tf"),
             {"t": ticker, "tf": interval}).fetchone()
         if row and row[0]:
-            return row[0]
+            return _as_dt(row[0])
     except Exception:
         pass
     return None

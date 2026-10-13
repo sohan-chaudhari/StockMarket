@@ -77,6 +77,16 @@ class ExpectedBucketTests(unittest.TestCase):
         self.assertNotIn(dt(2026, 10, 13, 10, 0), got)
         self.assertIn(dt(2026, 10, 13, 9, 55), got)
 
+    def test_future_buckets_of_the_current_session_are_not_missing(self):
+        # Mid-session the job window ends at end-of-day. Buckets that have not
+        # started yet must not be counted, or the job could never reach complete.
+        got = bj.expected_buckets(SESSION_OPEN, dt(2026, 10, 13, 23, 59, 59),
+                                  now=dt(2026, 10, 13, 10, 2))
+        self.assertEqual(len(got), 9)                       # 09:15 .. 09:55
+        self.assertNotIn(dt(2026, 10, 13, 10, 0), got)      # forming
+        self.assertNotIn(dt(2026, 10, 13, 10, 5), got)      # not started
+        self.assertNotIn(dt(2026, 10, 13, 15, 25), got)     # later today
+
 
 class _StubDb:
     """Minimal stand-in for the stored-timestamp query (keeps the test focused on
