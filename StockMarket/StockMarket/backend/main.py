@@ -2852,8 +2852,16 @@ except Exception as e:
 
 @app.get("/api/aggregator-stats")
 def get_aggregator_stats():
-    """Diagnostic: tick ordering stats, active tickers, stale skips."""
-    return candle_aggregator.get_stats()
+    """Diagnostic: tick ordering stats, active tickers, stale skips, and the
+    shared historical-provider counters (calls, dedup hits, throttles, cooldowns)
+    used to measure whether redundant provider requests are actually reduced."""
+    stats = candle_aggregator.get_stats()
+    try:
+        from historical_service import historical_metrics
+        stats["historical_provider"] = historical_metrics()
+    except Exception as e:
+        stats["historical_provider"] = {"error": str(e)}
+    return stats
 
 
 @app.get("/api/poller-stats")
