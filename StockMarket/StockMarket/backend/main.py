@@ -1596,12 +1596,31 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                 )
                 db.execute(_stmt)
             db.commit()
-            print(f"[Intraday] [BG] Saved ~{len(intraday_candles)} intraday candles for {clean_ticker}")
+            # POST-FETCH VERIFICATION. Report what was actually PERSISTED for the
+            # requested range -- "the provider returned candles" is not the same
+            # as "the interval is now complete", and callers (the gap sweep) must
+            # not count a repair that stored nothing. Returns the persisted count.
+            persisted_n = -1
+            try:
+                _q = db.query(model.id).filter(
+                    model.ticker == clean_ticker,
+                    model.timestamp >= backfill_start,
+                    model.timestamp <= now,
+                )
+                if hasattr(model, 'timeframe'):
+                    _q = _q.filter(model.timeframe == interval)
+                persisted_n = _q.count()
+            except Exception as _pv_err:
+                print(f"[Intraday] [BG] post-fetch verify failed for {clean_ticker}: {_pv_err}")
+            print(f"[Intraday] [BG] {clean_ticker} {interval}: fetched {len(intraday_candles)}, "
+                  f"persisted {persisted_n} row(s) in {backfill_start}..{now}")
+            return persisted_n
 
     except Exception as e:
         print(f"[Intraday] [BG] Error backfilling {clean_ticker}: {e}")
         if db is not None:
             db.rollback()
+        return 0
 
     finally:
         with _backfill_lock:
@@ -8038,8 +8057,11 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
                 # Newest is current; the hole is older, so fill the whole window.
                 start = _intraday_cutoff('5m')
             try:
-                perform_on_demand_backfill(t, '5m', start, now)
-                filled += 1
+                # Count only a VERIFIED repair: perform_on_demand_backfill returns
+                # the number of rows actually persisted for the requested range.
+                added = perform_on_demand_backfill(t, '5m', start, now) or 0
+                if added > 0:
+                    filled += 1
             except Exception as e:
                 print(f"[GapSweep] {t} failed: {e}")
     finally:

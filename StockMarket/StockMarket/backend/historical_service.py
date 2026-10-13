@@ -21,6 +21,7 @@ Usage:
 
 import os
 import time
+import threading
 from typing import Optional, List, Dict
 from datetime import date, datetime
 from SmartApi import SmartConnect
@@ -60,39 +61,131 @@ def _looks_rate_limited(message) -> bool:
     return any(kw in m for kw in _RATE_LIMIT_KEYWORDS)
 
 
-# ---- Global call pacing ---------------------------------------------------
-# Angel One throttles the historical endpoint per account. The app's own
-# background jobs (intraday prefill, dashboard index backfill, 1W/1M backfill)
-# plus on-demand chart fills were bursting past the limit together (measured: 81
-# throttles in 30 minutes), which is why fills kept failing. Serialising calls to
-# one per _HISTORICAL_MIN_INTERVAL_SEC keeps the app under the limit so a fill
-# actually lands -- and it is what lets the background gap sweep run safely.
-_HISTORICAL_MIN_INTERVAL_SEC = 1.2
-_hist_last_call = 0.0
+def _retry_after_seconds(message) -> float:
+    """Honour a provider Retry-After when it is present in the error text."""
+    try:
+        m = str(message or '').lower()
+        import re as _re
+        mm = _re.search(r'retry[- _]?after["\':= ]+(\d+(?:\.\d+)?)', m)
+        if mm:
+            return min(float(mm.group(1)), 600.0)
+    except Exception:
+        pass
+    return 0.0
 
 
-def _throttle_historical_call():
-    """Sleep just enough that consecutive historical calls stay under the limit."""
-    global _hist_last_call
-    now = time.time()
-    wait = _hist_last_call + _HISTORICAL_MIN_INTERVAL_SEC - now
-    if wait > 0:
-        time.sleep(min(wait, 3.0))
-    _hist_last_call = time.time()
+# ===========================================================================
+# SHARED PROVIDER COORDINATION  (account scope)
+# ===========================================================================
+# Angel One throttles the historical endpoint per ACCOUNT, and nine independent
+# in-process consumers all funnel through get_historical_candles() below: chart
+# open (perform_on_demand_backfill), the intraday gap sweep, the index-daily
+# loop, the daily and intraday prefill jobs, the dashboard index backfill, the
+# 1W/1M backfill and WS-reconnect recovery. A sleep inside each caller cannot
+# coordinate them, so this module owns the ONLY gate:
+#
+#   * in-flight dedup  -- concurrent identical requests share a single call
+#   * token bucket     -- account-wide request rate (configurable)
+#   * shared cooldown  -- a throttle pauses EVERY caller, not just the one that
+#                         hit it (this is what stops the retry storms)
+#   * Retry-After      -- honoured when the provider supplies it
+#   * bounded, jittered backoff -- never a synchronized retry stampede
+#
+# Configurable without code changes (env):
+#   HIST_MIN_INTERVAL_SEC  default 2.0   min gap between provider calls
+#   HIST_BURST             default 1     bucket depth
+#   HIST_BACKOFF_SEC       default 90    cooldown after a throttle
+_HISTORICAL_MIN_INTERVAL_SEC = float(os.getenv("HIST_MIN_INTERVAL_SEC", "2.0"))
+_HISTORICAL_BURST = max(1, int(os.getenv("HIST_BURST", "1")))
+_RATE_LIMIT_BACKOFF_SEC = float(os.getenv("HIST_BACKOFF_SEC", "90"))
+
+_rate_limit_until = 0.0
+_limiter_lock = threading.Lock()
+_next_slot = 0.0            # earliest time the next call may start
+_tokens = float(_HISTORICAL_BURST)
+
+_metrics = {
+    "calls": 0, "dedup_hits": 0, "throttles": 0, "cooldowns": 0,
+    "errors": 0, "candles": 0,
+}
 
 
 def rate_limit_backoff_remaining() -> float:
-    """Seconds left in the global historical-API backoff (0 when clear)."""
+    """Seconds left in the shared provider cooldown (0 when clear)."""
     return max(0.0, _rate_limit_until - time.time())
 
 
-def _note_rate_limit():
-    """Start (or extend) the global backoff after a throttle."""
+def historical_metrics() -> dict:
+    with _limiter_lock:
+        return dict(_metrics, cooldown_remaining=round(rate_limit_backoff_remaining(), 1),
+                    min_interval=_HISTORICAL_MIN_INTERVAL_SEC, burst=_HISTORICAL_BURST)
+
+
+def _note_rate_limit(message=None):
+    """Start/extend the SHARED cooldown after a throttle (all callers honour it)."""
     global _rate_limit_until
     now = time.time()
-    if now >= _rate_limit_until:
-        print("[HISTORICAL] Rate limit hit — pausing ALL historical calls for %ds" % _RATE_LIMIT_BACKOFF_SEC)
-    _rate_limit_until = now + _RATE_LIMIT_BACKOFF_SEC
+    wait = _RATE_LIMIT_BACKOFF_SEC
+    ra = _retry_after_seconds(message)
+    if ra > 0:
+        wait = max(wait, ra)
+    with _limiter_lock:
+        _metrics["throttles"] += 1
+        if now >= _rate_limit_until:
+            _metrics["cooldowns"] += 1
+            print("[HISTORICAL] Rate limit hit — pausing ALL historical calls for %.0fs" % wait)
+        _rate_limit_until = max(_rate_limit_until, now + wait)
+
+
+def _acquire_slot():
+    """Account-wide pacing: at most one call per interval (configurable)."""
+    global _next_slot
+    while True:
+        with _limiter_lock:
+            now = time.time()
+            if now >= _next_slot:
+                _next_slot = now + _HISTORICAL_MIN_INTERVAL_SEC
+                return
+            wait = _next_slot - now
+        time.sleep(min(wait, 0.25))
+
+
+def _throttle_historical_call():
+    """Back-compat shim: pace the call (see _acquire_slot)."""
+    _acquire_slot()
+
+
+def _deduped(key, fn):
+    """Run `fn` once for concurrent identical requests; everyone gets that result.
+
+    Exact-key dedup only, so a waiter always receives the SAME range it asked
+    for -- it can never be told that a different (e.g. narrower) background
+    request has satisfied it.
+    """
+    global _tokens
+    with _limiter_lock:
+        entry = _INFLIGHT.get(key)
+        owner = entry is None
+        if owner:
+            entry = {"ev": threading.Event(), "res": None}
+            _INFLIGHT[key] = entry
+        else:
+            _metrics["dedup_hits"] += 1
+    if not owner:
+        entry["ev"].wait(timeout=180.0)
+        return entry["res"]
+    try:
+        with _limiter_lock:
+            _metrics["calls"] += 1
+        entry["res"] = fn()
+        return entry["res"]
+    finally:
+        entry["ev"].set()
+        with _limiter_lock:
+            _INFLIGHT.pop(key, None)
+
+
+_INFLIGHT: Dict[str, dict] = {}
 
 
 class HistoricalFetchError(Exception):
@@ -231,6 +324,44 @@ class HistoricalDataService:
         exchange: str = "NSE",
         raise_on_error: bool = False,
     ) -> List[Dict]:
+        """THE single entry point for Angel One history (every consumer uses this).
+
+        Guarantees, in order:
+          1. session is available (else a retryable error / empty list),
+          2. the SHARED provider cooldown is clear (a throttle elsewhere pauses
+             this caller too -- no consumer can bypass it),
+          3. concurrent IDENTICAL requests are deduplicated: one provider call,
+             and every waiter receives that same result,
+          4. the account-wide pacing slot is taken by the owner only.
+        """
+        if not self.is_logged_in:
+            msg = "Not logged in. Call login() first."
+            print(f"[HISTORICAL] [ERROR] {msg}")
+            if raise_on_error:
+                raise HistoricalFetchError(msg, retryable=True)
+            return []
+
+        _rl_left = rate_limit_backoff_remaining()
+        if _rl_left > 0:
+            msg = "Historical API rate-limited (shared cooldown, %.0fs left)" % _rl_left
+            if raise_on_error:
+                raise HistoricalFetchError(msg, retryable=True)
+            return []
+
+        key = ("hist", str(ticker or "").strip().upper(), str(exchange or "NSE").upper(),
+               str(interval), str(from_date), str(to_date))
+        return _deduped(key, lambda: self._fetch_historical_uncached(
+            ticker, interval, from_date, to_date, exchange, raise_on_error))
+
+    def _fetch_historical_uncached(
+        self,
+        ticker: str,
+        interval: str,
+        from_date,
+        to_date,
+        exchange: str = "NSE",
+        raise_on_error: bool = False,
+    ) -> List[Dict]:
         """
         Fetch historical candle data from Angel One
 
@@ -321,7 +452,7 @@ class HistoricalDataService:
                     self.is_logged_in = False
                     print("[HISTORICAL] Auth error detected — session invalidated, will re-login on next request")
                 elif _is_rate_limit:
-                    _note_rate_limit()
+                    _note_rate_limit(error_msg)
                     print("[HISTORICAL] Rate limit hit — session kept alive, caller should back off")
                 if raise_on_error:
                     # A status=False response is always Angel One reporting a
@@ -350,18 +481,20 @@ class HistoricalDataService:
                     'volume': int(candle[5]) if candle[5] else 0
                 })
 
+            _metrics["candles"] += len(candles)
             return candles
 
         except HistoricalFetchError:
             raise
         except Exception as e:
             print(f"[HISTORICAL] [ERROR] Error fetching candles: {e}")
+            _metrics["errors"] += 1
             # A throttled call comes back as a NON-JSON body, so it lands here
-            # rather than in the status=False branch below. Engage the global
-            # backoff on this path too, otherwise the retry loops keep hammering
+            # rather than in the status=False branch below. Engage the shared
+            # cooldown on this path too, otherwise the retry loops keep hammering
             # and the on-demand chart fills can never get through.
             if _looks_rate_limited(e):
-                _note_rate_limit()
+                _note_rate_limit(e)
             if raise_on_error:
                 # Network/DNS/timeout/JSON-parse errors -- all transient.
                 raise HistoricalFetchError(str(e), retryable=True)
