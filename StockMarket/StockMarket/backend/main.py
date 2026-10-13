@@ -6195,6 +6195,25 @@ def _intraday_cutoff(interval: str):
 _INTRADAY_DEPTH_GRACE_DAYS = 2
 
 
+def _stable_job_range(interval: str, now):
+    """Session-aligned, now-independent bounds for a backfill job.
+
+    The job's dedup key includes range_start/range_end. Passing a raw `now` made
+    that key differ on every sweep pass, so the partial unique index never matched
+    and the same ticker accumulated a new job row per pass (measured live: 4 rows
+    for each of 6 tickers, 7 distinct range_end values across 337 rows).
+
+    Snapping to whole days makes the key stable, so a repeat request for the same
+    window reuses the open job. This cannot merge distinct repairs or lose
+    intervals: the window is a SUPERSET of what is missing, and the worker
+    recomputes the exact missing buckets inside it every run. Different tickers or
+    intervals still produce different keys.
+    """
+    start = _intraday_cutoff(interval)
+    return (datetime.combine(start.date(), datetime.min.time()),
+            datetime.combine(now.date(), datetime.max.time()))
+
+
 def _merge_live_5m(data: list, pending_candle, forming_candle) -> list:
     """Merge the aggregator's live 5m state onto the persisted rows, keyed by
     bucket timestamp. Kept pure so it can be unit-tested.
@@ -6637,6 +6656,9 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     # scrolling left on a chart never loaded candles older than the first page.
     fill_needed = False
     fill_start = None
+    # Set when this request queued a persistent repair job, so the response can
+    # tell the frontend to re-poll and merge the repaired candles in.
+    job_queued = False
 
     if is_latest_request:
         try:
@@ -6734,13 +6756,20 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 if interval in ("1m", "5m", "15m", "30m", "1h"):
                     try:
                         _floor = now - timedelta(days={"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120}.get(interval, 30))
-                        if _has_multiday_intraday_hole(db, clean_ticker, interval, _floor):
-                            # Schedule an EXACT-range repair for the whole window and
-                            # return the chart immediately with what is stored. The
-                            # user's request never waits on a long historical fetch.
+                        # min_buckets=1: ANY missing session bucket makes this
+                        # ticker repairable on demand, so a scattered 1-5 bucket
+                        # gap is never silently ignored. The universe-wide sweep
+                        # keeps the stricter 30-minute threshold, so on-demand
+                        # repair stays cheap and bounded.
+                        if _has_multiday_intraday_hole(db, clean_ticker, interval, _floor, min_buckets=1):
                             import backfill_jobs as _bj
-                            if _bj.enqueue(clean_ticker, interval, _floor, now, reason="chart_open"):
-                                print(f"[BackfillJob] queued {clean_ticker} {interval} ({_floor.date()}..{now.date()})")
+                            _js, _je = _stable_job_range(interval, now)
+                            # Only queue when something is genuinely missing --
+                            # no no-op jobs.
+                            if _bj.has_missing(db, clean_ticker, interval, _js, _je):
+                                if _bj.enqueue(clean_ticker, interval, _js, _je, reason="chart_open"):
+                                    job_queued = True
+                                    print(f"[BackfillJob] queued {clean_ticker} {interval} ({_js.date()}..{_je.date()})")
                     except Exception:
                         pass
 
@@ -6891,10 +6920,19 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         _merged.sort(key=lambda _c: _c.get("time", 0))
         data = _merged
 
-    # Signal whether a background backfill is actively in flight for cold tickers
+    # Signal whether a repair is queued or actively in flight. This now covers the
+    # persistent-job path too (job_queued / an already-open job), so the frontend's
+    # bounded re-poll merges the repaired candles in instead of the user silently
+    # keeping an incomplete chart until they reload.
     bf_status = "idle"
-    if fill_needed:
-        bf_status = "backfilling"
+    if is_latest_request:
+        try:
+            import backfill_jobs as _bj
+            _open_job = _bj.has_open_job(clean_ticker, interval)
+        except Exception:
+            _open_job = False
+        if fill_needed or job_queued or _open_job:
+            bf_status = "backfilling"
 
     return {"data": data, "has_more": has_more, "backfill_status": bf_status}
 
@@ -8052,26 +8090,76 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
     return n
 
 
-def _has_multiday_intraday_hole(db, ticker: str, interval: str, floor, days: int = 3) -> bool:
-    """True when two consecutive stored bars are more than `days` apart.
+# A gap is only worth a provider request when a meaningful run of the session is
+# absent. 6 x 5m = 30 minutes: comfortably above the isolated single-bucket holes
+# an illiquid name legitimately has (a 5-minute window with no trade produces no
+# candle), and far below a whole missing session (75 buckets).
+_GAP_MIN_REPAIRABLE_BUCKETS = 6
 
-    A "newest bar is stale" test misses the real case: RPSGVENT's 5m newest bar is
-    today, yet 17 Aug -> 9 Oct is missing. A >3-day jump between consecutive bars
-    is never a weekend (Fri->Mon is 3), so it is genuinely missing sessions.
-    Index-backed per ticker.
+
+def _absent_session_buckets(prev, cur) -> int:
+    """Count the NSE session buckets the store should hold strictly between two
+    stored bars.
+
+    Calendar-correct, unlike a raw `cur - prev` day count: a weekend or a holiday
+    contributes nothing. That is the fix for the old false positive --
+    `1 Oct 15:25 -> 5 Oct 09:15` is 3d17h50m on the calendar, but 2 Oct was
+    Gandhi Jayanti and 3-4 Oct the weekend, so the correct answer is 0 missing.
+    """
+    from backfill_jobs import session_buckets
+    n = 0
+    d = prev.date()
+    while d <= cur.date():
+        if is_trading_day(d, NSE_HOLIDAYS):
+            for b in session_buckets(d):
+                if prev < b < cur:
+                    n += 1
+        d += timedelta(days=1)
+    return n
+
+
+def _max_absent_run(db, ticker: str, interval: str, floor) -> int:
+    """Longest run of consecutive missing session buckets between stored bars.
+
+    Consecutive stored bars bound a contiguous run by construction, so the largest
+    per-pair count IS the largest run. One bounded, index-backed query: the SQL
+    pre-filters to overnight-and-longer jumps (a normal intraday step is <= 5 min)
+    and the calendar decision is made in Python.
     """
     from sqlalchemy import text as _sa_text
     try:
-        row = db.execute(_sa_text(
-            "SELECT 1 FROM ("
+        rows = db.execute(_sa_text(
+            "SELECT timestamp, prev FROM ("
             "  SELECT timestamp, lag(timestamp) OVER (ORDER BY timestamp) AS prev"
             "  FROM candles WHERE ticker=:t AND timeframe=:tf AND timestamp >= :floor"
-            ") g WHERE prev IS NOT NULL AND timestamp - prev > :gap LIMIT 1"
-        ), {"t": ticker, "tf": interval, "floor": floor,
-            "gap": timedelta(days=days)}).fetchone()
-        return row is not None
+            ") g WHERE prev IS NOT NULL AND timestamp - prev > interval '20 hours' "
+            "ORDER BY timestamp DESC LIMIT 50"
+        ), {"t": ticker, "tf": interval, "floor": floor}).fetchall()
     except Exception:
-        return False
+        return 0
+    best = 0
+    for cur, prev in rows:
+        n = _absent_session_buckets(prev, cur)
+        if n > best:
+            best = n
+    return best
+
+
+def _has_multiday_intraday_hole(db, ticker: str, interval: str, floor, days: int = 3,
+                                min_buckets: int = _GAP_MIN_REPAIRABLE_BUCKETS) -> bool:
+    """True when `min_buckets` consecutive expected session buckets are missing.
+
+    Replaces the old raw-calendar test (`timestamp - prev > days`), which fired on
+    every holiday-extended weekend and so enqueued a repair for nearly every
+    ticker (verified: two >3-day jumps in the window were both purely holiday +
+    weekend, and 8 jobs had already finished as no-ops). Counting NSE session
+    buckets is calendar-correct and needs no extra provider calls.
+
+    `days` is retained only for call-site compatibility; the decision is
+    bucket-based. Callers pass `min_buckets=1` to repair ANY missing bucket
+    on demand (a scattered 1-5 bucket gap must not be silently ignored).
+    """
+    return _max_absent_run(db, ticker, interval, floor) >= min_buckets
 
 
 # ---- Background intraday gap sweep ---------------------------------------
@@ -8106,7 +8194,6 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
             _gap_sweep_cursor = 0
         chunk = tickers[_gap_sweep_cursor:_gap_sweep_cursor + batch]
         _gap_sweep_cursor = (_gap_sweep_cursor + batch) % max(1, len(tickers))
-        today_open = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=9, minutes=15)
         for raw in chunk:
             t = (raw or '').upper().replace('.NS', '').replace('.BO', '')
             if not t:
@@ -8115,22 +8202,22 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
                 "SELECT max(timestamp) FROM candles WHERE ticker=:t AND timeframe='5m'"
             ), {"t": t}).scalar()
             floor = now - timedelta(days=65)
-            # A real multi-day hole outranks the short cooldown that the request
-            # path's own (today-only) fill just set -- otherwise the wide fill is
-            # always skipped and the hole never closes. The sweep is paced globally
-            # and runs every ~5 min, so this cannot hammer the provider.
+            # 30-minute threshold (the default), NOT 1 bucket: the sweep covers the
+            # whole universe, so it only spends quota on session-scale gaps. A
+            # scattered 1-5 bucket gap stays recoverable on demand via the
+            # chart-open path. Session-aware, so a holiday-extended weekend no
+            # longer enqueues a job for nearly every ticker.
             if newest is not None and not _has_multiday_intraday_hole(db, t, '5m', floor):
-                continue                      # no >3-day hole -> nothing to sweep
-            start = newest or _intraday_cutoff('5m')
-            if newest is not None and (today_open - newest) < timedelta(days=3):
-                # Newest is current; the hole is older, so fill the whole window.
-                start = _intraday_cutoff('5m')
+                continue                      # nothing session-scale missing
             try:
-                # Enqueue an EXACT-range job. The leased worker computes the missing
-                # 5m buckets, fetches only those, and counts a repair only after the
-                # persisted rows are re-read and verified.
+                # Enqueue an EXACT-range job with session-stable bounds, so a
+                # repeat pass reuses the open job instead of adding a duplicate
+                # row. The leased worker computes the missing 5m buckets, fetches
+                # only those, and counts a repair only after the persisted rows
+                # are re-read and verified.
                 import backfill_jobs as _bj
-                if _bj.enqueue(t, '5m', start, now, reason="sweep"):
+                _js, _je = _stable_job_range('5m', now)
+                if _bj.enqueue(t, '5m', _js, _je, reason="sweep"):
                     filled += 1
             except Exception as e:
                 print(f"[GapSweep] {t} enqueue failed: {e}")

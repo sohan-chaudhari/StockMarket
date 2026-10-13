@@ -183,7 +183,11 @@ class JobStoreGuaranteeTests(unittest.TestCase):
         self.assertIn("DELETE FROM backfill_jobs", self.src)
 
     def test_failure_kinds_are_distinguished(self):
-        for kind in ('"throttled"', '"provider"', '"persist"', '"empty_response"'):
+        # Each outcome the worker can reach must be nameable: a throttle, a
+        # transient error, an invalid symbol, a persistence failure, a
+        # successful-but-empty response, proven absence, and pre-listing data.
+        for kind in ('"throttled"', '"transient"', '"unsupported"', '"persist"',
+                     '"empty_response"', '"provider_absent"', '"pre_data"'):
             self.assertIn(kind, self.src)
 
     def test_market_hours_priority_in_worker(self):

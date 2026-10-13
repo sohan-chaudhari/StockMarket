@@ -107,9 +107,11 @@ class ArchitectureTests(unittest.TestCase):
 
     def test_sweep_enqueues_exact_range_jobs(self):
         i = self.src.find("def _sweep_intraday_gaps_once")
-        block = self.src[i:i + 3200]
-        self.assertIn("_bj.enqueue(t, '5m', start, now", block,
+        block = self.src[i:i + 3600]
+        self.assertIn("_bj.enqueue(t, '5m', _js, _je", block,
                       "the sweep must schedule an exact-range repair job")
+        self.assertIn("_stable_job_range('5m', now)", block,
+                      "the sweep must use session-stable bounds, not a raw now")
         self.assertNotIn("perform_on_demand_backfill(t, '5m'", block,
                          "the sweep must not fetch inline; the leased worker owns fetching")
 

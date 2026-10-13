@@ -1,0 +1,381 @@
+"""Targeted regressions for session-aware intraday gap detection and repair.
+
+Covers: holidays, overnight sessions, full-session gaps, older intraday gaps,
+scattered 1-5 bucket gaps, duplicate-job prevention, retry/terminal outcomes,
+pre-listing handling, and the frontend repair signal.
+
+No provider calls and no database: the DB-facing seams are patched, so these run
+anywhere (the production schema is Postgres-only in places).
+"""
+import datetime
+import inspect
+import os
+import unittest
+from datetime import datetime as dt, timedelta
+from unittest import mock
+
+import backfill_jobs as bj
+import main
+
+HOLIDAYS = {datetime.date(2026, 10, 2), datetime.date(2026, 9, 14)}
+
+
+class _StubDb:
+    """Returns pre-seeded (cur, prev) rows for the lag query."""
+
+    def __init__(self, pairs):
+        self._pairs = pairs
+
+    def execute(self, *_a, **_k):
+        pairs = self._pairs
+
+        class _R:
+            def fetchall(self_inner):
+                return pairs
+        return _R()
+
+
+class _FakeSession:
+    def close(self):
+        pass
+
+
+class SessionAwareDetectionTests(unittest.TestCase):
+    """The calendar must decide, not a raw day count."""
+
+    def setUp(self):
+        self._saved = set(main.NSE_HOLIDAYS)
+        main.NSE_HOLIDAYS.clear()
+        main.NSE_HOLIDAYS.update(HOLIDAYS)
+
+    def tearDown(self):
+        main.NSE_HOLIDAYS.clear()
+        main.NSE_HOLIDAYS.update(self._saved)
+
+    def test_holiday_extended_weekend_is_not_a_gap(self):
+        # Thu 1 Oct 15:25 -> Mon 5 Oct 09:15. 2 Oct = Gandhi Jayanti, 3-4 Oct
+        # weekend. The old raw >3-day test called this a hole and enqueued a job
+        # for nearly every ticker; the calendar says nothing is missing.
+        n = main._absent_session_buckets(dt(2026, 10, 1, 15, 25), dt(2026, 10, 5, 9, 15))
+        self.assertEqual(n, 0)
+
+    def test_normal_overnight_is_not_a_gap(self):
+        n = main._absent_session_buckets(dt(2026, 10, 5, 15, 25), dt(2026, 10, 6, 9, 15))
+        self.assertEqual(n, 0)
+
+    def test_ordinary_weekend_is_not_a_gap(self):
+        # Fri 9 Oct 15:25 -> Mon 12 Oct 09:15
+        n = main._absent_session_buckets(dt(2026, 10, 9, 15, 25), dt(2026, 10, 12, 9, 15))
+        self.assertEqual(n, 0)
+
+    def test_whole_missing_session_counts_75(self):
+        n = main._absent_session_buckets(dt(2026, 10, 5, 15, 25), dt(2026, 10, 7, 9, 15))
+        self.assertEqual(n, 75)
+
+    def test_multi_day_gap_counts_every_session(self):
+        # 5 Oct close -> 9 Oct open: 6, 7, 8 Oct are fully missing.
+        n = main._absent_session_buckets(dt(2026, 10, 5, 15, 25), dt(2026, 10, 9, 9, 15))
+        self.assertEqual(n, 225)
+
+    def test_thirty_minute_intraday_hole_is_repairable(self):
+        n = main._absent_session_buckets(dt(2026, 10, 6, 10, 0), dt(2026, 10, 6, 10, 35))
+        self.assertEqual(n, 6)
+        self.assertGreaterEqual(n, main._GAP_MIN_REPAIRABLE_BUCKETS)
+
+    def test_scattered_one_to_five_buckets_are_below_the_sweep_threshold(self):
+        n = main._absent_session_buckets(dt(2026, 10, 6, 10, 0), dt(2026, 10, 6, 10, 15))
+        self.assertEqual(n, 2)
+        self.assertLess(n, main._GAP_MIN_REPAIRABLE_BUCKETS)
+
+
+class DetectorThresholdTests(unittest.TestCase):
+    def setUp(self):
+        self._saved = set(main.NSE_HOLIDAYS)
+        main.NSE_HOLIDAYS.clear()
+        main.NSE_HOLIDAYS.update(HOLIDAYS)
+
+    def tearDown(self):
+        main.NSE_HOLIDAYS.clear()
+        main.NSE_HOLIDAYS.update(self._saved)
+
+    def test_holiday_only_window_is_not_a_hole(self):
+        db = _StubDb([(dt(2026, 10, 5, 9, 15), dt(2026, 10, 1, 15, 25))])
+        self.assertFalse(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1)))
+
+    def test_genuine_multi_day_gap_is_a_hole(self):
+        db = _StubDb([(dt(2026, 10, 9, 9, 15), dt(2026, 10, 5, 15, 25))])
+        self.assertTrue(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1)))
+
+    def test_scattered_small_gap_not_swept_but_repairable_on_demand(self):
+        # 2 consecutive buckets missing (an illiquid no-trade window).
+        db = _StubDb([(dt(2026, 10, 6, 10, 15), dt(2026, 10, 6, 10, 0))])
+        self.assertFalse(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1)),
+                         "the universe sweep must not chase a 2-bucket hole")
+        self.assertTrue(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 8, 1),
+                                                         min_buckets=1),
+                        "a chart open must still repair ANY missing bucket")
+
+    def test_older_intraday_gap_is_detected(self):
+        # A 40-minute hole 3 months back must still be found (the chart-open
+        # internal check only looks 5 days back).
+        db = _StubDb([(dt(2026, 7, 15, 11, 40), dt(2026, 7, 15, 11, 0))])
+        self.assertTrue(main._has_multiday_intraday_hole(db, "X", "5m", dt(2026, 1, 1)))
+
+    def test_query_failure_is_treated_as_no_hole(self):
+        class Boom:
+            def execute(self, *a, **k):
+                raise RuntimeError("no such table")
+        self.assertFalse(main._has_multiday_intraday_hole(Boom(), "X", "5m", dt(2026, 8, 1)))
+
+
+class StableJobRangeTests(unittest.TestCase):
+    def test_range_is_stable_across_seconds(self):
+        a = main._stable_job_range("5m", dt(2026, 10, 13, 18, 10, 8))
+        b = main._stable_job_range("5m", dt(2026, 10, 13, 18, 39, 43))
+        self.assertEqual(a, b, "a now-derived key caused a duplicate job row per sweep pass")
+
+    def test_range_is_day_aligned(self):
+        s, e = main._stable_job_range("5m", dt(2026, 10, 13, 18, 10, 8))
+        self.assertEqual((s.hour, s.minute, s.second), (0, 0, 0))
+        self.assertEqual(e.date(), datetime.date(2026, 10, 13))
+        self.assertEqual(e.hour, 23)
+
+    def test_different_intervals_get_different_keys(self):
+        self.assertNotEqual(main._stable_job_range("5m", dt(2026, 10, 13, 12, 0)),
+                            main._stable_job_range("15m", dt(2026, 10, 13, 12, 0)))
+
+
+class DuplicateJobTests(unittest.TestCase):
+    def setUp(self):
+        self.src = inspect.getsource(bj)
+
+    def test_conflict_target_matches_the_partial_unique_index(self):
+        i = self.src.find("def enqueue(")
+        block = self.src[i:i + 1400]
+        self.assertIn("ON CONFLICT (ticker, exchange, interval, range_start, range_end)", block)
+        self.assertIn("uix_backfill_jobs_open", self.src)
+
+    def test_enqueue_is_idempotent_and_returns_the_existing_row(self):
+        i = self.src.find("def enqueue(")
+        block = self.src[i:i + 1400]
+        self.assertIn("DO UPDATE SET updated_at = NOW()", block)
+
+    def test_missing_ranges_excludes_recorded_absent_buckets(self):
+        day = datetime.date(2026, 10, 6)
+        expected = bj.session_buckets(day)
+        absent_bucket = expected[3]
+        db = mock.MagicMock()
+        with mock.patch.object(bj, "_stored_buckets", return_value=set()), \
+             mock.patch.object(bj, "_absent_buckets", return_value={absent_bucket}):
+            missing, _ = bj.missing_ranges(db, "X", "5m", dt(2026, 10, 6, 9, 15),
+                                           dt(2026, 10, 6, 15, 25),
+                                           now=dt(2026, 10, 7, 12, 0))
+        self.assertNotIn(absent_bucket, missing, "a proven-absent bucket must not be re-fetched")
+        self.assertIn(expected[4], missing)
+
+    def test_has_missing_gates_job_creation(self):
+        db = mock.MagicMock()
+        with mock.patch.object(bj, "missing_ranges", return_value=({dt(2026, 10, 6, 10, 0)}, [])):
+            self.assertTrue(bj.has_missing(db, "X", "5m", dt(2026, 8, 1), dt(2026, 10, 13)))
+        with mock.patch.object(bj, "missing_ranges", return_value=(set(), [])):
+            self.assertFalse(bj.has_missing(db, "X", "5m", dt(2026, 8, 1), dt(2026, 10, 13)))
+
+
+class RunJobOutcomeTests(unittest.TestCase):
+    """Terminal outcomes must be evidence-based, never guessed."""
+
+    MISSING = {dt(2026, 10, 6, 10, 0)}
+    RANGES = [(dt(2026, 8, 1), dt(2026, 10, 13))]
+
+    def setUp(self):
+        self.finish = mock.patch.object(bj, "finish").start()
+        self.mark = mock.patch.object(bj, "mark_absent", return_value=1).start()
+        mock.patch.object(bj.database, "SessionLocal", lambda: _FakeSession()).start()
+        mock.patch.object(bj, "_pre_data_floor", return_value=None).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def _run(self, missing_after, fetch=None, raises=None, pre_floor=None,
+             attempts=1, missing=None, rate_limited=False):
+        """missing_after = still-missing set re-read after persistence.
+        `raises` makes the provider call fail; otherwise `fetch` is returned."""
+        first = set(self.MISSING) if missing is None else set(missing)
+        seq = [(first, self.RANGES), (missing_after, [])]
+        with mock.patch.object(bj, "missing_ranges", side_effect=seq), \
+             mock.patch.object(bj, "_pre_data_floor", return_value=pre_floor), \
+             mock.patch("aggregator.batch_flush_candles"), \
+             mock.patch("historical_service.rate_limit_backoff_remaining", return_value=0.0), \
+             mock.patch("historical_service._looks_rate_limited", return_value=rate_limited), \
+             mock.patch("historical_service._retry_after_seconds", return_value=0.0):
+            svc = mock.MagicMock()
+            svc.is_logged_in = True
+            if raises is not None:
+                svc.get_historical_candles.side_effect = raises
+            else:
+                svc.get_historical_candles.return_value = [] if fetch is None else fetch
+            with mock.patch("historical_service.historical_service", svc):
+                status, detail = bj.run_job({
+                    "id": 1, "ticker": "X", "exchange": "NSE", "interval": "5m",
+                    "range_start": dt(2026, 8, 1), "range_end": dt(2026, 10, 13),
+                    "attempts": attempts})
+        return status, detail, svc
+
+    def _finish_status(self):
+        return self.finish.call_args[0][1]
+
+    def _finish_kind(self):
+        return self.finish.call_args[1].get("failure_kind")
+
+    def test_unsupported_symbol_fails_immediately(self):
+        from historical_service import HistoricalFetchError
+        err = HistoricalFetchError("Ticker 'AAPLUSTRAD' not found", retryable=False)
+        status, _d, svc = self._run(set(self.MISSING), raises=err)
+        self.assertEqual(status, "permanently_failed")
+        self.assertEqual(self._finish_kind(), "unsupported")
+        self.assertEqual(svc.get_historical_candles.call_count, 1,
+                         "an invalid symbol must not be retried 6 times")
+
+    def test_empty_responses_alone_never_become_provider_absent(self):
+        # Successful calls that simply returned nothing -> NOT proven absent.
+        status, _d, svc = self._run(set(self.MISSING), fetch=[])
+        self.assertEqual(status, "retry_wait")
+        self.assertEqual(self._finish_kind(), "empty_response")
+        self.assertFalse(self.mark.called, "absence must not be inferred from empty responses")
+        self.assertEqual(svc.get_historical_candles.call_count, 1)
+
+    def test_throttling_is_retry_wait(self):
+        from historical_service import HistoricalFetchError
+        status, _d, _s = self._run(
+            set(self.MISSING), rate_limited=True,
+            raises=HistoricalFetchError("Access denied because of exceeding access rate"))
+        self.assertEqual(status, "retry_wait")
+        self.assertEqual(self._finish_kind(), "throttled")
+
+    def test_transient_error_is_retry_wait(self):
+        status, _d, _s = self._run(set(self.MISSING), raises=RuntimeError("connection reset"))
+        self.assertEqual(status, "retry_wait")
+        self.assertEqual(self._finish_kind(), "transient")
+
+    def test_partial_response_is_partially_complete(self):
+        b1, b2 = dt(2026, 10, 6, 10, 0), dt(2026, 10, 6, 10, 5)
+        candles = [{"timestamp": dt(2026, 10, 6, 10, 30), "open": 1.0, "high": 1.0,
+                    "low": 1.0, "close": 1.0, "volume": 5}]
+        status, detail, _s = self._run({b2}, fetch=candles, missing={b1, b2})
+        self.assertEqual(status, "partially_complete")
+        self.assertEqual(detail["persisted"], 1)
+
+    def test_bracketed_omission_is_provider_absent(self):
+        # The response returned data BEFORE and AFTER the missing bucket but not
+        # the bucket itself -> proven absent, terminal, recorded.
+        candles = [{"timestamp": dt(2026, 10, 6, 9, 45), "open": 1.0, "high": 1.0,
+                    "low": 1.0, "close": 1.0, "volume": 1},
+                   {"timestamp": dt(2026, 10, 6, 10, 30), "open": 1.0, "high": 1.0,
+                    "low": 1.0, "close": 1.0, "volume": 1}]
+        status, detail, _s = self._run(set(self.MISSING), fetch=candles)
+        self.assertEqual(status, "complete_with_gaps")
+        self.assertEqual(self._finish_kind(), "provider_absent")
+        self.assertEqual(self.mark.call_args[0][4], "provider_absent")
+        self.assertEqual(detail["provider_absent"], 1)
+
+    def test_unbracketed_omission_is_not_provider_absent(self):
+        # Data only AFTER the bucket: a truncated range would look identical, so
+        # this must stay unresolved rather than being declared absent.
+        candles = [{"timestamp": dt(2026, 10, 6, 11, 0), "open": 1.0, "high": 1.0,
+                    "low": 1.0, "close": 1.0, "volume": 1}]
+        status, _d, _s = self._run(set(self.MISSING), fetch=candles)
+        self.assertEqual(status, "retry_wait")
+        self.assertFalse(self.mark.called)
+
+    def test_all_pre_data_is_labelled_pre_data_not_provider_absent(self):
+        floor = dt(2026, 10, 20)          # everything missing predates the floor
+        status, detail, svc = self._run(set(self.MISSING), fetch=[], pre_floor=floor)
+        self.assertEqual(status, "complete_with_gaps")
+        self.assertEqual(self._finish_kind(), "pre_data")
+        self.assertEqual(self.mark.call_args[0][4], "pre_data")
+        self.assertEqual(svc.get_historical_candles.call_count, 0,
+                         "a purely pre-listing window must not spend a request")
+
+    def test_complete_only_when_nothing_is_missing(self):
+        status, detail, _s = self._run(set(), fetch=[])
+        self.assertEqual(status, "complete")
+        self.assertEqual(self._finish_status(), "complete")
+        self.assertEqual(detail["persisted"], len(self.MISSING))
+
+    def test_exhausted_attempts_fail_permanently(self):
+        status, _d, _s = self._run(set(self.MISSING), fetch=[], attempts=bj.JOB_MAX_ATTEMPTS)
+        self.assertEqual(status, "permanently_failed")
+
+
+class StatusContractTests(unittest.TestCase):
+    """Requirement: verify statuses against the real schema and queries."""
+
+    def setUp(self):
+        self.src = inspect.getsource(bj)
+
+    def test_status_values_fit_the_column(self):
+        for s in ("complete", "complete_with_gaps", "permanently_failed",
+                  "retry_wait", "partially_complete", "queued", "running"):
+            self.assertLessEqual(len(s), 20, "%s exceeds VARCHAR(20)" % s)
+
+    def test_claim_query_excludes_terminal_statuses(self):
+        i = self.src.find("def claim(")
+        block = self.src[i:i + 1800]
+        self.assertIn("status = 'queued'", block)
+        self.assertIn("status = 'retry_wait'", block)
+        self.assertIn("status = 'partially_complete'", block)
+        self.assertNotIn("complete_with_gaps", block, "a terminal job must never be re-claimed")
+        self.assertNotIn("'complete'", block)
+
+    def test_retry_backoff_only_applies_to_retryable_states(self):
+        i = self.src.find("def finish(")
+        block = self.src[i:i + 900]
+        self.assertIn('if status in ("retry_wait", "partially_complete")', block)
+
+    def test_retention_includes_the_new_terminal_status(self):
+        i = self.src.find("def cleanup(")
+        self.assertIn("complete_with_gaps", self.src[i:i + 700])
+
+    def test_absent_reasons_are_distinct(self):
+        for reason in ("provider_absent", "pre_data"):
+            self.assertIn('"%s"' % reason, self.src)
+
+    def test_migration_file_matches_the_runtime_ddl(self):
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "migrations", "v009_backfill_absent.sql")
+        self.assertTrue(os.path.exists(p), "v009 migration missing")
+        with open(p) as f:
+            sql = f.read()
+        self.assertIn("CREATE TABLE IF NOT EXISTS backfill_absent", sql)
+        self.assertIn("CREATE UNIQUE INDEX IF NOT EXISTS uix_backfill_absent", sql)
+        self.assertIn("backfill_absent", self.src, "runtime DDL must create it too")
+
+
+class FrontendRepairSignalTests(unittest.TestCase):
+    def _main_src(self):
+        return inspect.getsource(main.get_intraday_paginated)
+
+    def test_backfill_status_covers_a_queued_job(self):
+        src = self._main_src()
+        self.assertIn("job_queued", src)
+        self.assertIn("has_open_job", src)
+        self.assertIn('bf_status = "backfilling"', src)
+
+    def test_chart_open_repairs_any_missing_bucket_but_gates_on_has_missing(self):
+        src = self._main_src()
+        self.assertIn("min_buckets=1", src)
+        self.assertIn("has_missing", src)
+        self.assertIn("_stable_job_range", src)
+
+    def test_frontend_polling_stays_bounded_and_merges(self):
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "frontend", "dashboard.js")
+        if not os.path.exists(p):
+            self.skipTest("frontend not present")
+        with open(p, encoding="utf-8", errors="ignore") as f:
+            js = f.read()
+        self.assertIn("backfill_status", js)
+        self.assertIn("_bgPollCount < 2", js, "background polling must stay bounded")
+        self.assertIn("_renderChartData(refData, range)", js, "must merge, not reset")
+
+
+if __name__ == "__main__":
+    unittest.main()

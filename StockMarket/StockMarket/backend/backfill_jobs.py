@@ -75,6 +75,31 @@ CREATE INDEX IF NOT EXISTS ix_backfill_jobs_claimable
     ON backfill_jobs (status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS ix_backfill_jobs_ticker
     ON backfill_jobs (ticker, interval);
+
+-- Buckets that cannot be repaired, recorded so they are never re-fetched.
+-- `reason` separates two very different things:
+--   provider_absent -- PROVEN: a successful provider response bracketed the
+--                      bucket (returned data before AND after it) and omitted
+--                      it, which rules out a truncated range.
+--   pre_data        -- the bucket predates any observed data for the ticker
+--                      (or its listing date when the schema provides one). It is
+--                      deliberately NOT labelled provider_absent, because with no
+--                      listing metadata a pre-listing period is indistinguishable
+--                      from a gap.
+CREATE TABLE IF NOT EXISTS backfill_absent (
+    id           BIGSERIAL PRIMARY KEY,
+    ticker       VARCHAR(32)  NOT NULL,
+    exchange     VARCHAR(8)   NOT NULL DEFAULT 'NSE',
+    interval     VARCHAR(8)   NOT NULL,
+    bucket       TIMESTAMP    NOT NULL,
+    reason       VARCHAR(24)  NOT NULL,
+    evidence     VARCHAR(200),
+    confirmed_at TIMESTAMP    NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uix_backfill_absent
+    ON backfill_absent (ticker, exchange, interval, bucket);
+CREATE INDEX IF NOT EXISTS ix_backfill_absent_lookup
+    ON backfill_absent (ticker, interval, bucket);
 """
 
 _ddl_lock = threading.Lock()
@@ -152,6 +177,59 @@ def _stored_buckets(db, ticker, interval, range_start, range_end) -> set:
     return {r[0] for r in rows}
 
 
+def _absent_buckets(db, ticker, interval, range_start, range_end) -> set:
+    """Buckets already recorded as unavailable (see backfill_absent).
+
+    Excluded from fetching so a proven-absent interval is never re-requested --
+    that is what stops an illiquid ticker's no-trade buckets from re-triggering a
+    repair on every chart open. The buckets are *recorded*, not dropped: the
+    ledger carries the reason and the evidence.
+    """
+    try:
+        rows = db.execute(text(
+            "SELECT bucket FROM backfill_absent WHERE ticker = :t AND interval = :tf "
+            "AND bucket >= :s AND bucket <= :e"
+        ), {"t": ticker, "tf": interval, "s": range_start, "e": range_end}).fetchall()
+        return {r[0] for r in rows}
+    except Exception:
+        return set()          # table absent (e.g. a bare test schema) -> nothing recorded
+
+
+def _pre_data_floor(db, ticker, interval, range_start):
+    """Earliest moment this ticker is known to have data.
+
+    Uses a real listing date when the schema provides one. `stock_metadata` has
+    NO listing_date column today (verified), so this falls back to the ticker's
+    earliest stored candle -- which also covers retention: 5m keeps only ~60
+    sessions, so anything older is intentionally gone rather than missing.
+
+    Buckets before this floor are recorded as `pre_data`, never as
+    `provider_absent`: with no listing metadata a pre-listing period cannot be
+    told apart from a provider gap, so the honest reason is recorded instead of
+    a guess.
+    """
+    try:
+        row = db.execute(text(
+            "SELECT listing_date FROM stock_metadata WHERE ticker = :t LIMIT 1"),
+            {"t": ticker}).fetchone()
+        if row and row[0]:
+            ld = row[0]
+            if not isinstance(ld, datetime):
+                ld = datetime(ld.year, ld.month, ld.day, SESSION_START[0], SESSION_START[1])
+            return ld
+    except Exception:
+        pass                  # no listing_date column in this schema
+    try:
+        row = db.execute(text(
+            "SELECT min(timestamp) FROM candles WHERE ticker = :t AND timeframe = :tf"),
+            {"t": ticker, "tf": interval}).fetchone()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return None
+
+
 def missing_ranges(db, ticker, interval, range_start, range_end, now=None):
     """Exact missing ranges, merged into provider-sized requests.
 
@@ -159,10 +237,14 @@ def missing_ranges(db, ticker, interval, range_start, range_end, now=None):
     only while the merged span stays inside the provider's per-request limit, so
     an older multi-week gap becomes one or more bounded requests -- never a
     substitute "today only" range.
+
+    Buckets already proven unavailable (backfill_absent) are excluded, so they
+    are neither re-fetched nor re-reported as missing.
     """
     expected = expected_buckets(range_start, range_end, now=now)
     stored = _stored_buckets(db, ticker, interval, range_start, range_end)
-    missing = [b for b in expected if b not in stored]
+    absent = _absent_buckets(db, ticker, interval, range_start, range_end)
+    missing = [b for b in expected if b not in stored and b not in absent]
     if not missing:
         return set(), []
     span = timedelta(days=MAX_SPAN_DAYS.get(interval, 60) - 1)
@@ -219,6 +301,71 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
         return None
     finally:
         db.close()
+
+
+def has_missing(db, ticker, interval, range_start, range_end, now=None) -> bool:
+    """True when at least one expected bucket is genuinely missing.
+
+    Gates job creation so a request that has nothing to repair never creates a
+    job (measured: 8 jobs had already finished as no-ops, and holiday-extended
+    weekends used to enqueue one per ticker).
+    """
+    try:
+        missing, _ = missing_ranges(db, ticker, interval, range_start, range_end, now=now)
+        return bool(missing)
+    except Exception:
+        return False
+
+
+def has_open_job(ticker, interval) -> bool:
+    """True when a repair for this ticker/interval is queued or in flight.
+
+    Lets the chart report `backfilling` for a repair it did not itself enqueue,
+    so the frontend's bounded re-poll merges the repaired candles in.
+    """
+    t = (ticker or "").strip().upper().replace(".NS", "").replace(".BO", "")
+    if not t:
+        return False
+    try:
+        ensure_table()
+        db = database.SessionLocal()
+        try:
+            return db.execute(text(
+                "SELECT 1 FROM backfill_jobs WHERE ticker = :t AND interval = :i "
+                "AND status IN ('queued','running','retry_wait','partially_complete') LIMIT 1"
+            ), {"t": t, "i": interval}).fetchone() is not None
+        finally:
+            db.close()
+    except Exception:
+        return False
+
+
+def mark_absent(ticker, exchange, interval, buckets, reason, evidence=""):
+    """Record buckets that cannot be repaired, so they are never re-fetched.
+
+    `reason` is 'provider_absent' (proven by a bracketing successful response) or
+    'pre_data' (before any observed data / listing date). Idempotent.
+    """
+    buckets = list(buckets or [])
+    if not buckets:
+        return 0
+    try:
+        ensure_table()
+        db = database.SessionLocal()
+        try:
+            db.execute(text("""
+                INSERT INTO backfill_absent (ticker, exchange, interval, bucket, reason, evidence)
+                VALUES (:t, :x, :i, :b, :r, :ev)
+                ON CONFLICT (ticker, exchange, interval, bucket) DO NOTHING
+            """), [{"t": ticker, "x": exchange, "i": interval, "b": b,
+                    "r": reason, "ev": (evidence or "")[:200]} for b in buckets])
+            db.commit()
+            return len(buckets)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[BackfillJob] mark_absent({ticker} {interval} {reason}) failed: {e}")
+        return 0
 
 
 def claim(worker_id, limit=1):
@@ -289,13 +436,14 @@ def finish(job_id, status, *, fetched=0, persisted=0, remaining=0, expected=None
 
 
 def cleanup(days=None):
-    """Retention: completed/permanently-failed jobs are not kept forever."""
+    """Retention: terminal jobs are not kept forever."""
     ensure_table()
     days = days or JOB_RETENTION_DAYS
     db = database.SessionLocal()
     try:
         r = db.execute(text(
-            "DELETE FROM backfill_jobs WHERE status IN ('complete','permanently_failed') "
+            "DELETE FROM backfill_jobs "
+            "WHERE status IN ('complete','complete_with_gaps','permanently_failed') "
             "AND updated_at < NOW() - make_interval(days => :d)"), {"d": days})
         db.commit()
         return r.rowcount or 0
@@ -327,7 +475,24 @@ _ANGEL_INTERVAL = {"1m": "ONE_MINUTE", "5m": "FIVE_MINUTE", "15m": "FIFTEEN_MINU
 
 
 def run_job(job):
-    """Returns (status, detail). Only `complete` means the range is genuinely filled."""
+    """Returns (status, detail).
+
+    Terminal outcomes are distinguished by EVIDENCE, never guessed:
+
+      complete            -- verified: every expected bucket is now stored.
+      complete_with_gaps  -- finished; specific buckets recorded as unavailable.
+                             The reason is explicit: `provider_absent` (a
+                             successful response bracketed the bucket and omitted
+                             it) or `pre_data` (predates any observed data).
+      permanently_failed  -- unsupported/invalid symbol (not retryable).
+      retry_wait          -- throttled or transient provider error; bounded backoff.
+      partially_complete  -- the response was partial; some buckets were persisted.
+
+    An interval is NEVER called provider_absent merely because attempts returned
+    nothing: it requires a fetch that SUCCEEDED and whose returned span brackets
+    the bucket (data before AND after) while omitting it, which rules out a
+    truncated range.
+    """
     import historical_service as hs
     from historical_service import HistoricalFetchError
 
@@ -335,6 +500,7 @@ def run_job(job):
     try:
         missing, ranges = missing_ranges(db, job["ticker"], job["interval"],
                                         job["range_start"], job["range_end"])
+        floor = _pre_data_floor(db, job["ticker"], job["interval"], job["range_start"])
     finally:
         db.close()
 
@@ -344,6 +510,20 @@ def run_job(job):
                expected=0, failure_kind=None)
         return "complete", {"expected": 0, "persisted": 0, "remaining": 0}
 
+    # Buckets before any observed data are `pre_data`, deliberately NOT
+    # provider_absent -- with no listing metadata they cannot be told apart.
+    pre_data = {b for b in missing if floor is not None and b < floor}
+
+    # Nothing the provider could plausibly supply -> do not spend a request.
+    if pre_data and len(pre_data) == expected_n:
+        mark_absent(job["ticker"], job["exchange"], job["interval"], pre_data,
+                    "pre_data", "before earliest observed data %s" % floor)
+        finish(job["id"], "complete_with_gaps", fetched=0, persisted=0,
+               remaining=expected_n, expected=expected_n,
+               error="all missing buckets predate any observed data for this ticker",
+               failure_kind="pre_data")
+        return "complete_with_gaps", {"remaining": expected_n, "reason": "pre_data"}
+
     # Respect the shared cooldown before spending a request.
     if hs.rate_limit_backoff_remaining() > 0:
         finish(job["id"], "retry_wait", expected=expected_n, remaining=expected_n,
@@ -351,10 +531,13 @@ def run_job(job):
                retry_after=hs.rate_limit_backoff_remaining(), attempts=job["attempts"])
         return "retry_wait", {"reason": "cooldown"}
 
-    fetched = persisted = 0
+    fetched = 0
     last_err = None
     kind = None
     retry_after = 0.0
+    unsupported = False
+    # (range_start, range_end, min_returned_ts, max_returned_ts, call_succeeded)
+    served = []
     svc = hs.historical_service
     for (r_start, r_end) in ranges:
         try:
@@ -363,16 +546,24 @@ def run_job(job):
             candles = svc.get_historical_candles(
                 ticker=job["ticker"], exchange=job["exchange"],
                 interval=_ANGEL_INTERVAL[job["interval"]],
-                from_date=r_start, to_date=r_end, raise_on_error=True)
+                from_date=r_start, to_date=r_end, raise_on_error=True) or []
         except HistoricalFetchError as e:
-            last_err, kind = str(e), ("throttled" if hs._looks_rate_limited(e) else "provider")
+            last_err = str(e)
+            if not e.retryable:
+                unsupported, kind = True, "unsupported"      # invalid/unknown symbol
+            else:
+                kind = "throttled" if hs._looks_rate_limited(e) else "transient"
             retry_after = max(retry_after, hs._retry_after_seconds(e))
+            served.append((r_start, r_end, None, None, False))
             break
         except Exception as e:
-            last_err, kind = str(e), "provider"
+            last_err, kind = str(e), "transient"
+            served.append((r_start, r_end, None, None, False))
             break
-        fetched += len(candles or [])
+        fetched += len(candles)
         if candles:
+            ts = [c["timestamp"] for c in candles]
+            served.append((r_start, r_end, min(ts), max(ts), True))
             try:
                 from aggregator import batch_flush_candles
                 batch_flush_candles([{
@@ -384,20 +575,58 @@ def run_job(job):
             except Exception as e:
                 last_err, kind = f"persist failed: {e}", "persist"
                 break
+        else:
+            # a successful response that genuinely contained nothing for the range
+            served.append((r_start, r_end, None, None, True))
 
     # ── verification: re-read what is ACTUALLY stored for the requested range ──
     db = database.SessionLocal()
     try:
         still_missing, _ = missing_ranges(db, job["ticker"], job["interval"],
                                           job["range_start"], job["range_end"])
-        persisted = expected_n - len(still_missing)
     finally:
         db.close()
+    persisted = expected_n - len(still_missing)
 
     if not still_missing:
         finish(job["id"], "complete", fetched=fetched, persisted=persisted,
                remaining=0, expected=expected_n)
         return "complete", {"expected": expected_n, "fetched": fetched, "persisted": persisted}
+
+    if unsupported:
+        finish(job["id"], "permanently_failed", fetched=fetched, persisted=persisted,
+               remaining=len(still_missing), expected=expected_n,
+               error=last_err or "unsupported symbol", failure_kind="unsupported")
+        return "permanently_failed", {"remaining": len(still_missing), "error": last_err}
+
+    # provider_absent needs EVIDENCE: the call succeeded and its returned span
+    # brackets the bucket (a candle before AND after it) while omitting it.
+    bracketed = set()
+    for b in still_missing:
+        if b in pre_data:
+            continue
+        for (s, e, lo, hi, ok) in served:
+            if ok and lo is not None and s <= b <= e and lo < b < hi:
+                bracketed.add(b)
+                break
+    if bracketed:
+        mark_absent(job["ticker"], job["exchange"], job["interval"], bracketed,
+                    "provider_absent",
+                    "successful response returned data before and after the bucket without returning it")
+    if pre_data:
+        mark_absent(job["ticker"], job["exchange"], job["interval"], pre_data,
+                    "pre_data", "before earliest observed data %s" % floor)
+
+    unresolved = {b for b in still_missing if b not in bracketed and b not in pre_data}
+    if not unresolved:
+        finish(job["id"], "complete_with_gaps", fetched=fetched, persisted=persisted,
+               remaining=len(still_missing), expected=expected_n,
+               error="%d interval(s) recorded as unavailable" % len(bracketed | pre_data),
+               failure_kind="provider_absent" if bracketed else "pre_data")
+        return "complete_with_gaps", {"remaining": len(still_missing),
+                                      "provider_absent": len(bracketed),
+                                      "pre_data": len(pre_data)}
+
     if persisted > 0:
         finish(job["id"], "partially_complete", fetched=fetched, persisted=persisted,
                remaining=len(still_missing), expected=expected_n,
@@ -405,11 +634,13 @@ def run_job(job):
                failure_kind=kind or "empty_response", retry_after=retry_after,
                attempts=job["attempts"])
         return "partially_complete", {"remaining": len(still_missing), "persisted": persisted}
+
     if job["attempts"] >= JOB_MAX_ATTEMPTS:
         finish(job["id"], "permanently_failed", fetched=fetched, persisted=0,
                remaining=len(still_missing), expected=expected_n,
                error=last_err or "no data after max attempts", failure_kind=kind or "unknown")
         return "permanently_failed", {"remaining": len(still_missing), "error": last_err}
+
     finish(job["id"], "retry_wait", fetched=fetched, persisted=0,
            remaining=len(still_missing), expected=expected_n,
            error=last_err or "no candles returned", failure_kind=kind or "empty_response",
