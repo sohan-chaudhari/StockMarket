@@ -134,33 +134,27 @@ class SessionOpenGapTests(unittest.TestCase):
         self._call()
         self.assertTrue(self.calls, "an internal same-day hole must still trigger a backfill")
 
-    def test_opened_ticker_with_stale_data_is_queued_for_the_sweep(self):
+    def test_opened_ticker_with_a_hole_is_queued_for_the_sweep(self):
         # The request path ENQUEUES rather than fetching: the background sweep does
         # the paced fetching, so the request stays fast and provider usage stays
         # under Angel One's rate limit. Once stored, the next visitor gets it from
         # the DB with no provider call.
-        db = self.Session()
-        try:
-            # Two sessions 30 days apart -> a real multi-day hole in the window.
-            for d in (10, 40):
-                for ts in self._session_bars(SESSION_OPEN - timedelta(days=d)):
-                    db.add(models.Candle(ticker=TICKER, timeframe="5m", timestamp=ts,
-                                         open=100.0, high=101.0, low=99.0, close=100.5,
-                                         volume=1000, is_completed=True))
-            db.commit()
-        finally:
-            db.close()
+        #
+        # The hole query is Postgres-only (interval arithmetic), so the detector is
+        # patched here; its real behaviour is covered by live verification.
+        self._seed([0, 5, 10, 15, 20, 25])
         main._gap_sweep_queue.clear()
-        self._call()
+        with patch.object(main, "_has_multiday_intraday_hole", lambda *a, **k: True):
+            self._call()
         self.assertIn(TICKER, main._gap_sweep_queue,
-                      "opening a ticker whose intraday data stops days ago must queue it")
+                      "opening a ticker with a multi-day hole must queue it")
 
     def test_fresh_ticker_is_not_queued(self):
         self._seed([0, 5, 10, 15, 20, 25])
         main._gap_sweep_queue.clear()
         self._call()
         self.assertNotIn(TICKER, main._gap_sweep_queue,
-                         "a ticker with current data must not be queued")
+                         "a ticker with current, hole-free data must not be queued")
 
     def test_weekend_gap_is_not_a_hole(self):
         # Fri -> Mon is 3 calendar days and must NOT be treated as missing data.
