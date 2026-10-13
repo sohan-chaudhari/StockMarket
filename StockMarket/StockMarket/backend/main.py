@@ -6553,8 +6553,15 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 if today_candles:
                     earliest_today = today_candles[-1].timestamp
                     session_open_dt = datetime.combine(today_date, datetime.min.time()) + timedelta(hours=9, minutes=15)
-                    # If earliest candle is > 2 buckets past session open, morning session is missing
-                    if earliest_today > (session_open_dt + timedelta(minutes=bucket_min * 2)):
+                    # The opening bucket (09:15) must be present. A tolerance of
+                    # `bucket_min * 2` made exactly the common 09:15+09:20 gap
+                    # invisible -- earliest == 09:25 was NOT > 09:25 -- so the
+                    # backfill never ran and the chart simply started at 09:25.
+                    # One bucket of tolerance still absorbs a single legitimately
+                    # empty opening bucket (illiquid names) while catching the
+                    # reported two-bucket gap; holes AFTER the earliest candle are
+                    # handled by the internal-gap check below.
+                    if earliest_today > (session_open_dt + timedelta(minutes=bucket_min)):
                         fill_start = session_open_dt if fill_start is None else min(fill_start, session_open_dt)
                         fill_needed = True
                         print(f"[GapFill] Morning session gap detected for {clean_ticker} {interval}: earliest={earliest_today}, filling from {session_open_dt}")
