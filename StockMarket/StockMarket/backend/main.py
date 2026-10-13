@@ -1413,6 +1413,42 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             except Exception as e:
                 print(f"[GapFill] Index YFinance fetch failed for {clean_ticker}: {e}")
 
+        # ── 5-MINUTE IS THE SOURCE OF TRUTH ──────────────────────────────────
+        # 15m/30m/1h are DERIVED, never independently downloaded. If the stored
+        # 5-minute history covers every TRADING session in the requested range we
+        # resample it (CandleResampler aligns buckets to the 09:15 NSE open) and
+        # spend no provider request on the same history again. Only when the
+        # 5-minute source is genuinely incomplete do we fall back to the provider,
+        # so an incomplete aggregate is never presented as complete.
+        if interval in ("15m", "30m", "1h"):
+            _src = []
+            try:
+                with database.SessionLocal() as _rdb:
+                    _rows = _rdb.query(model).filter(
+                        model.ticker == clean_ticker, model.timeframe == '5m',
+                        model.timestamp >= backfill_start, model.timestamp <= now,
+                    ).order_by(model.timestamp.asc()).all()
+                    _have = {r.timestamp.date() for r in _rows}
+                    _src = [{"timestamp": r.timestamp, "open": float(r.open),
+                             "high": float(r.high), "low": float(r.low),
+                             "close": float(r.close), "volume": int(r.volume)}
+                            for r in _rows]
+            except Exception as _rd_err:
+                print(f"[Resample] {clean_ticker} {interval}: source check failed: {_rd_err}")
+            _need = _trading_days_between(backfill_start, now)
+            if _src and _need and _need.issubset(_have):
+                try:
+                    from resampler import CandleResampler
+                    intraday_candles = CandleResampler.resample_5m_to(_src, interval)
+                    print(f"[Resample] {clean_ticker} {interval}: built {len(intraday_candles)} "
+                          f"candles from {len(_src)} stored 5m rows (0 provider requests)")
+                except Exception as _rs_err:
+                    print(f"[Resample] {clean_ticker} {interval}: resample failed: {_rs_err}")
+                    intraday_candles = []
+            else:
+                print(f"[Resample] {clean_ticker} {interval}: 5m source incomplete "
+                      f"({len(_have)}/{len(_need)} sessions) — falling back to provider")
+
         if not intraday_candles:
             angel_interval_map = {
                 "1m": "ONE_MINUTE",
@@ -2819,6 +2855,27 @@ def is_market_open_now(dt=None):
     market_start = now.replace(hour=9, minute=15, second=0, microsecond=0)
     market_end = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return market_start <= now <= market_end
+
+
+def _trading_days_between(start_dt, end_dt) -> set:
+    """IST dates in [start, end] that are NSE trading days.
+
+    Used to decide whether stored 5-minute data genuinely covers a requested range
+    before deriving higher timeframes from it. Weekends and exchange holidays are
+    NOT missing data, so they are excluded here rather than "repaired".
+    """
+    out = set()
+    try:
+        d = start_dt.date() if hasattr(start_dt, "date") else start_dt
+        e = end_dt.date() if hasattr(end_dt, "date") else end_dt
+        cur = d
+        while cur <= e:
+            if is_trading_day(cur, NSE_HOLIDAYS):
+                out.add(cur)
+            cur = cur + timedelta(days=1)
+    except Exception:
+        return set()
+    return out
 
 
 def is_trading_day_now(dt=None) -> bool:
@@ -8088,10 +8145,20 @@ async def _intraday_gap_sweep_loop():
     while True:
         try:
             priority = bool(_gap_sweep_queue)
-            if priority or tick % 15 == 0:
-                n = await asyncio.to_thread(_sweep_intraday_gaps_once, 3 if priority else _GAP_SWEEP_BATCH)
-                if n:
-                    print(f"[GapSweep] filled {n} ticker(s)")
+            market_open = is_market_open_now()
+            # Market hours belong to live prices and user-requested charts. Only
+            # queued (user-opened) tickers are served then, in a tiny batch; the
+            # full rotating sweep yields and waits for the close, so background
+            # history never competes with user-facing traffic or the provider
+            # quota. All of it still passes the shared rate limiter.
+            if priority:
+                n = await asyncio.to_thread(_sweep_intraday_gaps_once, 2)
+            elif not market_open and tick % 15 == 0:
+                n = await asyncio.to_thread(_sweep_intraday_gaps_once, _GAP_SWEEP_BATCH)
+            else:
+                n = 0
+            if n:
+                print(f"[GapSweep] filled {n} ticker(s) (market_open={market_open}, priority={priority})")
             tick += 1
         except Exception as e:
             print(f"[GapSweep] loop error: {e}")
