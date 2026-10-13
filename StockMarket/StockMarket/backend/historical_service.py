@@ -44,6 +44,21 @@ load_dotenv(dotenv_path=env_path)
 _RATE_LIMIT_BACKOFF_SEC = 90
 _rate_limit_until = 0.0
 
+# Angel One signals a throttle in two different ways: a status=False JSON body
+# ("Access denied because of exceeding access rate") AND a non-JSON body, which
+# surfaces as a JSON-parse exception. Both must engage the backoff -- only the
+# first was detected, which is why the backoff never fired while the app was
+# being throttled ~80 times every 30 minutes.
+_RATE_LIMIT_KEYWORDS = (
+    'access rate', 'rate limit', 'too many requests',
+    'exceeding access rate', 'throttl',
+)
+
+
+def _looks_rate_limited(message) -> bool:
+    m = str(message or '').lower()
+    return any(kw in m for kw in _RATE_LIMIT_KEYWORDS)
+
 
 def rate_limit_backoff_remaining() -> float:
     """Seconds left in the global historical-API backoff (0 when clear)."""
@@ -268,11 +283,7 @@ class HistoricalDataService:
                 # auth errors kills the session and forces a re-login, which
                 # then also hits the rate limit and fails, leaving the session
                 # broken for minutes.
-                _RATE_LIMIT_KEYWORDS = (
-                    'access rate', 'rate limit', 'too many requests',
-                    'exceeding access rate', 'throttl',
-                )
-                _is_rate_limit = any(kw in error_msg.lower() for kw in _RATE_LIMIT_KEYWORDS)
+                _is_rate_limit = _looks_rate_limited(error_msg)
 
                 # RT-02: auth failures must invalidate the session so the next
                 # caller re-logs in instead of silently returning empty data
@@ -321,6 +332,12 @@ class HistoricalDataService:
             raise
         except Exception as e:
             print(f"[HISTORICAL] [ERROR] Error fetching candles: {e}")
+            # A throttled call comes back as a NON-JSON body, so it lands here
+            # rather than in the status=False branch below. Engage the global
+            # backoff on this path too, otherwise the retry loops keep hammering
+            # and the on-demand chart fills can never get through.
+            if _looks_rate_limited(e):
+                _note_rate_limit()
             if raise_on_error:
                 # Network/DNS/timeout/JSON-parse errors -- all transient.
                 raise HistoricalFetchError(str(e), retryable=True)

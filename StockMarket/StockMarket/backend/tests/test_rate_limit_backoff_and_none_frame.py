@@ -60,6 +60,16 @@ class HistoricalRateLimitBackoffTests(unittest.TestCase):
         hs._rate_limit_until = time.time() - 1
         self.assertEqual(hs.rate_limit_backoff_remaining(), 0.0)
 
+    def test_non_json_throttle_body_also_engages_the_backoff(self):
+        # Angel One signals a throttle as a NON-JSON body, so it surfaces as a
+        # JSON-parse exception rather than a status=False response. Detecting only
+        # the latter is why the backoff never fired while the app was being
+        # throttled ~80 times per 30 minutes.
+        self.assertTrue(hs._looks_rate_limited(
+            "Couldn't parse the JSON response received from the server: "
+            "b'Access denied because of exceeding access rate'"))
+        self.assertFalse(hs._looks_rate_limited("Invalid or unsupported symbol"))
+
 
 class RecoveryYfinanceNoneFrameTests(unittest.TestCase):
     """The yfinance recovery fallback must tolerate a None frame."""
