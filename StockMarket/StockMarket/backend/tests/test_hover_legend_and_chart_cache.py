@@ -57,7 +57,12 @@ class HoverLegendOwnershipTests(unittest.TestCase):
     def test_new_range_releases_ownership(self):
         i = self.src.find("var _veilNeeded = !window._chartHasRendered;")
         self.assertNotEqual(i, -1)
-        self.assertIn("window._crosshairBarActive = false;", self.src[i:i + 300])
+        block = self.src[i:i + 800]
+        self.assertIn("window._crosshairBarActive = false;", block)
+        # ...but only for a real range change -- a plain reload (the boundary
+        # reconciliation and the backfill re-poll call loadData too) must not
+        # steal a hovered bar's OHLC.
+        self.assertIn("if (window._loadedRange !== range)", block)
 
 
 class ChartDataCacheBypassTests(unittest.TestCase):

@@ -3036,9 +3036,12 @@ async function initBigChart() {
     var loadingEl = document.getElementById('loading');
     var isRangeSwitch = (window._loadedRange && window._loadedRange !== range);
     var _veilNeeded = !window._chartHasRendered;
-    // A new range/ticker means a new chart: the hovered-bar legend no longer
-    // owns the legend until the pointer lands on a bar again.
-    window._crosshairBarActive = false;
+    // A genuine range/ticker change means a new chart, so the hovered-bar legend
+    // no longer owns the legend. Do NOT clear it on a plain reload: loadData() is
+    // also called by the candle-boundary reconciliation and by the background
+    // backfill re-poll, and clearing there let the live writer steal a hovered
+    // bar's OHLC every time those ran.
+    if (window._loadedRange !== range) window._crosshairBarActive = false;
     hideChartError();
 
     // Show loading state when switching timeframes or loading fresh chart
