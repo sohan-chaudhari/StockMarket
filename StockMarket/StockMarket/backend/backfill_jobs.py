@@ -40,6 +40,11 @@ MAX_SPAN_DAYS = {"1m": 7, "5m": 60, "15m": 60, "30m": 60, "1h": 730}
 SESSION_START = (9, 15)     # NSE opens 09:15 IST
 SESSION_END = (15, 30)      # ... and closes 15:30 IST
 
+# Missing buckets closer together than this are fetched in ONE request (see
+# missing_ranges). Keeps an illiquid ticker with scattered holes from turning into
+# hundreds of tiny provider calls.
+COALESCE_GAP = timedelta(days=4)
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS backfill_jobs (
     id               BIGSERIAL PRIMARY KEY,
@@ -169,7 +174,20 @@ def missing_ranges(db, ticker, interval, range_start, range_end, now=None):
         ranges.append((start, prev + timedelta(minutes=5)))
         start = prev = b
     ranges.append((start, prev + timedelta(minutes=5)))
-    return set(missing), ranges
+
+    # COALESCE near-adjacent ranges. An illiquid ticker can be missing thousands of
+    # scattered buckets (RPSGVENT: 3,088 of them) which would otherwise become
+    # ~100 tiny requests and exhaust the account quota on one symbol. Merging across
+    # gaps shorter than COALESCE_GAP keeps the request count bounded -- and any
+    # bucket the provider cannot supply simply stays missing and is re-reported by
+    # the post-fetch verification, so nothing is ever marked complete incorrectly.
+    merged = []
+    for (s, e) in ranges:
+        if merged and (s - merged[-1][1]) <= COALESCE_GAP and (e - merged[-1][0]) <= span:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    return set(missing), merged
 
 
 # ─────────────────────────────────────────────────────────────────────────────
