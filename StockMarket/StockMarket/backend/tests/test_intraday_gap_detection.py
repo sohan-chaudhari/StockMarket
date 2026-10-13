@@ -307,6 +307,32 @@ class RunJobOutcomeTests(unittest.TestCase):
         status, _d, _s = self._run(set(self.MISSING), fetch=[], attempts=bj.JOB_MAX_ATTEMPTS)
         self.assertEqual(status, "permanently_failed")
 
+    def test_tz_aware_provider_timestamps_do_not_break_bracketing(self):
+        # Angel One returns "+05:30" timestamps. Comparing those against the naive
+        # bucket times raised TypeError, so provider_absent was never reachable and
+        # the job just logged an internal error forever.
+        off = datetime.timezone(timedelta(hours=5, minutes=30))
+        candles = [{"timestamp": dt(2026, 10, 6, 9, 45, tzinfo=off), "open": 1.0, "high": 1.0,
+                    "low": 1.0, "close": 1.0, "volume": 1},
+                   {"timestamp": dt(2026, 10, 6, 10, 30, tzinfo=off), "open": 1.0, "high": 1.0,
+                    "low": 1.0, "close": 1.0, "volume": 1}]
+        status, detail, _s = self._run(set(self.MISSING), fetch=candles)
+        self.assertEqual(status, "complete_with_gaps")
+        self.assertEqual(detail["provider_absent"], 1)
+
+
+class IstNaiveTests(unittest.TestCase):
+    def test_ist_naive_normalises_offsets(self):
+        off = datetime.timezone(timedelta(hours=5, minutes=30))
+        self.assertEqual(bj._ist_naive(dt(2026, 10, 6, 9, 45, tzinfo=off)),
+                         dt(2026, 10, 6, 9, 45))
+        # a UTC-stamped value must land on the IST wall clock (04:15Z == 09:45 IST)
+        utc = dt(2026, 10, 6, 4, 15, tzinfo=datetime.timezone.utc)
+        self.assertEqual(bj._ist_naive(utc), dt(2026, 10, 6, 9, 45))
+        naive = dt(2026, 10, 6, 9, 45)
+        self.assertEqual(bj._ist_naive(naive), naive)
+        self.assertIsNone(bj._ist_naive(naive).tzinfo)
+
 
 class StatusContractTests(unittest.TestCase):
     """Requirement: verify statuses against the real schema and queries."""

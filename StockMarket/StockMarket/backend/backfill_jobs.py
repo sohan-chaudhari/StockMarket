@@ -22,11 +22,25 @@ import os
 import random
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
 import database
+
+# Angel One returns candle timestamps with an explicit offset
+# ("%Y-%m-%dT%H:%M:%S%z"), so they arrive tz-AWARE while every stored bucket and
+# every expected bucket is IST-naive. Comparing the two raises TypeError, which
+# silently stopped the bracketing test from ever classifying an interval -- so the
+# provider's timestamps are normalised to IST-naive before any comparison.
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _ist_naive(v):
+    """Normalise a provider timestamp to IST-naive (no-op when already naive)."""
+    if isinstance(v, datetime) and v.tzinfo is not None:
+        return v.astimezone(_IST).replace(tzinfo=None)
+    return v
 
 # ── tunables (env, no code change needed) ──────────────────────────────────
 JOB_LEASE_SEC = int(os.getenv("BACKFILL_JOB_LEASE_SEC", "600"))
@@ -584,7 +598,7 @@ def run_job(job):
             break
         fetched += len(candles)
         if candles:
-            ts = [c["timestamp"] for c in candles]
+            ts = [_ist_naive(c["timestamp"]) for c in candles]
             served.append((r_start, r_end, min(ts), max(ts), True))
             try:
                 from aggregator import batch_flush_candles
@@ -678,7 +692,9 @@ def run_batch(limit=3, worker_id=None):
         try:
             status, detail = run_job(job)
         except Exception as e:
+            import traceback
             status, detail = "error", {"error": str(e)}
+            print(f"[BackfillJob] {job['ticker']} {job['interval']} INTERNAL ERROR:\n{traceback.format_exc()}")
             finish(job["id"], "retry_wait", error=str(e), failure_kind="internal",
                    attempts=job["attempts"])
         out.append((job["ticker"], job["interval"], status, detail))
