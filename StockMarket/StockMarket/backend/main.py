@@ -6649,10 +6649,10 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 # candles straight from the DB with no provider call at all.
                 if interval in ("1m", "5m", "15m", "30m", "1h"):
                     try:
-                        _newest = q_base.order_by(model.timestamp.desc()).limit(1).first()
-                        if _newest is not None and _newest.timestamp < (now - timedelta(days=3)):
+                        _floor = now - timedelta(days={"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120}.get(interval, 30))
+                        if _has_multiday_intraday_hole(db, clean_ticker, interval, _floor):
                             _request_gap_sweep(clean_ticker)
-                            print(f"[GapSweep] queued {clean_ticker} {interval} (data stops {_newest.timestamp})")
+                            print(f"[GapSweep] queued {clean_ticker} {interval} (multi-day hole)")
                     except Exception:
                         pass
 
@@ -7964,6 +7964,28 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
     return n
 
 
+def _has_multiday_intraday_hole(db, ticker: str, interval: str, floor, days: int = 3) -> bool:
+    """True when two consecutive stored bars are more than `days` apart.
+
+    A "newest bar is stale" test misses the real case: RPSGVENT's 5m newest bar is
+    today, yet 17 Aug -> 9 Oct is missing. A >3-day jump between consecutive bars
+    is never a weekend (Fri->Mon is 3), so it is genuinely missing sessions.
+    Index-backed per ticker.
+    """
+    from sqlalchemy import text as _sa_text
+    try:
+        row = db.execute(_sa_text(
+            "SELECT 1 FROM ("
+            "  SELECT timestamp, lag(timestamp) OVER (ORDER BY timestamp) AS prev"
+            "  FROM candles WHERE ticker=:t AND timeframe=:tf AND timestamp >= :floor"
+            ") g WHERE prev IS NOT NULL AND timestamp - prev > :gap LIMIT 1"
+        ), {"t": ticker, "tf": interval, "floor": floor,
+            "gap": timedelta(days=days)}).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
 # ---- Background intraday gap sweep ---------------------------------------
 # Fills multi-day intraday holes on its own, so a user opening a chart tomorrow
 # gets the candles straight from the DB instead of waiting on a provider call.
@@ -8004,11 +8026,13 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
             newest = db.execute(_sa_text(
                 "SELECT max(timestamp) FROM candles WHERE ticker=:t AND timeframe='5m'"
             ), {"t": t}).scalar()
-            if newest is not None and newest >= today_open:
-                continue                      # current session present -> nothing to do
+            floor = now - timedelta(days=65)
+            if newest is not None and not _has_multiday_intraday_hole(db, t, '5m', floor):
+                continue                      # no >3-day hole -> nothing to sweep
             start = newest or _intraday_cutoff('5m')
-            if (today_open - start) < timedelta(days=3):
-                continue                      # normal weekend/holiday gap, not a hole
+            if newest is not None and (today_open - newest) < timedelta(days=3):
+                # Newest is current; the hole is older, so fill the whole window.
+                start = _intraday_cutoff('5m')
             try:
                 perform_on_demand_backfill(t, '5m', start, now)
                 filled += 1

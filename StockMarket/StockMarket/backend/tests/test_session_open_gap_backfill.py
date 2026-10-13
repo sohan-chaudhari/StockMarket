@@ -141,10 +141,12 @@ class SessionOpenGapTests(unittest.TestCase):
         # the DB with no provider call.
         db = self.Session()
         try:
-            for ts in self._session_bars(SESSION_OPEN - timedelta(days=10)):
-                db.add(models.Candle(ticker=TICKER, timeframe="5m", timestamp=ts,
-                                     open=100.0, high=101.0, low=99.0, close=100.5,
-                                     volume=1000, is_completed=True))
+            # Two sessions 30 days apart -> a real multi-day hole in the window.
+            for d in (10, 40):
+                for ts in self._session_bars(SESSION_OPEN - timedelta(days=d)):
+                    db.add(models.Candle(ticker=TICKER, timeframe="5m", timestamp=ts,
+                                         open=100.0, high=101.0, low=99.0, close=100.5,
+                                         volume=1000, is_completed=True))
             db.commit()
         finally:
             db.close()
