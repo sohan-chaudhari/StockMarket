@@ -135,26 +135,24 @@ class SessionOpenGapTests(unittest.TestCase):
         self.assertTrue(self.calls, "an internal same-day hole must still trigger a backfill")
 
     def test_opened_ticker_with_a_hole_is_queued_for_the_sweep(self):
-        # The request path ENQUEUES rather than fetching: the background sweep does
-        # the paced fetching, so the request stays fast and provider usage stays
-        # under Angel One's rate limit. Once stored, the next visitor gets it from
-        # the DB with no provider call.
-        #
-        # The hole query is Postgres-only (interval arithmetic), so the detector is
-        # patched here; its real behaviour is covered by live verification.
+        # The request path ENQUEUES an exact-range job (the leased worker does the
+        # paced fetching), so the request returns immediately and the gap is
+        # scheduled separately. The hole query is Postgres-only, so the detector is
+        # patched; the enqueue target is asserted directly.
         self._seed([0, 5, 10, 15, 20, 25])
-        main._gap_sweep_queue.clear()
-        with patch.object(main, "_has_multiday_intraday_hole", lambda *a, **k: True):
+        with patch.object(main, "_has_multiday_intraday_hole", lambda *a, **k: True), \
+             patch("backfill_jobs.enqueue", return_value=1) as enq:
             self._call()
-        self.assertIn(TICKER, main._gap_sweep_queue,
-                      "opening a ticker with a multi-day hole must queue it")
+        self.assertTrue(enq.called, "opening a ticker with a multi-day hole must enqueue a repair job")
+        _a, kw = enq.call_args
+        self.assertEqual(_a[0], TICKER)
+        self.assertEqual(_a[1], "5m")
 
     def test_fresh_ticker_is_not_queued(self):
         self._seed([0, 5, 10, 15, 20, 25])
-        main._gap_sweep_queue.clear()
-        self._call()
-        self.assertNotIn(TICKER, main._gap_sweep_queue,
-                         "a ticker with current, hole-free data must not be queued")
+        with patch("backfill_jobs.enqueue", return_value=1) as enq:
+            self._call()
+        self.assertFalse(enq.called, "a ticker with current, hole-free data must not be enqueued")
 
     def test_weekend_gap_is_not_a_hole(self):
         # Fri -> Mon is 3 calendar days and must NOT be treated as missing data.
