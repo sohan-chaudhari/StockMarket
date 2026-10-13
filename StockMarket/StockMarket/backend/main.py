@@ -8021,12 +8021,16 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
         today_open = datetime.combine(now.date(), datetime.min.time()) + timedelta(hours=9, minutes=15)
         for raw in chunk:
             t = (raw or '').upper().replace('.NS', '').replace('.BO', '')
-            if not t or _backfill_cooldown_active(f"{t}:5m"):
+            if not t:
                 continue
             newest = db.execute(_sa_text(
                 "SELECT max(timestamp) FROM candles WHERE ticker=:t AND timeframe='5m'"
             ), {"t": t}).scalar()
             floor = now - timedelta(days=65)
+            # A real multi-day hole outranks the short cooldown that the request
+            # path's own (today-only) fill just set -- otherwise the wide fill is
+            # always skipped and the hole never closes. The sweep is paced globally
+            # and runs every ~5 min, so this cannot hammer the provider.
             if newest is not None and not _has_multiday_intraday_hole(db, t, '5m', floor):
                 continue                      # no >3-day hole -> nothing to sweep
             start = newest or _intraday_cutoff('5m')
