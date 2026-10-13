@@ -17,6 +17,32 @@
     'use strict';
 
     /* ------------------------------------------------------------------
+     * SINGLE SOURCE OF TRUTH for "is this visitor signed in?".
+     * The real credential is the HttpOnly session cookie, so only the server
+     * can answer this. Local storage is just a cache of that answer and can
+     * drift (on mobile a token can survive without its user payload, or vice
+     * versa) -- which made the header say "logged out" while /api/watchlist
+     * still served the signed-in account's list.
+     * resolved=false  -> not answered yet
+     * authenticated   -> true / false once /api/auth/me has answered
+     * ------------------------------------------------------------------ */
+    window._lvAuthState = window._lvAuthState || { resolved: false, authenticated: null, user: null };
+    function _lvPublishAuthState(authenticated, user) {
+        try {
+            window._lvAuthState = {
+                resolved: true,
+                authenticated: !!authenticated,
+                user: user || null,
+                ts: Date.now(),
+            };
+            window.dispatchEvent(new CustomEvent('lv_auth_resolved', {
+                detail: { authenticated: !!authenticated, user: user || null },
+            }));
+        } catch (e) {}
+    }
+    window.lvAuthState = function () { return window._lvAuthState; };
+
+    /* ------------------------------------------------------------------
      * BUG-2: persistent-session rehydration.
      * The backend sets an HttpOnly session cookie on login; the SPA stores
      * only a NON-SENSITIVE marker + profile in localStorage. When the browser
@@ -52,6 +78,10 @@
                             localStorage.setItem('user', s);
                             sessionStorage.setItem('user', s);
                         } catch (e) {}
+                        // Publish the server-confirmed state so the header
+                        // (nav.js) and the watchlist agree with the session
+                        // instead of guessing from local storage.
+                        _lvPublishAuthState(true, user);
                     });
                 }
                 if (r.status === 401 || r.status === 403) {
@@ -60,7 +90,12 @@
                         sessionStorage.removeItem('user');
                         localStorage.removeItem('token');
                         localStorage.removeItem('user');
+                        // Never leave a previous account's watchlist behind for a
+                        // visitor the server has just told us is not signed in.
+                        localStorage.removeItem('_wl_cache');
+                        localStorage.removeItem('_wl_updated');
                     } catch (e) {}
+                    _lvPublishAuthState(false, null);
                     var p = (location.pathname.split('/').pop() || '').toLowerCase();
                     var isProtectedPage = /portfolio|profile|watchlist|orders/i.test(p);
                     if (isProtectedPage) window.location.href = 'login.html';

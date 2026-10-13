@@ -426,6 +426,21 @@
   }
 
   /* ===================== AUTH ===================== */
+  function _navShowSignedIn(user, authButtons, userInfo) {
+    if (authButtons) authButtons.style.display = 'none';
+    if (!userInfo) return;
+    userInfo.style.display = 'flex';
+    var balEl = document.getElementById('userBalance');
+    var nameEl = document.getElementById('userName');
+    if (balEl) balEl.textContent = '\u20B9' + _fmtNavPrice((user && user.virtual_balance) || 0);
+    if (nameEl) nameEl.textContent = (user && (user.full_name || (user.email ? user.email.split('@')[0] : ''))) || 'User';
+  }
+
+  function _navShowSignedOut(authButtons, userInfo) {
+    if (authButtons) authButtons.style.display = 'flex';
+    if (userInfo) userInfo.style.display = 'none';
+  }
+
   function initAuth() {
     var token, userStr;
     try { token = sessionStorage.getItem('token') || localStorage.getItem('token'); } catch(e) {}
@@ -433,29 +448,41 @@
     var authButtons = document.getElementById('authButtons');
     var userInfo = document.getElementById('userInfo');
 
-    if (token && userStr) {
+    // A cookie-backed session stores the literal marker 'cookie-session' as its
+    // token, so it must count as a token here. Previously only a real JWT did,
+    // which made a perfectly valid cookie session render as "logged out".
+    var hasToken = !!token && token !== 'null' && token !== 'undefined' && token.trim() !== '';
+
+    // The server (page-cache.js) is authoritative: local storage can hold a
+    // token without its user payload -- or the payload without the token -- so
+    // the header could disagree with the session actually serving /api/*.
+    var serverState = (typeof window.lvAuthState === 'function') ? window.lvAuthState() : null;
+    if (serverState && serverState.resolved) {
+      if (serverState.authenticated) {
+        var user = serverState.user;
+        if (!user) { try { user = JSON.parse(userStr || '{}'); } catch (e) { user = {}; } }
+        _navShowSignedIn(user, authButtons, userInfo);
+      } else {
+        _navShowSignedOut(authButtons, userInfo);
+      }
+      return;
+    }
+
+    if (hasToken && userStr) {
       try {
-        var user = JSON.parse(userStr);
-        // Logged in: hide login button, show user info
-        if (authButtons) authButtons.style.display = 'none';
-        if (userInfo) {
-          userInfo.style.display = 'flex';
-          var balEl = document.getElementById('userBalance');
-          var nameEl = document.getElementById('userName');
-          if (balEl) balEl.textContent = '\u20B9' + _fmtNavPrice(user.virtual_balance || 0);
-          if (nameEl) nameEl.textContent = user.full_name || (user.email ? user.email.split('@')[0] : 'User');
-        }
+        _navShowSignedIn(JSON.parse(userStr), authButtons, userInfo);
       } catch (e) {
-        // Parse error — treat as logged out
-        if (authButtons) authButtons.style.display = 'flex';
-        if (userInfo) userInfo.style.display = 'none';
+        _navShowSignedOut(authButtons, userInfo);
       }
     } else {
-      // Not logged in: show login button, hide user info
-      if (authButtons) authButtons.style.display = 'flex';
-      if (userInfo) userInfo.style.display = 'none';
+      _navShowSignedOut(authButtons, userInfo);
     }
   }
+
+  // Re-render the header the moment the server resolves the session, so a valid
+  // cookie session shows the account instead of a stale "Login" button.
+  window.addEventListener('lv_auth_resolved', function () { initAuth(); });
+  window.initAuthUI = initAuth;
 
   /* ===================== MOBILE MARKET-STATUS SLOT ===================== */
   // On pages with a #marketStatusSlot (currently home.html/index.html, between the header
