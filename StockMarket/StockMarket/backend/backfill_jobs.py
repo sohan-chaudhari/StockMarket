@@ -479,7 +479,7 @@ def cleanup(days=None):
     try:
         r = db.execute(text(
             "DELETE FROM backfill_jobs "
-            "WHERE status IN ('complete','complete_with_gaps','permanently_failed') "
+            "WHERE status IN ('complete','complete_with_gaps','permanently_failed','superseded') "
             "AND updated_at < NOW() - make_interval(days => :d)"), {"d": days})
         db.commit()
         return r.rowcount or 0
@@ -531,6 +531,15 @@ def run_job(job):
     """
     import historical_service as hs
     from historical_service import HistoricalFetchError
+
+    # 5m is the ONLY intraday source of truth. A job for a derived timeframe
+    # (15m/30m/1h/4h) must never spend a provider request -- that data is built
+    # from stored 5m on the fly by CandleResampler and is deliberately not stored.
+    # Such jobs are marked `superseded`: terminal, honest, and no quota wasted.
+    if job["interval"] != "5m":
+        finish(job["id"], "superseded", fetched=0, persisted=0, remaining=0,
+               failure_kind="derived_from_5m")
+        return "superseded", {"interval": job["interval"], "derived_from": "5m"}
 
     db = database.SessionLocal()
     try:

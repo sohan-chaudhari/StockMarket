@@ -545,6 +545,16 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 NSE_HOLIDAYS = set()
 _holidays_lock = threading.Lock()
+
+# ── Timeframe tiers ────────────────────────────────────────────────────────
+# 5m is the ONLY intraday source of truth fetched from the provider. 15m/30m/1h/4h
+# are DERIVED from stored 5m on the fly (CandleResampler, 09:15 NSE-aligned) and
+# are never stored: 5m retention keeps only the newest ~60 sessions, so a stored
+# derived copy would outlive its own source and silently disagree with it.
+# 1D is its own provider source; 1W/1M are derived from 1D. 1m is read-only legacy
+# (built from live ticks) and is never repaired.
+INTRADAY_TFS = ("1m", "5m", "15m", "30m", "1h", "4h")
+DERIVED_FROM_5M = ("15m", "30m", "1h", "4h")
 backfill_locks = set()
 _backfill_lock = threading.Lock()
 
@@ -1420,7 +1430,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         # spend no provider request on the same history again. Only when the
         # 5-minute source is genuinely incomplete do we fall back to the provider,
         # so an incomplete aggregate is never presented as complete.
-        if interval in ("15m", "30m", "1h"):
+        if interval in DERIVED_FROM_5M:
             _src = []
             try:
                 with database.SessionLocal() as _rdb:
@@ -1447,7 +1457,17 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
                     intraday_candles = []
             else:
                 print(f"[Resample] {clean_ticker} {interval}: 5m source incomplete "
-                      f"({len(_have)}/{len(_need)} sessions) — falling back to provider")
+                      f"({len(_have)}/{len(_need)} sessions)")
+
+        # Derived timeframes end here. They are built from stored 5m and are NEVER
+        # fetched from the provider nor persisted: 5m retention keeps only the
+        # newest ~60 sessions, so a stored derived copy would outlive its own
+        # source and silently disagree with it. Whatever 5m can supply is what the
+        # chart gets -- the endpoint resamples it at request time.
+        if interval in DERIVED_FROM_5M:
+            print(f"[Intraday] [BG] {clean_ticker} {interval}: derived from 5m "
+                  f"({len(intraday_candles)} candles) - 0 provider requests, nothing stored")
+            return 0
 
         if not intraday_candles:
             angel_interval_map = {
@@ -1545,7 +1565,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         db = database.SessionLocal()
 
         # === RESAMPLE FALLBACK: if API fetch failed, build from stored 5m candles ===
-        if not intraday_candles and interval in ("15m", "30m", "1h"):
+        if not intraday_candles and interval in DERIVED_FROM_5M:
             try:
                 from models import Candle
                 from resampler import CandleResampler
@@ -1578,7 +1598,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             _set_backfill_cooldown(cooldown_key, _BACKFILL_FAIL_COOLDOWN_SEC)
 
         if intraday_candles:
-            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 5)
             
             # Bulk fetch existing timestamps to prevent N+1 query slowdown
             existing_query = db.query(model.timestamp).filter(
@@ -6032,7 +6052,7 @@ def _yf_intraday_df_to_candles(yf_int, clean_ticker: str, interval: str) -> list
         this function's own logic needs it for every row.
     """
     from aggregator import snap_to_nse_session, fix_ohlc
-    bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+    bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 5)
     intraday_candles_5min = []
     seen_ts = set()
     for t in yf_int.itertuples(index=True):
@@ -6180,7 +6200,7 @@ def _intraday_cutoff(interval: str):
     # 1m: 7 days covers a full trading week + weekend gap
     # 5m: 65 days covers 2 months of data on first load
     # 15m/30m: 45/90 days, 1h: 120 days
-    days_back = {"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120}.get(interval, 10)
+    days_back = {"1m": 7, "5m": 65, "15m": 45, "30m": 90, "1h": 120, "4h": 180}.get(interval, 10)
     return ist_now - timedelta(days=days_back)
 
 
@@ -6587,7 +6607,7 @@ def get_latest_candle(ticker: str = Query(...), interval: str = Query("5m"), db:
     """Return the latest completed candle for WS reconnect candle recovery."""
     db_tickers = _normalize_ticker(ticker)
     
-    if interval in ["1m", "5m", "15m", "30m", "1h"]:
+    if interval in INTRADAY_TFS:
         record = db.query(models.Candle).filter(
             models.Candle.ticker.in_(db_tickers),
             models.Candle.timeframe == interval,
@@ -6611,7 +6631,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     """Paginated intraday intraday_candles_5min. Auto-triggers gap fill on first page load (before=None)."""
     db_tickers = _normalize_ticker(ticker)
     
-    if interval not in ("1m", "5m", "15m", "30m", "1h"):
+    if interval not in INTRADAY_TFS:
         return JSONResponse(status_code=400, content={"error": f"Unsupported interval: {interval}"})
         
     model = models.Candle
@@ -6621,7 +6641,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     is_latest_request = (before is None or not isinstance(before, (int, float))) or before >= (now_epoch - 300)
 
     # === REGISTER VIEWER for live higher-timeframe candle building ===
-    if is_latest_request and interval in ("15m", "30m", "1h"):
+    if is_latest_request and interval in DERIVED_FROM_5M:
         clean_t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
         live_timeframe_manager.add_viewer(clean_t, interval)
 
@@ -6664,7 +6684,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         try:
             now = database.get_ist_now()
             market_open = is_market_open_now(now)
-            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60}.get(interval, 5)
+            bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 5)
 
             if not records:
                 # Bounded to this timeframe's own window (not a blanket 60 days):
@@ -6753,21 +6773,24 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 # data stops days ago, ask the background sweep to fetch it (paced,
                 # off the request path). Once stored, the next visitor gets the
                 # candles straight from the DB with no provider call at all.
-                if interval in ("1m", "5m", "15m", "30m", "1h"):
+                # 5m is the ONLY intraday source of truth. Whatever intraday
+                # timeframe is on screen, the repair scheduled is the 5m one --
+                # 15m/30m/1h/4h are then derived from stored 5m on the fly, so
+                # there is never a per-timeframe provider call. 1m is read-only
+                # legacy (live-tick built) and is not repaired at all.
+                if interval != "1m":
                     try:
                         import backfill_jobs as _bj
-                        _js, _je = _stable_job_range(interval, now)
-                        # EXACT check, not a session-scale heuristic. `has_missing`
-                        # computes the real expected-minus-stored set, so ANY missing
+                        _js, _je = _stable_job_range("5m", now)
+                        # Exact check, not a session-scale heuristic: ANY missing 5m
                         # bucket -- including a scattered 1-5 bucket no-trade hole --
                         # makes the ticker repairable on demand. It already excludes
-                        # buckets recorded in backfill_absent, so a ticker whose
-                        # holes are all proven absent does not re-queue. One bounded
-                        # query, on the request's own interval only.
-                        if _bj.has_missing(db, clean_ticker, interval, _js, _je):
-                            if _bj.enqueue(clean_ticker, interval, _js, _je, reason="chart_open"):
+                        # buckets recorded in backfill_absent, so a ticker whose holes
+                        # are all proven absent does not re-queue. One bounded query.
+                        if _bj.has_missing(db, clean_ticker, "5m", _js, _je):
+                            if _bj.enqueue(clean_ticker, "5m", _js, _je, reason="chart_open"):
                                 job_queued = True
-                                print(f"[BackfillJob] queued {clean_ticker} {interval} ({_js.date()}..{_je.date()})")
+                                print(f"[BackfillJob] queued {clean_ticker} 5m ({_js.date()}..{_je.date()})")
                     except Exception:
                         pass
 
@@ -6826,11 +6849,11 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     data.reverse()
 
     # === ON-THE-FLY RESAMPLING FALLBACK ===
-    if is_latest_request and interval in ("15m", "30m", "1h"):
+    if is_latest_request and interval in DERIVED_FROM_5M:
         now = database.get_ist_now()
         last_dt = records[0].timestamp if records else (now - __import__('datetime').timedelta(days=14))
         tip_gap_minutes = (now - last_dt).total_seconds() / 60
-        bucket_min = {"15m": 15, "30m": 30, "1h": 60}.get(interval, 15)
+        bucket_min = {"15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 15)
         
         # If there's still a noticeable gap after attempted backfills, resample from 5m on the fly
         if tip_gap_minutes > bucket_min * 2:
@@ -6883,7 +6906,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             live = candle_aggregator.get_current(clean_ticker_live)
             fc = live.get(interval) if (live and interval in live) else None
             data = _merge_live_5m(data, pc, fc)
-        elif interval in ("15m", "30m", "1h"):
+        elif interval in DERIVED_FROM_5M:
             # Higher-TF live forming candle from LiveTimeframeManager
             snapshot = live_timeframe_manager.get_current(clean_ticker_live, interval)
             if snapshot:
@@ -6907,7 +6930,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     # timestamp, preferring the stored/native row (it is added first), ascending.
     # Mirrors ChartService._deduplicate() semantics. 5m is excluded so the
     # intentional live-forming replacement above is preserved.
-    if interval in ("15m", "30m", "1h") and data:
+    if interval in DERIVED_FROM_5M and data:
         _seen_times = set()
         _merged = []
         for _c in data:
@@ -6926,7 +6949,9 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     if is_latest_request:
         try:
             import backfill_jobs as _bj
-            _open_job = _bj.has_open_job(clean_ticker, interval)
+            # The repair that matters for ANY intraday timeframe is the 5m one,
+            # because 15m/30m/1h/4h are derived from stored 5m.
+            _open_job = _bj.has_open_job(clean_ticker, "5m")
         except Exception:
             _open_job = False
         if fill_needed or job_queued or _open_job:

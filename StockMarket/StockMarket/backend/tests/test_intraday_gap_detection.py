@@ -417,5 +417,73 @@ class FrontendRepairSignalTests(unittest.TestCase):
         self.assertIn("_renderChartData(refData, range)", js, "must merge, not reset")
 
 
+class DerivedTimeframeTests(unittest.TestCase):
+    """5m is the only intraday source of truth; 15m/30m/1h/4h are derived on the
+    fly from stored 5m and are never fetched from the provider nor persisted."""
+
+    def test_four_hour_is_a_supported_derived_timeframe(self):
+        self.assertIn("4h", main.INTRADAY_TFS)
+        self.assertIn("4h", main.DERIVED_FROM_5M)
+        self.assertIsNotNone(main._intraday_cutoff("4h"))
+
+    def test_resampler_supports_4h_aligned_to_the_0915_open(self):
+        from resampler import CandleResampler
+        self.assertIn("4h", CandleResampler.RESAMPLE_RULES)
+        rows = []
+        for k in range(75):
+            ts = dt(2026, 10, 6, 9, 15) + timedelta(minutes=5 * k)
+            rows.append({"timestamp": ts, "open": 100.0, "high": 101.0, "low": 99.0,
+                         "close": 100.5, "volume": 10})
+        out = CandleResampler.resample_5m_to(rows, "4h")
+        self.assertTrue(out, "4h resampling produced nothing")
+        first = out[0]["timestamp"]
+        self.assertEqual((first.hour, first.minute), (9, 15),
+                         "4h buckets must start at the 09:15 session open (offset='75min')")
+
+    def test_derived_timeframe_job_is_superseded_without_a_provider_call(self):
+        with mock.patch.object(bj, "finish") as fin:
+            status, detail = bj.run_job({"id": 9, "ticker": "X", "exchange": "NSE",
+                                         "interval": "15m",
+                                         "range_start": dt(2026, 8, 1),
+                                         "range_end": dt(2026, 10, 13), "attempts": 1})
+        self.assertEqual(status, "superseded")
+        self.assertEqual(detail["derived_from"], "5m")
+        self.assertEqual(fin.call_args[0][1], "superseded")
+        self.assertEqual(fin.call_args[1]["failure_kind"], "derived_from_5m")
+
+    def test_5m_job_is_not_superseded(self):
+        src = inspect.getsource(bj.run_job)
+        i = src.find('if job["interval"] != "5m":')
+        self.assertGreater(i, -1, "5m must be the only provider-fetched intraday TF")
+        self.assertIn("superseded", src[i:i + 400])
+
+    def test_superseded_is_terminal_and_retained(self):
+        src = inspect.getsource(bj)
+        claim = src[src.find("def claim("):src.find("def claim(") + 1800]
+        self.assertNotIn("superseded", claim, "a superseded job must never be re-claimed")
+        cleanup = src[src.find("def cleanup("):src.find("def cleanup(") + 700]
+        self.assertIn("superseded", cleanup)
+
+    def test_chart_open_enqueues_only_the_5m_job(self):
+        src = inspect.getsource(main.get_intraday_paginated)
+        self.assertIn('_stable_job_range("5m", now)', src)
+        self.assertIn('_bj.enqueue(clean_ticker, "5m"', src)
+        self.assertNotIn("_stable_job_range(interval, now)", src,
+                         "a per-timeframe job would mean a per-timeframe provider call")
+
+    def test_derived_timeframes_never_persist_or_call_the_provider(self):
+        src = inspect.getsource(main.perform_on_demand_backfill)
+        i = src.find("derived from 5m ")
+        self.assertGreater(i, -1, "derived timeframes must short-circuit")
+        self.assertIn("return 0", src[i:i + 400],
+                      "a derived timeframe must return without persisting anything")
+        self.assertGreater(src.find("if not intraday_candles:"), i,
+                           "the short-circuit must come BEFORE the provider fetch")
+
+    def test_backfill_jobs_reject_a_derived_interval(self):
+        self.assertNotIn("4h", bj.MAX_SPAN_DAYS,
+                         "4h must not be enqueueable: it is derived, not fetched")
+
+
 if __name__ == "__main__":
     unittest.main()
