@@ -198,7 +198,13 @@ class RecoveryService:
                 }
                 yf_ticker = YFINANCE_INDEX_MAP.get(ticker, f"{ticker}.NS")
                 df = self._yf_downloader.download_single(yf_ticker, period="5d", interval="5m")
-                if df and not df[0].empty:
+                # download_single returns (Optional[DataFrame], Optional[str]) --
+                # the frame is legitimately None when the download failed or had
+                # no data, so it MUST be checked before .empty. Without this the
+                # fallback died with AttributeError ("'NoneType' object has no
+                # attribute 'empty'") on every attempt, so a yfinance recovery
+                # could never contribute a single candle.
+                if df and df[0] is not None and not df[0].empty:
                     data = df[0]
                     for idx, row in data.iterrows():
                         ts = idx.to_pydatetime() if hasattr(idx, 'to_pydatetime') else idx

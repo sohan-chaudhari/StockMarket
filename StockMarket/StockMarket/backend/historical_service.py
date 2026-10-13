@@ -20,6 +20,7 @@ Usage:
 """
 
 import os
+import time
 from typing import Optional, List, Dict
 from datetime import date, datetime
 from SmartApi import SmartConnect
@@ -31,6 +32,31 @@ import pathlib
 backend_dir = pathlib.Path(__file__).parent.resolve()
 env_path = backend_dir / ".env"
 load_dotenv(dotenv_path=env_path)
+
+
+# ---- Global rate-limit backoff -------------------------------------------
+# Angel One throttles the historical REST API per account ("Access denied
+# because of exceeding access rate"). The retry loops elsewhere (intraday
+# prefill attempts 1/2/3, dashboard index backfill) used to keep hammering while
+# throttled, which held the window open and starved the ON-DEMAND chart fills --
+# so a missing 09:15/09:20 opening bar could never be fetched. Once a throttle is
+# seen, every historical call pauses for this long so the limit can recover.
+_RATE_LIMIT_BACKOFF_SEC = 90
+_rate_limit_until = 0.0
+
+
+def rate_limit_backoff_remaining() -> float:
+    """Seconds left in the global historical-API backoff (0 when clear)."""
+    return max(0.0, _rate_limit_until - time.time())
+
+
+def _note_rate_limit():
+    """Start (or extend) the global backoff after a throttle."""
+    global _rate_limit_until
+    now = time.time()
+    if now >= _rate_limit_until:
+        print("[HISTORICAL] Rate limit hit — pausing ALL historical calls for %ds" % _RATE_LIMIT_BACKOFF_SEC)
+    _rate_limit_until = now + _RATE_LIMIT_BACKOFF_SEC
 
 
 class HistoricalFetchError(Exception):
@@ -193,6 +219,17 @@ class HistoricalDataService:
                 raise HistoricalFetchError(msg, retryable=True)
             return []
 
+        # Global rate-limit backoff: while Angel One is throttling us every call
+        # would fail identically, and the retry loops elsewhere would hold the
+        # window open. Pause instead so it can recover (and so the on-demand
+        # chart fills get a chance once it does).
+        _rl_left = rate_limit_backoff_remaining()
+        if _rl_left > 0:
+            msg = "Historical API rate-limited (global backoff, %.0fs left)" % _rl_left
+            if raise_on_error:
+                raise HistoricalFetchError(msg, retryable=True)
+            return []
+
         # Import angelone_service to use its token lookup
         from angelone_service import angelone_service
 
@@ -249,6 +286,7 @@ class HistoricalDataService:
                     self.is_logged_in = False
                     print("[HISTORICAL] Auth error detected — session invalidated, will re-login on next request")
                 elif _is_rate_limit:
+                    _note_rate_limit()
                     print("[HISTORICAL] Rate limit hit — session kept alive, caller should back off")
                 if raise_on_error:
                     # A status=False response is always Angel One reporting a
