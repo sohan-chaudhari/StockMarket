@@ -3125,6 +3125,23 @@ try {
 
             // Time axis label (on BOTTOM X-axis time scale)
             var timeText = this.getTimeLabel(idx, pixel, chartState);
+            if (timeText == null) {
+                // 5m runs in SEQUENTIAL-INDEX mode: the coordinate's "time" is a bar
+                // index that must be mapped through window._intradayBarTimes. When
+                // any link in that chain is unavailable the badge was skipped
+                // entirely, which is why the blue date highlight appeared on every
+                // timeframe EXCEPT 5m. Ask the chart's own time scale, which always
+                // knows the real time for a given pixel.
+                try {
+                    var _ch = window.bigChart || window.chart;
+                    var _ts = _ch && _ch.timeScale ? _ch.timeScale() : null;
+                    var _t = (_ts && typeof _ts.coordinateToTime === 'function')
+                        ? _ts.coordinateToTime(pixel.x) : null;
+                    if (_t != null) {
+                        timeText = BaseDrawing.prototype._formatTime(_t, chartState);
+                    }
+                } catch (e) {}
+            }
             if (timeText != null) {
                 ctx.save();
                 ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -3134,6 +3151,11 @@ try {
                 var bx2 = Math.max(2, Math.min(plotWidth - bw2 - 2, pixel.x - bw2 / 2));
                 var timeScaleTop = dims.totalHeight - timeScaleHeight;
                 var by2 = Math.round(timeScaleTop + Math.max(2, (timeScaleHeight - bh2) / 2));
+                // Never let the badge fall outside the canvas. The drawing overlay
+                // spans the full chart height, but if the reported time-scale height
+                // is off the badge used to land below it -- i.e. "behind the X-axis".
+                var _maxY = Math.max(0, Math.round(dims.totalHeight) - bh2);
+                by2 = Math.max(0, Math.min(_maxY, by2));
 
                 ctx.fillStyle = color;
                 ctx.beginPath();

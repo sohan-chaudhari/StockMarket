@@ -6216,6 +6216,11 @@ _INTRADAY_DEPTH_GRACE_DAYS = 2
 
 
 _SYNC_REPAIR_MAX_SESSIONS = int(os.getenv("SYNC_REPAIR_MAX_SESSIONS", "10"))
+# A ticker can still hold unfillable no-trade buckets, so `has_missing` stays true
+# and the synchronous repair would re-fetch on EVERY open (measured: TATACAP
+# 6-18s per open, every time). This cooldown re-checks a ticker at most once per
+# window; the background worker still covers it.
+_SYNC_REPAIR_COOLDOWN_SEC = int(os.getenv("SYNC_REPAIR_COOLDOWN_SEC", "600"))
 
 
 def _sync_repair_recent(db, ticker, now) -> int:
@@ -6892,9 +6897,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     if is_latest_request and interval != "1m" and background_tasks is not None:
         try:
             import backfill_jobs as _bj
+            _sync_key = f"{clean_ticker}:sync"
             _ss, _se = _stable_job_range("5m", now)
-            if _bj.has_missing(db, clean_ticker, "5m", _ss, _se):
+            if (not _backfill_cooldown_active(_sync_key)
+                    and _bj.has_missing(db, clean_ticker, "5m", _ss, _se)):
                 if _sync_repair_recent(db, clean_ticker, now):
+                    _set_backfill_cooldown(_sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
                     _q2 = q_base
                     if before is not None and isinstance(before, (int, float)):
                         _q2 = _q2.filter(model.timestamp < _epoch_to_ist_dt(before))
@@ -6903,6 +6911,10 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     records = _q2.order_by(model.timestamp.desc()).limit(limit + 1).all()
                     print(f"[SyncRepair] {clean_ticker} {interval}: response rebuilt with "
                           f"{len(records)} stored candle(s)")
+                else:
+                    # Nothing new came back (e.g. every remaining bucket is a
+                    # no-trade window) -> back off so the next open is fast.
+                    _set_backfill_cooldown(_sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
         except Exception as _sr_err:
             print(f"[SyncRepair] {clean_ticker} error: {_sr_err}")
 
