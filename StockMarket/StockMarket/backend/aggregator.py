@@ -386,15 +386,26 @@ class Live5mBuilder:
         if cur_bucket is not None and snapped_5m < cur_bucket:
             return self._route_late_tick(ticker, snapped_5m, price)
 
+        # Out-of-order tick that still belongs to the CURRENT bucket: a strictly
+        # older bucket was already routed to _route_late_tick() above, so by here
+        # snapped_5m >= cur_bucket. Its price IS a real trade in this bucket, so
+        # DROPPING it made the live candle's high/low narrower than the true traded
+        # range. Measured: 146 live-built 5m candles (TCS 79, RELIANCE 67) had a
+        # narrower high/low than the official 1m candles inside the same bucket,
+        # with the counter below at 91,766. The tick is folded in instead -- but it
+        # must never move `close` backwards, and never move the monotonic marker
+        # backwards (that would re-admit genuinely delayed ticks).
+        _out_of_order = False
         with self._lock:
             last_ts = self._last_tick_ts.get(ticker)
             if last_ts is not None and tick_ts < last_ts:
+                _out_of_order = True
                 self._stale_skip_count[ticker] = self._stale_skip_count.get(ticker, 0) + 1
                 if self._stale_skip_count[ticker] <= 3:
-                    print(f"[Aggregator] Stale tick {ticker}: {tick_ts} < last {last_ts}")
-                return {}
-
-            self._last_tick_ts[ticker] = tick_ts
+                    print(f"[Aggregator] Out-of-order tick {ticker}: {tick_ts} < last {last_ts} "
+                          f"(folded into the current bucket, close kept)")
+            else:
+                self._last_tick_ts[ticker] = tick_ts
             self._last_activity[ticker] = time.time()
 
             self._gc_inactive()
@@ -419,7 +430,10 @@ class Live5mBuilder:
 
             forming["high"] = max(forming["high"], price)
             forming["low"] = min(forming["low"], price)
-            forming["close"] = price
+            if not _out_of_order:
+                # A late-arriving tick inside the same bucket still widens the
+                # range above, but must not pull the close back in time.
+                forming["close"] = price
             # Volume: when the caller supplies the cumulative day volume, grow
             # the bucket by its delta. The old code did `forming["volume"] += volume`
             # where `volume` came from `last_traded_quantity` — a CUMULATIVE

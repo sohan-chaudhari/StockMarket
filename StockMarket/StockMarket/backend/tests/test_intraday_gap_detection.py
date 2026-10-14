@@ -545,5 +545,22 @@ class AuthErrorTests(unittest.TestCase):
                          "the unfiltered sweep enqueued BSE-only and inactive symbols")
 
 
+class OutOfOrderTickTests(unittest.TestCase):
+    """An out-of-order tick inside the CURRENT bucket must widen the range."""
+
+    def test_out_of_order_tick_widens_range_but_not_close(self):
+        import aggregator as agg
+        src = inspect.getsource(type(agg.candle_aggregator).process_tick)
+        i = src.find("last_ts is not None and tick_ts < last_ts")
+        self.assertGreater(i, -1, "the monotonic guard must still exist")
+        self.assertNotIn("return {}", src[i:i + 500],
+                         "dropping the tick narrowed the live candle's high/low")
+        self.assertIn("_out_of_order = True", src[i:i + 500])
+        self.assertIn("if not _out_of_order:", src,
+                      "a late tick must not pull the close backwards")
+        self.assertIn("forming[\"high\"] = max(forming[\"high\"], price)", src)
+        self.assertIn("forming[\"low\"] = min(forming[\"low\"], price)", src)
+
+
 if __name__ == "__main__":
     unittest.main()
