@@ -32,9 +32,16 @@ class IntradayPaginatedDedupTests(unittest.TestCase):
         # so the tests are pure DB/query assertions.
         self._bf = main.perform_on_demand_backfill
         main.perform_on_demand_backfill = lambda *a, **k: None
+        # Derived timeframes are now built PURELY from stored 5m (the legacy stored
+        # 15m/30m/1h rows are deliberately ignored -- they were a subset of what 5m
+        # produces and left permanent holes). The 5m source window is therefore
+        # pinned early so the March-2026 fixtures below are inside it.
+        self._cut = main._intraday_cutoff
+        main._intraday_cutoff = lambda *a, **k: datetime(2026, 3, 1)
 
     def tearDown(self):
         main.perform_on_demand_backfill = self._bf
+        main._intraday_cutoff = self._cut
         self.db.close()
 
     def _seed(self, ticker, timeframe, rows):
@@ -51,17 +58,17 @@ class IntradayPaginatedDedupTests(unittest.TestCase):
             limit=limit, background_tasks=None, db=self.db,
         )
 
-    # -- Test 1 + production case: tip collision, stored/native wins -----------
-    def test_tip_collision_stored_wins(self):
+    # -- Test 1: a derived TF is built from 5m; the stored row is ignored -------
+    def test_derived_tf_ignores_stored_rows(self):
         tk = "ZZDEDUP15"
         T = datetime(2026, 3, 2, 10, 0)          # 15m bucket start
         self._seed(tk, "15m", [
             (datetime(2026, 3, 2, 9, 15), 100.0, 101.0, 99.0, 100.5, 111),
             (datetime(2026, 3, 2, 9, 30), 100.5, 102.0, 100.0, 101.0, 222),
             (datetime(2026, 3, 2, 9, 45), 101.0, 103.0, 100.5, 102.0, 333),
-            (T, 1213.9, 1216.0, 1210.6, 1215.6, 187220),   # STORED (must win)
+            (T, 1213.9, 1216.0, 1210.6, 1215.6, 187220),   # STORED -- now ignored
         ])
-        # 5m bars AFTER the newest stored 15m -> resample bucket label == T
+        # the 5m bars that actually form the 10:00 bucket
         self._seed(tk, "5m", [
             (datetime(2026, 3, 2, 10, 5), 1213.9, 1214.1, 1210.3, 1214.1, 60000),
             (datetime(2026, 3, 2, 10, 10), 1214.1, 1216.0, 1212.0, 1214.0, 70000),
@@ -72,10 +79,11 @@ class IntradayPaginatedDedupTests(unittest.TestCase):
         self.assertEqual(len(times), len(set(times)), "must not contain duplicate timestamps")
 
         t_epoch = main._ts_to_epoch(T)
-        self.assertEqual(times.count(t_epoch), 1, "exactly one candle for the colliding 15m bucket")
+        self.assertEqual(times.count(t_epoch), 1, "exactly one candle for the 15m bucket")
         row = next(c for c in data if c["time"] == t_epoch)
-        self.assertEqual(row["close"], 1215.6, "stored/native close must win over resampled")
-        self.assertEqual(row["volume"], 187220, "stored/native volume must win over resampled")
+        # Values must come from the 5m bars, NOT the stored 15m row.
+        self.assertEqual(row["close"], 1214.0, "close must be derived from 5m")
+        self.assertEqual(row["volume"], 130000, "volume must be derived from 5m")
 
     # -- Test 2: no duplicate timestamps across 15m/30m/1h --------------------
     def test_no_duplicate_timestamps_multi_tf(self):
@@ -112,24 +120,24 @@ class IntradayPaginatedDedupTests(unittest.TestCase):
         self.assertEqual(times, sorted(times), "output must be ascending")
         self.assertEqual(len(times), len(set(times)))
 
-    # -- Test 4: non-colliding resampled candles are preserved ----------------
-    def test_non_colliding_resampled_preserved(self):
+    # -- Test 4: a derived TF is built only from 5m (stored rows are ignored) --
+    def test_derived_tf_built_only_from_5m(self):
         tk = "ZZDEDUPKEEP"
         self._seed(tk, "15m", [
             (datetime(2026, 3, 2, 9, 15), 100.0, 101.0, 99.0, 100.5, 1),
             (datetime(2026, 3, 2, 9, 30), 100.5, 102.0, 100.0, 101.0, 2),
             (datetime(2026, 3, 2, 9, 45), 101.0, 103.0, 100.5, 102.0, 3),
-        ])  # newest stored 09:45
-        self._seed(tk, "5m", [   # after 09:45 -> 15m bucket 10:00 (no collision)
+        ])  # stored -- ignored now
+        self._seed(tk, "5m", [
             (datetime(2026, 3, 2, 10, 0), 102.0, 103.0, 101.0, 102.5, 4),
             (datetime(2026, 3, 2, 10, 5), 102.5, 104.0, 102.0, 103.0, 5),
             (datetime(2026, 3, 2, 10, 10), 103.0, 104.0, 102.5, 103.5, 6),
         ])
         data = self._call(tk, "15m")["data"]
         times = [c["time"] for c in data]
-        self.assertEqual(len(times), 4, "3 stored + 1 resampled must all be present (no loss)")
-        self.assertIn(main._ts_to_epoch(datetime(2026, 3, 2, 10, 0)), times,
-                      "extended (resampled) history must be retained")
+        # Only the bucket the three 5m bars form; the stored 15m rows are not merged.
+        self.assertEqual(times, [main._ts_to_epoch(datetime(2026, 3, 2, 10, 0))],
+                         "the response must be the 5m-derived bucket only")
         self.assertEqual(len(times), len(set(times)))
 
     # -- Test 5: 5m is unaffected --------------------------------------------

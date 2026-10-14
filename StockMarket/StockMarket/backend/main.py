@@ -6215,6 +6215,55 @@ def _intraday_cutoff(interval: str):
 _INTRADAY_DEPTH_GRACE_DAYS = 2
 
 
+_SYNC_REPAIR_MAX_SESSIONS = int(os.getenv("SYNC_REPAIR_MAX_SESSIONS", "10"))
+
+
+def _sync_repair_recent(db, ticker, now) -> int:
+    """Fetch and PERSIST the recent missing 5m range synchronously (bounded).
+
+    The async dispatch elsewhere only SCHEDULES a repair, so the first visitor saw
+    a gap until the worker reached it -- and a job can be starved by the shared
+    provider cooldown (measured: TATACAP's genuine 8-session hole, 581 buckets,
+    persisted 0 after 4 attempts in 4 hours). 5m is the source of truth for every
+    intraday timeframe, so filling it here fixes 5m/15m/30m/1h/4h at once.
+
+    Bounded to the most recent _SYNC_REPAIR_MAX_SESSIONS sessions so the request
+    never blocks on a long historical fetch; anything older stays with the worker.
+    Returns the number of provider requests spent (0 when nothing was needed).
+    """
+    import backfill_jobs as bj
+    try:
+        s, e = _stable_job_range("5m", now)
+        missing, _ranges = bj.missing_ranges(db, ticker, "5m", s, e, now=now)
+        if not missing:
+            return 0
+        keep = set(sorted({b.date() for b in missing})[-_SYNC_REPAIR_MAX_SESSIONS:])
+        recent = {b for b in missing if b.date() in keep}
+        if not recent:
+            return 0
+        start = min(recent)
+        end = max(recent) + timedelta(minutes=5)
+        from aggregator import batch_flush_candles
+        if not historical_service.is_logged_in:
+            historical_service.login()
+        candles = historical_service.get_historical_candles(
+            ticker=ticker, exchange="NSE", interval="FIVE_MINUTE",
+            from_date=start, to_date=end, raise_on_error=True) or []
+        if candles:
+            batch_flush_candles([{
+                "ticker": ticker, "timeframe": "5m",
+                "timestamp": c["timestamp"], "open": c["open"], "high": c["high"],
+                "low": c["low"], "close": c["close"], "volume": c["volume"],
+                "is_completed": True, "data_source": "ANGELONE", "is_backfilled": True,
+            } for c in candles])
+        print(f"[SyncRepair] {ticker} 5m: fetched {len(candles)} candle(s) for "
+              f"{start}..{end} ({len(recent)} missing bucket(s), {len(keep)} session(s))")
+        return 1
+    except Exception as exc:
+        print(f"[SyncRepair] {ticker} 5m skipped: {exc}")
+        return 0
+
+
 def _stable_job_range(interval: str, now):
     """Session-aligned, now-independent bounds for a backfill job.
 
@@ -6831,6 +6880,31 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
+
+    # === SYNCHRONOUS REPAIR (5m is the source of truth) ===
+    # Runs AFTER the gap checks and BEFORE the response is built, so the FIRST
+    # visitor to a ticker gets a complete recent range instead of a gap -- and it
+    # is persisted, so every later visitor reads it from the database. This also
+    # fixes 15m/30m/1h/4h at once, because they are resampled from this 5m.
+    # Bounded (see _sync_repair_recent) and skipped for 1m, which we do not serve.
+    # Only on a real request (background_tasks is not None) so tests never hit the
+    # network.
+    if is_latest_request and interval != "1m" and background_tasks is not None:
+        try:
+            import backfill_jobs as _bj
+            _ss, _se = _stable_job_range("5m", now)
+            if _bj.has_missing(db, clean_ticker, "5m", _ss, _se):
+                if _sync_repair_recent(db, clean_ticker, now):
+                    _q2 = q_base
+                    if before is not None and isinstance(before, (int, float)):
+                        _q2 = _q2.filter(model.timestamp < _epoch_to_ist_dt(before))
+                    if after is not None and isinstance(after, (int, float)):
+                        _q2 = _q2.filter(model.timestamp > _epoch_to_ist_dt(after))
+                    records = _q2.order_by(model.timestamp.desc()).limit(limit + 1).all()
+                    print(f"[SyncRepair] {clean_ticker} {interval}: response rebuilt with "
+                          f"{len(records)} stored candle(s)")
+        except Exception as _sr_err:
+            print(f"[SyncRepair] {clean_ticker} error: {_sr_err}")
 
     # Fallback to direct yfinance fetch if still empty for indices
     if not records and (clean_ticker in INDEX_MAP or clean_ticker in YFINANCE_INDEX_MAP or clean_ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP"]):

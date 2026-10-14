@@ -48,6 +48,12 @@ JOB_MAX_ATTEMPTS = int(os.getenv("BACKFILL_JOB_MAX_ATTEMPTS", "6"))
 JOB_BASE_BACKOFF_SEC = int(os.getenv("BACKFILL_JOB_BASE_BACKOFF_SEC", "120"))
 JOB_MAX_BACKOFF_SEC = int(os.getenv("BACKFILL_JOB_MAX_BACKOFF_SEC", "3600"))
 JOB_RETENTION_DAYS = int(os.getenv("BACKFILL_JOB_RETENTION_DAYS", "14"))
+# A job that yielded to the SHARED provider cooldown must come back quickly. With
+# the normal exponential backoff (120s * 2^n, jittered) a throttled job retried
+# only every 8-16 minutes -- measured: TATACAP's genuine 8-session hole (581
+# buckets) was attempted 4 times in 4 hours and persisted NOTHING, because every
+# attempt hit an active cooldown. Throttle yields now retry in ~20s..cooldown+5s.
+THROTTLE_RETRY_SEC = int(os.getenv("BACKFILL_THROTTLE_RETRY_SEC", "20"))
 # Provider maximum span per request, by interval (mirrors perform_on_demand_backfill).
 MAX_SPAN_DAYS = {"1m": 7, "5m": 60, "15m": 60, "30m": 60, "1h": 730}
 
@@ -447,12 +453,15 @@ def _backoff_seconds(attempts, retry_after=0.0):
 
 
 def finish(job_id, status, *, fetched=0, persisted=0, remaining=0, expected=None,
-           error=None, failure_kind=None, retry_after=0.0, attempts=1):
+           error=None, failure_kind=None, retry_after=0.0, attempts=1,
+           backoff_override=None):
     db = database.SessionLocal()
     try:
         nxt = None
         if status in ("retry_wait", "partially_complete"):
-            nxt = datetime.now() + timedelta(seconds=_backoff_seconds(attempts, retry_after))
+            delay = (backoff_override if backoff_override is not None
+                     else _backoff_seconds(attempts, retry_after))
+            nxt = datetime.now() + timedelta(seconds=max(0.0, delay))
         db.execute(text("""
             UPDATE backfill_jobs
                SET status = :st, fetched_count = :f, persisted_count = :p,
@@ -569,11 +578,14 @@ def run_job(job):
                failure_kind="pre_data")
         return "complete_with_gaps", {"remaining": expected_n, "reason": "pre_data"}
 
-    # Respect the shared cooldown before spending a request.
-    if hs.rate_limit_backoff_remaining() > 0:
+    # Respect the shared cooldown before spending a request, but come back FAST:
+    # a long exponential backoff here is what starved TATACAP's real 8-session hole.
+    _cd = hs.rate_limit_backoff_remaining()
+    if _cd > 0:
         finish(job["id"], "retry_wait", expected=expected_n, remaining=expected_n,
                error="shared provider cooldown active", failure_kind="throttled",
-               retry_after=hs.rate_limit_backoff_remaining(), attempts=job["attempts"])
+               retry_after=_cd, attempts=job["attempts"],
+               backoff_override=max(float(THROTTLE_RETRY_SEC), _cd + 5.0))
         return "retry_wait", {"reason": "cooldown"}
 
     fetched = 0
