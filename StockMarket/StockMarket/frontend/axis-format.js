@@ -198,7 +198,16 @@
       if (d0 != null) {
         var _step = Math.max(1, Math.round(o.bars / 4));
         var _into = o.idx - d0;
-        if (_into >= 0 && _into < _step) return o.realYearBoundary ? (day + ' ' + yr) : day;
+        if (_into >= 0 && _into < _step) {
+          // One date per trading day, always. The window above can contain more
+          // than one tick mark, which used to emit the same date twice (e.g.
+          // "09 Oct" then "09 Oct" again) -- the visible duplicate-date bug.
+          if (!seen.d[dkt]) {
+            seen.d[dkt] = 1;
+            return o.realYearBoundary ? (day + ' ' + yr) : day;
+          }
+          return time;
+        }
         return time;
       }
       // Fallback for raw-epoch charts without the bar map: one date per day.
@@ -221,7 +230,13 @@
     if (d02 != null) {
       var _step2 = Math.max(1, Math.round(o.bars / 4));
       var _into2 = o.idx - d02;
-      return (_into2 >= 0 && _into2 < _step2) ? day : '';
+      if (_into2 >= 0 && _into2 < _step2) {
+        // Same one-date-per-day guarantee as the time tier above.
+        if (seen.d[dk]) return '';
+        seen.d[dk] = 1;
+        return day;
+      }
+      return '';
     }
     if (seen.d[dk]) return '';
     seen.d[dk] = 1;
