@@ -692,6 +692,26 @@ def run_job(job):
                                       "provider_absent": len(bracketed),
                                       "pre_data": len(pre_data)}
 
+    # Bounded end: a job that has spent its attempts without closing the gap stops
+    # honestly instead of looping. If the provider ANSWERED SUCCESSFULLY and simply
+    # had no candle for the remaining buckets, the terminal state is
+    # `complete_with_gaps` / `provider_empty` -- reported as a gap, never as
+    # complete, and deliberately NOT as provider_absent (absence needs bracketing
+    # evidence, above). Only a genuine error stays `permanently_failed`.
+    if job["attempts"] >= JOB_MAX_ATTEMPTS and kind != "auth":
+        if persisted > 0 or kind in ("empty_response", None):
+            finish(job["id"], "complete_with_gaps", fetched=fetched, persisted=persisted,
+                   remaining=len(still_missing), expected=expected_n,
+                   error="provider returned no candle for %d interval(s) after %d attempts"
+                         % (len(still_missing), job["attempts"]),
+                   failure_kind="provider_empty")
+            return "complete_with_gaps", {"remaining": len(still_missing),
+                                          "reason": "provider_empty"}
+        finish(job["id"], "permanently_failed", fetched=fetched, persisted=persisted,
+               remaining=len(still_missing), expected=expected_n,
+               error=last_err or "no data after max attempts", failure_kind=kind or "unknown")
+        return "permanently_failed", {"remaining": len(still_missing), "error": last_err}
+
     if persisted > 0:
         finish(job["id"], "partially_complete", fetched=fetched, persisted=persisted,
                remaining=len(still_missing), expected=expected_n,
@@ -699,12 +719,6 @@ def run_job(job):
                failure_kind=kind or "empty_response", retry_after=retry_after,
                attempts=job["attempts"])
         return "partially_complete", {"remaining": len(still_missing), "persisted": persisted}
-
-    if job["attempts"] >= JOB_MAX_ATTEMPTS and kind != "auth":
-        finish(job["id"], "permanently_failed", fetched=fetched, persisted=0,
-               remaining=len(still_missing), expected=expected_n,
-               error=last_err or "no data after max attempts", failure_kind=kind or "unknown")
-        return "permanently_failed", {"remaining": len(still_missing), "error": last_err}
 
     finish(job["id"], "retry_wait", fetched=fetched, persisted=0,
            remaining=len(still_missing), expected=expected_n,

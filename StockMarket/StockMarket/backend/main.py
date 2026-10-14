@@ -8224,8 +8224,16 @@ def _sweep_intraday_gaps_once(batch: int = _GAP_SWEEP_BATCH) -> int:
         # Priority: tickers a user is looking at right now.
         priority = sorted(_gap_sweep_queue)
         _gap_sweep_queue.clear()
+        # Only real, active NSE instruments. Without this filter the sweep walked the
+        # whole metadata table -- BSE-only listings, delisted names, and
+        # mutual-fund/NCD unit codes like 11AGG -- and enqueued a repair for every
+        # one of them. Measured: 1,161 of 1,344 permanent failures (86%) were those
+        # symbols, so the worker spent most of its slots on tickers Angel One cannot
+        # serve and real NSE names were repaired slowly.
         tickers = [r[0] for r in db.execute(_sa_text(
-            "SELECT ticker FROM stock_metadata WHERE ticker IS NOT NULL ORDER BY ticker")).fetchall()]
+            "SELECT ticker FROM stock_metadata "
+            "WHERE exchange = 'NSE' AND (is_active IS NULL OR is_active = TRUE) "
+            "AND ticker ~ '^[A-Z]' ORDER BY ticker")).fetchall()]
         if priority:
             tickers = priority + [t for t in tickers if t not in set(priority)]
         if not tickers:

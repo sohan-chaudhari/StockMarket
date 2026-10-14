@@ -305,8 +305,18 @@ class RunJobOutcomeTests(unittest.TestCase):
         self.assertEqual(self._finish_status(), "complete")
         self.assertEqual(detail["persisted"], len(self.MISSING))
 
-    def test_exhausted_attempts_fail_permanently(self):
+    def test_exhausted_attempts_end_honestly_not_permanently(self):
+        # The provider ANSWERED SUCCESSFULLY but had no candle for the buckets and
+        # the attempts are spent -> terminal complete_with_gaps / provider_empty.
+        # Deliberately not provider_absent (that needs bracketing evidence) and not
+        # permanently_failed (the symbol is fine, the data is simply absent).
         status, _d, _s = self._run(set(self.MISSING), fetch=[], attempts=bj.JOB_MAX_ATTEMPTS)
+        self.assertEqual(status, "complete_with_gaps")
+        self.assertEqual(self._finish_kind(), "provider_empty")
+
+    def test_genuine_error_at_max_attempts_still_fails_permanently(self):
+        status, _d, _s = self._run(set(self.MISSING), raises=RuntimeError("boom"),
+                                   attempts=bj.JOB_MAX_ATTEMPTS)
         self.assertEqual(status, "permanently_failed")
 
     def test_auth_failure_at_max_attempts_still_retries(self):
@@ -525,6 +535,14 @@ class AuthErrorTests(unittest.TestCase):
         self.assertGreater(i, -1, "the derived-TF branch must exist")
         self.assertIn("records = []", src[i:i + 1000],
                       "a derived timeframe must not merge legacy stored rows")
+
+    def test_sweep_only_enqueues_real_active_nse_instruments(self):
+        src = inspect.getsource(main._sweep_intraday_gaps_once)
+        self.assertIn("exchange = 'NSE'", src)
+        self.assertIn("is_active", src)
+        self.assertIn("~ '^[A-Z]'", src, "fund units / NCD codes like 11AGG must be excluded")
+        self.assertNotIn("WHERE ticker IS NOT NULL", src,
+                         "the unfiltered sweep enqueued BSE-only and inactive symbols")
 
 
 if __name__ == "__main__":
