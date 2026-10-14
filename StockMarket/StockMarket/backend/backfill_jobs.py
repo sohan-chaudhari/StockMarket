@@ -585,25 +585,45 @@ def run_job(job):
     served = []
     svc = hs.historical_service
     for (r_start, r_end) in ranges:
-        try:
-            if not svc.is_logged_in:
-                svc.login()
-            candles = svc.get_historical_candles(
-                ticker=job["ticker"], exchange=job["exchange"],
-                interval=_ANGEL_INTERVAL[job["interval"]],
-                from_date=r_start, to_date=r_end, raise_on_error=True) or []
-        except HistoricalFetchError as e:
-            last_err = str(e)
-            if not e.retryable:
-                unsupported, kind = True, "unsupported"      # invalid/unknown symbol
-            else:
-                kind = "throttled" if hs._looks_rate_limited(e) else "transient"
-            retry_after = max(retry_after, hs._retry_after_seconds(e))
-            served.append((r_start, r_end, None, None, False))
-            break
-        except Exception as e:
-            last_err, kind = str(e), "transient"
-            served.append((r_start, r_end, None, None, False))
+        candles = None
+        # Auth failures are retried INLINE against the same range: the session is
+        # refreshed and the fetch repeated, so a stale token never consumes the
+        # attempt budget. Measured before this change: 180 perfectly valid jobs were
+        # permanently failed after 6 attempts that were all "Invalid Token".
+        for _auth_try in range(3):
+            try:
+                if not svc.is_logged_in:
+                    svc.login()
+                candles = svc.get_historical_candles(
+                    ticker=job["ticker"], exchange=job["exchange"],
+                    interval=_ANGEL_INTERVAL[job["interval"]],
+                    from_date=r_start, to_date=r_end, raise_on_error=True) or []
+                break
+            except HistoricalFetchError as e:
+                last_err = str(e)
+                if hs._looks_auth_error(e):
+                    kind = "auth"
+                    svc.is_logged_in = False
+                    try:
+                        svc.login()
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+                    continue
+                if not e.retryable:
+                    unsupported, kind = True, "unsupported"      # invalid/unknown symbol
+                else:
+                    kind = "throttled" if hs._looks_rate_limited(e) else "transient"
+                retry_after = max(retry_after, hs._retry_after_seconds(e))
+                served.append((r_start, r_end, None, None, False))
+                candles = None
+                break
+            except Exception as e:
+                last_err, kind = str(e), "transient"
+                served.append((r_start, r_end, None, None, False))
+                candles = None
+                break
+        if candles is None:
             break
         fetched += len(candles)
         if candles:
@@ -680,7 +700,7 @@ def run_job(job):
                attempts=job["attempts"])
         return "partially_complete", {"remaining": len(still_missing), "persisted": persisted}
 
-    if job["attempts"] >= JOB_MAX_ATTEMPTS:
+    if job["attempts"] >= JOB_MAX_ATTEMPTS and kind != "auth":
         finish(job["id"], "permanently_failed", fetched=fetched, persisted=0,
                remaining=len(still_missing), expected=expected_n,
                error=last_err or "no data after max attempts", failure_kind=kind or "unknown")

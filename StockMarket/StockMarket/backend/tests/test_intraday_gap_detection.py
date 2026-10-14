@@ -198,7 +198,7 @@ class RunJobOutcomeTests(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
 
     def _run(self, missing_after, fetch=None, raises=None, pre_floor=None,
-             attempts=1, missing=None, rate_limited=False):
+             attempts=1, missing=None, rate_limited=False, auth=False):
         """missing_after = still-missing set re-read after persistence.
         `raises` makes the provider call fail; otherwise `fetch` is returned."""
         first = set(self.MISSING) if missing is None else set(missing)
@@ -206,8 +206,10 @@ class RunJobOutcomeTests(unittest.TestCase):
         with mock.patch.object(bj, "missing_ranges", side_effect=seq), \
              mock.patch.object(bj, "_pre_data_floor", return_value=pre_floor), \
              mock.patch("aggregator.batch_flush_candles"), \
+             mock.patch("time.sleep"), \
              mock.patch("historical_service.rate_limit_backoff_remaining", return_value=0.0), \
              mock.patch("historical_service._looks_rate_limited", return_value=rate_limited), \
+             mock.patch("historical_service._looks_auth_error", return_value=auth), \
              mock.patch("historical_service._retry_after_seconds", return_value=0.0):
             svc = mock.MagicMock()
             svc.is_logged_in = True
@@ -306,6 +308,16 @@ class RunJobOutcomeTests(unittest.TestCase):
     def test_exhausted_attempts_fail_permanently(self):
         status, _d, _s = self._run(set(self.MISSING), fetch=[], attempts=bj.JOB_MAX_ATTEMPTS)
         self.assertEqual(status, "permanently_failed")
+
+    def test_auth_failure_at_max_attempts_still_retries(self):
+        # 180 valid jobs were permanently failed by 6 attempts of "Invalid Token".
+        # An auth error must refresh the session and retry, never go permanent.
+        from historical_service import HistoricalFetchError
+        err = HistoricalFetchError("Invalid Token")
+        status, _d, _s = self._run(set(self.MISSING), raises=err, auth=True,
+                                   attempts=bj.JOB_MAX_ATTEMPTS)
+        self.assertEqual(status, "retry_wait")
+        self.assertEqual(self._finish_kind(), "auth")
 
     def test_tz_aware_provider_timestamps_do_not_break_bracketing(self):
         # Angel One returns "+05:30" timestamps. Comparing those against the naive
@@ -483,6 +495,36 @@ class DerivedTimeframeTests(unittest.TestCase):
     def test_backfill_jobs_reject_a_derived_interval(self):
         self.assertNotIn("4h", bj.MAX_SPAN_DAYS,
                          "4h must not be enqueueable: it is derived, not fetched")
+
+
+class AuthErrorTests(unittest.TestCase):
+    """'Invalid Token' must refresh the session and retry -- never kill a job."""
+
+    def test_auth_errors_are_recognised(self):
+        import historical_service as hs
+        for m in ("Invalid Token", "Session expired", "Unauthorized", "JWT expired"):
+            self.assertTrue(hs._looks_auth_error(m), m)
+
+    def test_throttle_and_bad_symbol_are_not_auth_errors(self):
+        import historical_service as hs
+        self.assertFalse(hs._looks_auth_error("Access denied because of exceeding access rate"),
+                         "a throttle must not be misread as an auth failure")
+        self.assertFalse(hs._looks_auth_error("Ticker 'XYZ' not found"))
+        self.assertFalse(hs._looks_auth_error("connection reset"))
+
+    def test_worker_retries_auth_inline_and_never_fails_permanently(self):
+        src = inspect.getsource(bj.run_job)
+        self.assertIn('kind = "auth"', src)
+        self.assertIn("_looks_auth_error", src)
+        self.assertIn('kind != "auth"', src,
+                      "an auth error must never reach permanently_failed")
+
+    def test_derived_timeframes_ignore_stored_rows(self):
+        src = inspect.getsource(main.get_intraday_paginated)
+        i = src.find("DERIVED TIMEFRAMES: ignore the stored rows")
+        self.assertGreater(i, -1, "the derived-TF branch must exist")
+        self.assertIn("records = []", src[i:i + 1000],
+                      "a derived timeframe must not merge legacy stored rows")
 
 
 if __name__ == "__main__":

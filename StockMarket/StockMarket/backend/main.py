@@ -6842,6 +6842,17 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         except Exception as _yf_fb_err:
             print(f"[GapFill] On-the-fly direct fallback error for {clean_ticker}: {_yf_fb_err}")
 
+    # === DERIVED TIMEFRAMES: ignore the stored rows entirely ===
+    # 15m/30m/1h/4h are built purely from stored 5m below. The legacy stored
+    # 15m/30m/1h rows are deliberately NOT merged in: they are a strict subset of
+    # what 5m produces (measured: RELIANCE over 30 days had 432 stored 15m buckets
+    # against 500 derivable ones), so merging them left permanent holes wherever a
+    # bucket was absent from stored AND older than the newest stored bar. 4h has no
+    # stored rows at all, which is exactly why it is the only timeframe that never
+    # showed a gap.
+    if interval in DERIVED_FROM_5M:
+        records = []
+
     has_more = len(records) > limit
     if has_more:
         records = records[:limit]
@@ -6851,7 +6862,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     # === ON-THE-FLY RESAMPLING FALLBACK ===
     if is_latest_request and interval in DERIVED_FROM_5M:
         now = database.get_ist_now()
-        last_dt = records[0].timestamp if records else (now - __import__('datetime').timedelta(days=14))
+        last_dt = records[0].timestamp if records else _intraday_cutoff(interval)
         tip_gap_minutes = (now - last_dt).total_seconds() / 60
         bucket_min = {"15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 15)
         

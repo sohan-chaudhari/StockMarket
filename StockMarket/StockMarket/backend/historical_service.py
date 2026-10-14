@@ -220,6 +220,29 @@ def _is_retryable_api_error(message: str) -> bool:
     return not any(marker in m for marker in _PERMANENT_ERROR_MARKERS)
 
 
+# Auth failures are neither permanent nor ordinary-transient: the session simply
+# needs refreshing. Angel One invalidates one session when another is created with
+# the same credentials, and this deployment shares the live credentials with the
+# historical service (HISTORICAL_API_KEY == ANGELONE_API_KEY), so the two fight and
+# a fetch intermittently returns "Invalid Token". Measured: 212 invalidations in 30
+# minutes, i.e. about half of all fetch attempts.
+#
+# 'access denied' is deliberately NOT listed: "Access denied because of exceeding
+# access rate" is a THROTTLE, and _looks_rate_limited() is checked first.
+_AUTH_ERROR_MARKERS = (
+    'invalid token', 'session expired', 'unauthorized', 'token missing',
+    'authentication', 'jwt', 'not logged in',
+)
+
+
+def _looks_auth_error(message) -> bool:
+    """True when the failure is a stale/invalid session rather than bad data."""
+    m = str(message or '').lower()
+    if _looks_rate_limited(m):
+        return False
+    return any(kw in m for kw in _AUTH_ERROR_MARKERS)
+
+
 import threading
 
 class HistoricalDataService:
