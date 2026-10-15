@@ -6253,7 +6253,7 @@ def _sync_repair_recent(db, ticker, now) -> int:
             historical_service.login()
         candles = historical_service.get_historical_candles(
             ticker=ticker, exchange="NSE", interval="FIVE_MINUTE",
-            from_date=start, to_date=end, raise_on_error=True) or []
+            from_date=start, to_date=end, raise_on_error=True, priority=True) or []
         if candles:
             batch_flush_candles([{
                 "ticker": ticker, "timeframe": "5m",

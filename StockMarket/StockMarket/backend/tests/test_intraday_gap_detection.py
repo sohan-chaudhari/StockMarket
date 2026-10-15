@@ -544,6 +544,20 @@ class AuthErrorTests(unittest.TestCase):
         self.assertNotIn("WHERE ticker IS NOT NULL", src,
                          "the unfiltered sweep enqueued BSE-only and inactive symbols")
 
+    def test_user_repair_is_not_refused_by_the_shared_cooldown(self):
+        # CUPID/RELIANCE were logged as "SyncRepair ... skipped: shared cooldown",
+        # so the visitor saw a gap. A user-requested bounded repair must not
+        # pre-yield to the background cooldown.
+        src = inspect.getsource(main._sync_repair_recent)
+        self.assertIn("priority=True", src,
+                      "the on-open repair must be a priority call")
+        import historical_service as hs
+        import inspect as _i
+        gsrc = _i.getsource(hs.HistoricalDataService.get_historical_candles)
+        self.assertIn("if not priority:", gsrc,
+                      "the shared cooldown must be bypassable for a priority caller")
+        self.assertIn("priority: bool = False", gsrc)
+
 
 class OutOfOrderTickTests(unittest.TestCase):
     """An out-of-order tick inside the CURRENT bucket must widen the range."""

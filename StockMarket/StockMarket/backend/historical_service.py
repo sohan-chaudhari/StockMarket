@@ -346,6 +346,7 @@ class HistoricalDataService:
         to_date,
         exchange: str = "NSE",
         raise_on_error: bool = False,
+        priority: bool = False,
     ) -> List[Dict]:
         """THE single entry point for Angel One history (every consumer uses this).
 
@@ -356,6 +357,15 @@ class HistoricalDataService:
           3. concurrent IDENTICAL requests are deduplicated: one provider call,
              and every waiter receives that same result,
           4. the account-wide pacing slot is taken by the owner only.
+
+        `priority=True` is for a USER-REQUESTED, bounded repair (the chart-open
+        fill of the current session). Such a call does NOT pre-yield to the shared
+        cooldown: the cooldown exists to stop BACKGROUND churn from exhausting the
+        quota, and letting it also refuse the visitor's own one-request repair is
+        what left CUPID (and RELIANCE) showing a gap on open -- the request was
+        logged as "skipped: shared cooldown" and the user saw missing candles. A
+        throttle encountered here is still recorded, so the cooldown still applies
+        to every other caller.
         """
         if not self.is_logged_in:
             msg = "Not logged in. Call login() first."
@@ -364,12 +374,13 @@ class HistoricalDataService:
                 raise HistoricalFetchError(msg, retryable=True)
             return []
 
-        _rl_left = rate_limit_backoff_remaining()
-        if _rl_left > 0:
-            msg = "Historical API rate-limited (shared cooldown, %.0fs left)" % _rl_left
-            if raise_on_error:
-                raise HistoricalFetchError(msg, retryable=True)
-            return []
+        if not priority:
+            _rl_left = rate_limit_backoff_remaining()
+            if _rl_left > 0:
+                msg = "Historical API rate-limited (shared cooldown, %.0fs left)" % _rl_left
+                if raise_on_error:
+                    raise HistoricalFetchError(msg, retryable=True)
+                return []
 
         key = ("hist", str(ticker or "").strip().upper(), str(exchange or "NSE").upper(),
                str(interval), str(from_date), str(to_date))
