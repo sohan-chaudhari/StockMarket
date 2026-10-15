@@ -385,7 +385,7 @@ class HistoricalDataService:
         key = ("hist", str(ticker or "").strip().upper(), str(exchange or "NSE").upper(),
                str(interval), str(from_date), str(to_date))
         return _deduped(key, lambda: self._fetch_historical_uncached(
-            ticker, interval, from_date, to_date, exchange, raise_on_error))
+            ticker, interval, from_date, to_date, exchange, raise_on_error, priority))
 
     def _fetch_historical_uncached(
         self,
@@ -395,6 +395,7 @@ class HistoricalDataService:
         to_date,
         exchange: str = "NSE",
         raise_on_error: bool = False,
+        priority: bool = False,
     ) -> List[Dict]:
         """
         Fetch historical candle data from Angel One
@@ -424,8 +425,11 @@ class HistoricalDataService:
         # would fail identically, and the retry loops elsewhere would hold the
         # window open. Pause instead so it can recover (and so the on-demand
         # chart fills get a chance once it does).
+        # A PRIORITY call (the visitor's own bounded on-open repair) is exempt: the
+        # cooldown is there to stop BACKGROUND churn, and letting it also refuse the
+        # user's single request is what left CUPID showing a gap on open.
         _rl_left = rate_limit_backoff_remaining()
-        if _rl_left > 0:
+        if _rl_left > 0 and not priority:
             msg = "Historical API rate-limited (global backoff, %.0fs left)" % _rl_left
             if raise_on_error:
                 raise HistoricalFetchError(msg, retryable=True)

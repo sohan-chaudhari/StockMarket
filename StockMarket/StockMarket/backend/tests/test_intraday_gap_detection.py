@@ -557,6 +557,14 @@ class AuthErrorTests(unittest.TestCase):
         self.assertIn("if not priority:", gsrc,
                       "the shared cooldown must be bypassable for a priority caller")
         self.assertIn("priority: bool = False", gsrc)
+        # There are TWO gates: get_historical_candles ("shared cooldown") and
+        # _fetch_historical_uncached ("global backoff"). Both must honour priority,
+        # otherwise the repair is still refused -- which is exactly what happened
+        # on the first attempt (CUPID logged "global backoff, 72s left").
+        fsrc = _i.getsource(hs.HistoricalDataService._fetch_historical_uncached)
+        self.assertIn("if _rl_left > 0 and not priority:", fsrc,
+                      "the global-backoff gate must also honour priority")
+        self.assertIn("priority: bool = False", fsrc)
 
 
 class OutOfOrderTickTests(unittest.TestCase):
