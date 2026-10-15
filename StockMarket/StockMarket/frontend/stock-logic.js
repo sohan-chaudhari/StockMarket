@@ -1688,12 +1688,39 @@
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const action = (urlParams.get('action') || '').toLowerCase();
-        if (action === 'buy' || action === 'long') {
-          setTimeout(() => showTradeModal('LONG'), 300);
-        } else if (action === 'sell' || action === 'short') {
-          setTimeout(() => showTradeModal('SHORT'), 300);
-        } else if (action === 'trade') {
-          setTimeout(() => showTradeModal('LONG'), 300);
+        if (action) {
+          if (!sessionStorage.getItem('token')) {
+            // NOT signed in: do not auto-open, and do not redirect.
+            //
+            // showTradeModal() calls _requireAuth(), which sends the user to
+            // login.html?redirect=<this exact URL>. Closing that login page runs
+            // handleAuthClose(), which navigates back to the SAME ?action=... URL --
+            // which auto-opens again and bounces back to login. That is an endless
+            // loop: the user clicks Trade/Buy/Sell, the sign-in page appears, and
+            // closing it can never return them to the chart.
+            //
+            // So: strip the action parameter (making the URL we can safely return to
+            // a clean chart/overview URL) and offer the sign-in prompt instead of
+            // forcing a redirect. The chart renders normally behind it.
+            try {
+              var _clean = new URL(window.location.href);
+              _clean.searchParams.delete('action');
+              window.history.replaceState({}, '', _clean.pathname + _clean.search + _clean.hash);
+            } catch (e2) {}
+            setTimeout(function () {
+              try {
+                var r = encodeURIComponent(window.location.href);
+                var b = document.getElementById('signInRedirectBtn');
+                if (b) b.href = 'login.html?redirect=' + r;
+                var m = document.getElementById('signInPromptModal');
+                if (m) m.classList.add('visible');
+              } catch (e3) {}
+            }, 300);
+          } else if (action === 'buy' || action === 'long' || action === 'trade') {
+            setTimeout(() => showTradeModal('LONG'), 300);
+          } else if (action === 'sell' || action === 'short') {
+            setTimeout(() => showTradeModal('SHORT'), 300);
+          }
         }
       } catch (e) {
         console.error('Failed to parse URL action param:', e);
