@@ -37,7 +37,7 @@ def _make_service(delay=0.0):
     svc._lock = threading.Lock()
 
     def _fetch(self, ticker, interval, from_date, to_date,
-               exchange="NSE", raise_on_error=False):
+               exchange="NSE", raise_on_error=False, priority=False):
         with self._lock:
             self.calls += 1
         if self.delay:
