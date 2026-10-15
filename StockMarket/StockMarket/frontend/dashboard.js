@@ -61,7 +61,42 @@ window.addEventListener('pageshow', function (event) {
       fetchIndexPrices();
     }
   }
+  // CHART PAGES TOO. ws.js reconnects the WebSocket, but nothing re-rendered the
+  // candles, so returning to a tab after a few minutes showed a BLANK chart even
+  // though the data request returned 200 (measured: HDFCBANK chart, network shows
+  // range=ALL 200 while the pane is empty). Reload the active range.
+  if (event.persisted) { _resumeChartAfterAbsence(0); }
 });
+
+// Chrome can also suspend a background tab WITHOUT a bfcache restore, in which case
+// no `pageshow` fires at all. Track how long the tab was hidden and re-run the load
+// only after a real absence, so switching tabs briefly does not thrash the API.
+var _chartHiddenSince = 0;
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) { _chartHiddenSince = Date.now(); return; }
+  var away = _chartHiddenSince ? (Date.now() - _chartHiddenSince) : 0;
+  _chartHiddenSince = 0;
+  if (away > 30000) { _resumeChartAfterAbsence(away); }
+});
+
+function _resumeChartAfterAbsence(awayMs) {
+  try {
+    // Only when a chart is actually on screen and we know its range.
+    if (typeof loadData === 'function' && window.activeRange &&
+        (document.getElementById('chart-container') || document.querySelector('.chart-wrap, #big-chart'))) {
+      // Bump the load id first so any in-flight request from before the suspend is
+      // discarded instead of racing the fresh one.
+      try { if (typeof window._loadId === 'number') { window._loadId++; } } catch (e) {}
+      loadData(window.activeRange);
+      console.log('[Resume] chart reloaded for ' + window.activeRange +
+                  (awayMs ? ' after ' + Math.round(awayMs / 1000) + 's hidden' : ' (bfcache)'));
+    }
+  } catch (e) { console.warn('[Resume] chart reload failed:', e); }
+  // And make sure the live feed is back.
+  try {
+    if (window.DashboardWS && !window.DashboardWS.isConnected()) { window.DashboardWS.start(); }
+  } catch (e) {}
+}
 
 function initDashboard() {
   // Hide global loader immediately so skeleton/cached UI is visible
