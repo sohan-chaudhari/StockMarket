@@ -104,6 +104,28 @@ _limiter_lock = threading.Lock()
 _next_slot = 0.0            # earliest time the next call may start
 _tokens = float(_HISTORICAL_BURST)
 
+# Priority (user-facing) calls are exempt from the shared cooldown, because the
+# cooldown exists to stop BACKGROUND churn and letting it also refuse the visitor's
+# own bounded repair is what left CUPID showing a gap. But an UNBOUNDED exemption is
+# worse: every refused call extends the provider's throttle, so a stream of
+# user-triggered repairs keeps the account permanently throttled -- observed live
+# (CUPID still "Access denied because of exceeding access rate" at 5s background
+# pacing). This caps repair attempts account-wide so the provider can recover while
+# the visitor's request still gets a real chance.
+_HISTORICAL_PRIORITY_MIN_INTERVAL_SEC = float(os.getenv("HIST_PRIORITY_MIN_INTERVAL_SEC", "20"))
+_priority_next_slot = 0.0
+
+
+def _acquire_priority_slot() -> bool:
+    """True when a user-facing repair may spend a provider call right now."""
+    global _priority_next_slot
+    with _limiter_lock:
+        now = time.time()
+        if now < _priority_next_slot:
+            return False
+        _priority_next_slot = now + _HISTORICAL_PRIORITY_MIN_INTERVAL_SEC
+        return True
+
 _metrics = {
     "calls": 0, "dedup_hits": 0, "throttles": 0, "cooldowns": 0,
     "errors": 0, "candles": 0,
@@ -381,6 +403,12 @@ class HistoricalDataService:
                 if raise_on_error:
                     raise HistoricalFetchError(msg, retryable=True)
                 return []
+        elif not _acquire_priority_slot():
+            msg = ("Historical API priority slot busy (max 1 user repair per %.0fs)"
+                   % _HISTORICAL_PRIORITY_MIN_INTERVAL_SEC)
+            if raise_on_error:
+                raise HistoricalFetchError(msg, retryable=True)
+            return []
 
         key = ("hist", str(ticker or "").strip().upper(), str(exchange or "NSE").upper(),
                str(interval), str(from_date), str(to_date))

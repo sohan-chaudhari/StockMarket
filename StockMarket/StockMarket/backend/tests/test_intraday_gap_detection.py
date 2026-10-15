@@ -613,6 +613,16 @@ class QuotaRebalanceTests(unittest.TestCase):
         self.assertGreater(i, -1, "the index backfill must stop its batch when throttled")
         self.assertIn("return", src[i:i + 200])
 
+    def test_priority_repairs_are_capped(self):
+        # An unbounded priority exemption keeps the account throttled (every refused
+        # call extends it), so repairs are capped account-wide.
+        import historical_service as hs
+        self.assertGreaterEqual(hs._HISTORICAL_PRIORITY_MIN_INTERVAL_SEC, 10.0)
+        hs._priority_next_slot = 0.0
+        self.assertTrue(hs._acquire_priority_slot())
+        self.assertFalse(hs._acquire_priority_slot(), "a second repair must wait its turn")
+        hs._priority_next_slot = 0.0
+
 
 if __name__ == "__main__":
     unittest.main()
