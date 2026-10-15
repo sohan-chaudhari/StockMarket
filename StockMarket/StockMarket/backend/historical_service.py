@@ -95,7 +95,7 @@ def _retry_after_seconds(message) -> float:
 #   HIST_MIN_INTERVAL_SEC  default 2.0   min gap between provider calls
 #   HIST_BURST             default 1     bucket depth
 #   HIST_BACKOFF_SEC       default 90    cooldown after a throttle
-_HISTORICAL_MIN_INTERVAL_SEC = float(os.getenv("HIST_MIN_INTERVAL_SEC", "2.0"))
+_HISTORICAL_MIN_INTERVAL_SEC = float(os.getenv("HIST_MIN_INTERVAL_SEC", "5.0"))
 _HISTORICAL_BURST = max(1, int(os.getenv("HIST_BURST", "1")))
 _RATE_LIMIT_BACKOFF_SEC = float(os.getenv("HIST_BACKOFF_SEC", "90"))
 

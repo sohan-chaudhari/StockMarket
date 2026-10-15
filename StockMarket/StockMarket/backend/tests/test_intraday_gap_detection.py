@@ -545,7 +545,6 @@ class AuthErrorTests(unittest.TestCase):
                          "the unfiltered sweep enqueued BSE-only and inactive symbols")
 
     def test_user_repair_is_not_refused_by_the_shared_cooldown(self):
-        # CUPID/RELIANCE were logged as "SyncRepair ... skipped: shared cooldown",
         # so the visitor saw a gap. A user-requested bounded repair must not
         # pre-yield to the background cooldown.
         src = inspect.getsource(main._sync_repair_recent)
@@ -582,6 +581,37 @@ class OutOfOrderTickTests(unittest.TestCase):
                       "a late tick must not pull the close backwards")
         self.assertIn("forming[\"high\"] = max(forming[\"high\"], price)", src)
         self.assertIn("forming[\"low\"] = min(forming[\"low\"], price)", src)
+
+
+class QuotaRebalanceTests(unittest.TestCase):
+    """Background consumers must not keep the account permanently throttled.
+
+    Measured on production: intraday prefill retried NIFTY/BANKNIFTY 5s/15s/30s
+    apart *during* the 90s shared cooldown, and the dashboard-index backfill walked
+    every remaining day/index the same way, so the account stayed throttled and the
+    USER's own repair (CUPID) was refused by Angel One with "Access denied because
+    of exceeding access rate".
+    """
+
+    def test_account_pacing_is_slower(self):
+        import historical_service as hs
+        self.assertGreaterEqual(hs._HISTORICAL_MIN_INTERVAL_SEC, 4.0,
+                                "2.0s pacing kept the account continuously throttled")
+
+    def test_prefill_does_not_retry_a_rate_limit(self):
+        import inspect as _i
+        import intraday_prefill as ip
+        src = _i.getsource(ip)
+        i = src.find("if _is_rate_limited(exc):")
+        self.assertGreater(i, -1, "a rate limit must abort the retry loop")
+        self.assertIn("break", src[i:i + 60])
+
+    def test_index_backfill_stops_on_rate_limit(self):
+        import inspect as _i
+        src = _i.getsource(main)
+        i = src.find("rate limited - stopping this batch")
+        self.assertGreater(i, -1, "the index backfill must stop its batch when throttled")
+        self.assertIn("return", src[i:i + 200])
 
 
 if __name__ == "__main__":

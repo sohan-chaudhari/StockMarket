@@ -9716,7 +9716,7 @@ async def startup():
     async def _dashboard_index_backfill():
         await asyncio.sleep(120)
         from intraday_prefill import _fetch_candles, _insert_candles, _rate_gate
-        from historical_service import HistoricalDataService
+        from historical_service import HistoricalDataService, _looks_rate_limited
         import database as _db_mod
         from exchange_calendar import nse_calendar
         DASHBOARD_INDICES = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY', 'MIDCAP', 'SMALLCAP']
@@ -9742,6 +9742,13 @@ async def startup():
                                 print(f"[DashboardIdx] {_idx} {_d}: +{ins} candles")
                     except Exception as _e:
                         print(f"[DashboardIdx] {_idx} {_d} error: {_e}")
+                        if _looks_rate_limited(_e):
+                            # The account-wide cooldown is already pausing every
+                            # caller; walking the remaining days/indices now just
+                            # burns the quota and keeps the account throttled, which
+                            # is what starved the user-facing repair. Stop the batch.
+                            print("[DashboardIdx] rate limited - stopping this batch")
+                            return
 
         try:
             await asyncio.to_thread(_do_index_backfill)

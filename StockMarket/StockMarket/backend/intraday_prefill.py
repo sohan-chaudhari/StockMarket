@@ -60,6 +60,7 @@ def _fetch_candles(svc, ticker: str, session_date: date) -> List[Dict]:
     Returns [] (not an error) when Angel One confirms no data for that range.
     """
     from historical_service import HistoricalFetchError
+    from historical_service import _looks_rate_limited as _is_rate_limited
 
     from_dt = datetime(session_date.year, session_date.month, session_date.day, 9, 15)
     to_dt   = datetime(session_date.year, session_date.month, session_date.day, 15, 30)
@@ -82,6 +83,16 @@ def _fetch_candles(svc, ticker: str, session_date: date) -> List[Dict]:
             if not exc.retryable:
                 raise  # permanent: caller handles immediately, no retry
             last_exc = exc
+            # A RATE LIMIT is not a per-ticker transient. The shared account-wide
+            # cooldown is already pausing every caller, so retrying this ticker 5s /
+            # 15s / 30s later just re-hits that same cooldown, burns the quota and
+            # spams the log -- measured live: "[IntradayPrefill] NIFTY attempt 3
+            # retryable: ... shared cooldown, 50s left" and BANKNIFTY attempt 1/2,
+            # which kept the account permanently throttled so the USER's own repair
+            # (CUPID) was refused by Angel One with "Access denied because of
+            # exceeding access rate". Give up on this ticker and let it recover.
+            if _is_rate_limited(exc):
+                break
             if attempt < len(RETRY_DELAYS):
                 print(f"[IntradayPrefill] {ticker} attempt {attempt + 1} retryable: {exc}")
     raise last_exc  # type: ignore[misc]  # exhausted all retries
