@@ -3684,6 +3684,25 @@ class DrawingEngine {
 
     // Get drawings visible in the current viewport (viewport culling)
     _getVisibleDrawings(chartState) {
+        // Liang-Barsky: does the segment (x1,y1)-(x2,y2) touch the canvas rect?
+        // Exact for the horizontal/vertical segments the one-point tools use.
+        function _segHitsRect(x1, y1, x2, y2, cw, ch) {
+            var dx = x2 - x1, dy = y2 - y1;
+            var p = [-dx, dx, -dy, dy];
+            var q = [x1, cw - x1, y1, ch - y1];
+            var t0 = 0, t1 = 1;
+            for (var i = 0; i < 4; i++) {
+                if (p[i] === 0) {
+                    if (q[i] < 0) return false;      // parallel to this edge and outside it
+                } else {
+                    var r = q[i] / p[i];
+                    if (p[i] < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+                    else { if (r < t0) return false; if (r < t1) t1 = r; }
+                }
+            }
+            return true;
+        }
+
         var result = [];
         var cw = this._canvasWidth;
         var ch = this._canvasHeight;
@@ -3695,6 +3714,30 @@ class DrawingEngine {
             if (d.getPixels && chartState.coordToPixel) {
                 var pixels = d.getPixels(chartState);
                 if (!pixels || pixels.length === 0) { result.push(d); continue; }
+
+                // One-point tools (HorizontalLine, HorizontalRay, VerticalLine,
+                // CrossLine) return ONLY their anchor pixel from getPixels(). The
+                // anchor test further down then culled them the moment that anchor
+                // scrolled off-screen -- so a horizontal line visibly vanished even
+                // though it still spanned the chart. getEdgeSegments() returns the
+                // geometry actually painted (the same segments hit-testing uses),
+                // so decide on those instead. Guarded by `pixels.length < 2`, so no
+                // multi-point tool can change behaviour, and it can only ever ADD
+                // visibility (a miss still falls through to the existing logic).
+                if (pixels.length < 2 && typeof d.getEdgeSegments === 'function') {
+                    var segs = null;
+                    try { segs = d.getEdgeSegments(pixels, chartState); } catch (e) { segs = null; }
+                    if (segs && segs.length) {
+                        var segHit = false;
+                        for (var si = 0; si < segs.length && !segHit; si++) {
+                            var sg = segs[si];
+                            if (sg && sg.p1 && sg.p2) {
+                                segHit = _segHitsRect(sg.p1.x, sg.p1.y, sg.p2.x, sg.p2.y, cw, ch);
+                            }
+                        }
+                        if (segHit) { result.push(d); continue; }
+                    }
+                }
 
                 // For infinite geometry (Ray, ExtendedLine, etc.), check line-canvas intersection
                 if (pixels.length >= 2 && d.constructor.name !== 'TrendLine' && d.constructor.name !== 'InfoLine') {
