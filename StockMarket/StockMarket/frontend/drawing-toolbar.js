@@ -986,9 +986,14 @@
       trashSubmenu.className = 'drawing-submenu';
       trashSubmenu.id = 'submenu-remove';
 
+      // NOTE: no icon interpolation on these two items. `ICONS.remove_selected`
+      // and `ICONS.remove_all` were never defined in toolbarConfig.js, so
+      // `${ICONS.x}` rendered the literal text "undefined" next to the label.
+      // Removed rather than inventing an icon; the labels and the Del shortcut
+      // badge are unchanged.
       const delSelected = document.createElement('div');
       delSelected.className = 'submenu-item';
-      delSelected.innerHTML = `${ICONS.remove_selected}<span>Remove Selected</span><span class="tool-shortcut-badge">Del</span>`;
+      delSelected.innerHTML = `<span>Remove Selected</span><span class="tool-shortcut-badge">Del</span>`;
       delSelected.addEventListener('click', (e) => {
         e.stopPropagation();
         this.closeAllSubmenus();
@@ -1000,7 +1005,7 @@
 
       const delAll = document.createElement('div');
       delAll.className = 'submenu-item';
-      delAll.innerHTML = `${ICONS.remove_all}<span>Remove All Drawings</span>`;
+      delAll.innerHTML = `<span>Remove All Drawings</span>`;
       delAll.addEventListener('click', (e) => {
         e.stopPropagation();
         this.closeAllSubmenus();
