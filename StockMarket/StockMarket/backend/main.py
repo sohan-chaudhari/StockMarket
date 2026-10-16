@@ -9030,7 +9030,21 @@ async def startup():
             should_refresh_db = False
             if not _db_baseline_prices:
                 should_refresh_db = True
-            elif market_open and (now_ts - last_db_refresh >= 300):
+            # 900s while open, not 300s. During market hours _build_movers only
+            # lists quotes carrying a live tick (p["_live"]), and
+            # _get_all_market_prices replaces EVERY price field from that tick --
+            # current/open/high/low/prev_close/change/change_pct/volume/prev_volume/
+            # vol_surge/timestamp -- using the baseline only as a fallback. So the
+            # baseline's own numbers are not what movers shows while trading; they
+            # only matter for tickers with no live tick, and those are exactly the
+            # tickers whose 1D candle is not moving either. Meanwhile the baseline
+            # query is a 30-day scan of 1D rows (~50k rows / ~5,100 heap blocks,
+            # cold-cache ~4.4s on this 128MB-buffer box), so refreshing it every
+            # 5 minutes was paying that I/O for values that were immediately
+            # overridden. 900s still cannot show a stale prev_close or day open:
+            # the live ticks carry prev_close themselves, and the day's open is
+            # fixed after 09:15.
+            elif market_open and (now_ts - last_db_refresh >= 900):
                 should_refresh_db = True
             elif (not market_open) and (now_ts - last_db_refresh >= 1800):
                 should_refresh_db = True
