@@ -2126,7 +2126,7 @@ def _resolve_prices_from_db(tickers: List[str], market_open: bool) -> Tuple[Dict
                 raw = tkr.strip().upper()
                 clean = raw.replace(".NS", "").replace(".BO", "")
                 c_rows = db_prices.query(Candle).filter(
-                    Candle.ticker.in_([raw, clean]),
+                    _ticker_match(Candle.ticker, raw, clean),
                     Candle.timeframe == '1D',
                     Candle.close > 0
                 ).order_by(Candle.timestamp.desc()).limit(2).all()
@@ -2141,7 +2141,7 @@ def _resolve_prices_from_db(tickers: List[str], market_open: bool) -> Tuple[Dict
                     _lt_ck = c_rows[0].timestamp
                     _lt_ck_date = _lt_ck.astimezone(_IST_ck).date() if getattr(_lt_ck, 'tzinfo', None) is not None else _lt_ck.date()
                     _last5m_ts = db_prices.query(Candle.timestamp).filter(
-                        Candle.ticker.in_([raw, clean]),
+                        _ticker_match(Candle.ticker, raw, clean),
                         Candle.timeframe == '5m',
                         Candle.close > 0
                     ).order_by(Candle.timestamp.desc()).limit(1).scalar()
@@ -2967,6 +2967,21 @@ _db_baseline_prices: Dict[str, Dict] = {}
 _db_baseline_ts: float = 0.0
 _db_baseline_lock = threading.Lock()
 _db_baseline_query_lock = threading.Lock()
+
+
+def _ticker_match(col, raw, clean):
+    """`ticker IN (raw, clean)` -- but as an EQUALITY when the two are the same.
+
+    This matters a great deal for the planner. `IN (a, b)` gives no equality on the
+    leading column of ix_candles_ticker_tf_ts (ticker, timeframe, timestamp DESC),
+    so with a `LIMIT` the planner instead walks ix_candles_tf_ts
+    (timeframe, timestamp DESC) across EVERY ticker and filters the ticker
+    afterwards -- measured with pg_stat_statements at 74 ms and 57 disk blocks per
+    call, 1,603 calls per 17 minutes. `raw` and `clean` are identical unless the
+    caller passed a .NS/.BO suffix, so the common path can use a plain equality and
+    the right index, with the IN kept for the suffixed case. Same rows either way.
+    """
+    return (col == clean) if raw == clean else col.in_([raw, clean])
 
 
 def _refresh_db_baseline_sync():
