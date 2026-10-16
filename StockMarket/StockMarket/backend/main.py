@@ -3364,6 +3364,67 @@ _DIST_BUCKETS = [
 
 _52w_loading = False
 
+# The 52-week high/low scan reads ~1.4M 1D rows (a year for ~5,500 tickers). The
+# 1D rows are spread across the whole candles heap, so the planner seq-scans it:
+# measured 18,850 ms and 280,033 disk blocks -- essentially the entire table.
+# The result is cached in-process for 6h, but gunicorn runs several workers and
+# each has its OWN cache, so the scan ran once per worker per 6h (~14x/day
+# measured) and every run evicted the 128 MB buffer cache, which is what made
+# unrelated queries read from disk. Mirroring the result to a small file makes
+# the cache shared across workers: the scan runs ~4x/day instead of ~14x/day.
+# Freshness and output are unchanged -- the TTL stays 6h and the same
+# {ticker: (high, low)} dict is returned.
+_52W_CACHE_TTL = 21600                                    # 6h, unchanged
+
+
+def _52w_cache_path():
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "leverage_52w_ranges.json")
+
+
+def _read_52w_cache_file():
+    """The shared cache written by whichever worker last ran the scan.
+
+    Returns (ranges, ts), or (None, 0.0) when nothing usable is there. A missing,
+    unreadable, truncated or malformed file is deliberately NOT an error: the
+    caller just recomputes, so losing /tmp after a reboot costs one scan.
+    """
+    try:
+        with open(_52w_cache_path(), "r") as fh:
+            blob = json.load(fh)
+        ts = float(blob.get("ts", 0))
+        ranges = {}
+        for tkr, pair in (blob.get("ranges") or {}).items():
+            # One malformed entry must not discard the whole cache.
+            try:
+                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                    continue
+                hi, lo = float(pair[0]), float(pair[1])
+            except (TypeError, ValueError):
+                continue
+            if hi > 0 and lo > 0:
+                ranges[tkr] = (hi, lo)
+        if not ranges:
+            return None, 0.0
+        return ranges, ts
+    except Exception:
+        return None, 0.0
+
+
+def _write_52w_cache_file(ranges, ts):
+    """Write atomically so a concurrent reader never sees a partial file."""
+    try:
+        path = _52w_cache_path()
+        tmp = path + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"ts": ts,
+                       "ranges": {k: [v[0], v[1]] for k, v in ranges.items()}}, fh)
+        os.replace(tmp, path)
+    except Exception as e:
+        # Never fatal -- this worker's in-process cache still works.
+        print(f"[Internals] 52w cache file write failed (non-fatal): {e}")
+
+
 def _async_load_52w_ranges():
     global _52w_loading
     if _52w_loading:
@@ -3389,9 +3450,12 @@ def _async_load_52w_ranges():
                     ranges[tkr] = (float(hi), float(lo))
         finally:
             s.close()
+        ts = time.time()
         with _52w_cache_lock:
             _52w_cache["data"] = ranges
-            _52w_cache["ts"] = time.time()
+            _52w_cache["ts"] = ts
+        # Publish to the sibling workers so they do not repeat the scan.
+        _write_52w_cache_file(ranges, ts)
         print(f"[Internals] Loaded 52w ranges for {len(ranges)} tickers")
     except Exception as e:
         print(f"[Internals] 52w range load failed: {e}")
@@ -3400,14 +3464,27 @@ def _async_load_52w_ranges():
 
 
 def _load_52w_ranges():
-    """Per-ticker 52-week high/low from daily history, cached 6h."""
+    """Per-ticker 52-week high/low from daily history, cached 6h.
+
+    Preference order: this worker's own fresh cache, then the shared file left by
+    another worker, then a background refresh (serving the stale value meanwhile,
+    exactly as before).
+    """
     with _52w_cache_lock:
         cached, ts = _52w_cache["data"], _52w_cache["ts"]
-    if cached is not None and (time.time() - ts) < 21600:
+    if cached is not None and (time.time() - ts) < _52W_CACHE_TTL:
         return cached
-    # Non-blocking background loader
+    # Our own cache is empty or stale -- but a sibling worker may already have
+    # paid for the ~19 s scan. Adopt its result instead of repeating it.
+    file_ranges, file_ts = _read_52w_cache_file()
+    if file_ranges and (time.time() - file_ts) < _52W_CACHE_TTL:
+        with _52w_cache_lock:
+            _52w_cache["data"] = file_ranges
+            _52w_cache["ts"] = file_ts
+        return file_ranges
+    # Nothing fresh anywhere: refresh in the background, serve the stale value now.
     threading.Thread(target=_async_load_52w_ranges, daemon=True).start()
-    return cached or {}
+    return cached or file_ranges or {}
 
 
 def _dist_bucket_index(pct: float) -> int:
