@@ -73,7 +73,7 @@
         .global-row { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.2rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
         .global-row:last-child { border-bottom: none; }
         .global-name { font-weight: 600; color: #fff; font-size: 0.85rem; }
-        .global-flag { margin-right: 8px; }
+        .global-flag { margin-right: 8px; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 16px; border-radius: 3px; background: rgba(255,255,255,0.08); color: #b0b6c3; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.02em; box-sizing: border-box; flex-shrink: 0; }
         .fii-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 0.85rem; }
         .fii-row:last-child { border-bottom: none; }
         .fii-label { color: var(--text-secondary); font-weight: 500; }
@@ -548,12 +548,12 @@
             <div class="markets-card" style="max-width:600px;margin:0 auto;">
                 <div class="card-header"><h3>Global Indices</h3><span class="badge badge-blue">LIVE</span></div>
                 <div id="globalContainer">
-                    <div class="global-row"><span><span class="global-flag">🇺🇸</span><span class="global-name">S&P 500</span></span><span class="fii-value" id="sp500Val">--</span><span class="index-change" id="sp500Chg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">🇺🇸</span><span class="global-name">NASDAQ</span></span><span class="fii-value" id="nasdaqVal">--</span><span class="index-change" id="nasdaqChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">🇯🇵</span><span class="global-name">Nikkei 225</span></span><span class="fii-value" id="nikkeiVal">--</span><span class="index-change" id="nikkeiChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">🇭🇰</span><span class="global-name">Hang Seng</span></span><span class="fii-value" id="hsiVal">--</span><span class="index-change" id="hsiChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">🇩🇪</span><span class="global-name">DAX</span></span><span class="fii-value" id="daxVal">--</span><span class="index-change" id="daxChg"></span></div>
-                    <div class="global-row"><span><span class="global-flag">🇬🇧</span><span class="global-name">FTSE 100</span></span><span class="fii-value" id="ftseVal">--</span><span class="index-change" id="ftseChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">US</span><span class="global-name">S&amp;P 500</span></span><span class="fii-value" id="sp500Val">--</span><span class="index-change" id="sp500Chg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">US</span><span class="global-name">NASDAQ</span></span><span class="fii-value" id="nasdaqVal">--</span><span class="index-change" id="nasdaqChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">JP</span><span class="global-name">Nikkei 225</span></span><span class="fii-value" id="nikkeiVal">--</span><span class="index-change" id="nikkeiChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">HK</span><span class="global-name">Hang Seng</span></span><span class="fii-value" id="hsiVal">--</span><span class="index-change" id="hsiChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">DE</span><span class="global-name">DAX</span></span><span class="fii-value" id="daxVal">--</span><span class="index-change" id="daxChg"></span></div>
+                    <div class="global-row"><span><span class="global-flag">GB</span><span class="global-name">FTSE 100</span></span><span class="fii-value" id="ftseVal">--</span><span class="index-change" id="ftseChg"></span></div>
                 </div>
             </div>
         </div>
