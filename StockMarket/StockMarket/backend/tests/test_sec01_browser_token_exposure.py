@@ -13,7 +13,9 @@ Locked in here:
   * unauthenticated / expired / revoked / invalid sessions are rejected;
   * logout revokes (blacklist) and clears the cookie;
   * cookie-authenticated state-changing requests still require CSRF;
-  * the shipped frontend no longer writes/reads a JWT in browser storage.
+  * the shipped frontend no longer writes/reads a JWT in browser storage;
+  * SEC-01 follow-up: browser-origin requests cannot obtain a JWT by sending
+    the `X-Auth-Mode: bearer` opt-in (that header is not a trust boundary).
 
 Isolated app + in-memory SQLite (same pattern as test_auth.py /
 test_auth_session_cookie.py) -- no Postgres, no network.
@@ -74,6 +76,21 @@ EMAIL = "sec01@example.com"
 FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 OPT_IN = {"X-Auth-Mode": "bearer"}
+
+# Headers a browser attaches automatically and page JavaScript cannot set,
+# change or remove. A real non-browser client sends none of them.
+BROWSER_HEADERS = {
+    "Origin": "https://leveragx.tech",
+    "Referer": "https://leveragx.tech/login.html",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-Mode": "cors",
+}
+BROWSER_SIGNALS = [
+    ("origin", {"Origin": "https://leveragx.tech"}),
+    ("referer", {"Referer": "https://leveragx.tech/login.html"}),
+    ("sec-fetch-site", {"Sec-Fetch-Site": "same-origin"}),
+    ("sec-fetch-mode", {"Sec-Fetch-Mode": "cors"}),
+]
 
 
 def _client(base_url="http://testserver"):
@@ -210,6 +227,76 @@ class BrowserJwtExposureTests(unittest.TestCase):
             client.get("/api/auth/me", headers={"Authorization": f"Bearer {cookie}"}).status_code,
             401,
         )
+
+
+class BrowserOriginCannotOptInTests(unittest.TestCase):
+    """SEC-01 follow-up: `X-Auth-Mode` is not a trust boundary.
+
+    Any same-origin page script (including injected/XSS) can set that header,
+    so it cannot by itself prove a request came from a non-browser client.
+    Browser-controlled Fetch-metadata headers -- which script cannot forge or
+    strip -- must therefore suppress the JWT in the body as well. A normal
+    machine client (curl/requests/SDK) sends none of them and keeps working.
+    """
+
+    def test_full_browser_login_with_opt_in_still_gets_no_jwt(self):
+        client = _client()
+        headers = dict(BROWSER_HEADERS)
+        headers.update(OPT_IN)
+        resp = _login(client, headers)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNone(resp.json().get("access_token"))
+        self.assertNotIn("eyJ", resp.text)
+
+    def test_each_browser_signal_blocks_the_body_token(self):
+        for name, signal in BROWSER_SIGNALS:
+            with self.subTest(signal=name):
+                client = _client()
+                headers = dict(signal)
+                headers.update(OPT_IN)
+                resp = _login(client, headers)
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertIsNone(
+                    resp.json().get("access_token"),
+                    f"a browser request carrying {name} must not receive a JWT",
+                )
+                self.assertNotIn("eyJ", resp.text)
+
+    def test_browser_signal_without_opt_in_also_gets_no_jwt(self):
+        client = _client()
+        resp = _login(client, BROWSER_HEADERS)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIsNone(resp.json().get("access_token"))
+
+    def test_browser_request_can_still_authenticate_via_cookie(self):
+        # Locking the body token out must not disturb the cookie flow.
+        client = _client()
+        resp = _login(client, BROWSER_HEADERS)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(client.get("/api/auth/me").status_code, 200)
+
+    def test_register_does_not_return_a_jwt_even_with_opt_in(self):
+        client = _client()
+        headers = dict(BROWSER_HEADERS)
+        headers.update(OPT_IN)
+        resp = client.post(
+            "/api/auth/register",
+            json={"email": "no-jwt@example.com", "password": PASSWORD, "full_name": "No JWT"},
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertNotIn("eyJ", resp.text)
+        self.assertNotIn("access_token", resp.text)
+
+    def test_non_browser_client_without_browser_headers_is_supported(self):
+        # The supported machine-client contract: opt-in header, no browser
+        # headers -> a usable bearer token.
+        client = _client()
+        resp = _login(client, OPT_IN)
+        token = resp.json()["access_token"]
+        self.assertTrue(len(token) > 20)
+        me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(me.status_code, 200)
 
 
 class CsrfStillEnforcedTests(unittest.TestCase):

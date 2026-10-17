@@ -12,20 +12,55 @@ from rate_limiter import limiter
 
 router = APIRouter()
 
-# SEC-01: only an explicit opt-in may receive the JWT in a JSON response body.
-# Browsers never send this header, so their login response carries no
-# JS-readable credential -- the HttpOnly session cookie is used instead.
-# Non-browser API clients that need bearer auth send `X-Auth-Mode: bearer`.
+# SEC-01: the browser must never receive a JS-readable JWT; the HttpOnly
+# session cookie is its credential. Non-browser API clients that legitimately
+# need bearer auth opt in with `X-Auth-Mode: bearer`.
 _BODY_TOKEN_HEADER = "X-Auth-Mode"
 _BODY_TOKEN_VALUE = "bearer"
 
+# SEC-01 follow-up: `X-Auth-Mode` is a *request* header, not a trust boundary --
+# any same-origin page script (including injected/XSS) can set it, so it alone
+# cannot prove a request came from a non-browser client. Browsers, however,
+# always attach Fetch-metadata headers that page JavaScript is forbidden from
+# setting or removing (Fetch spec "forbidden header names"):
+#   * Sec-Fetch-Site / Sec-Fetch-Mode -- sent on every request by all modern
+#     browsers; script cannot add, change or suppress them.
+#   * Origin  -- sent by browsers on every non-GET/HEAD request (so on every
+#     login POST) and on every cross-origin request; script cannot forge it.
+#   * Referer -- browser-set navigation context (suppressible via referrer
+#     policy, hence a secondary signal only).
+# The presence of any of these marks a browser-origin request. A normal
+# non-browser API client (curl, requests, Postman, server SDK) sends none of
+# them. This fails closed: a machine client that deliberately mimics a browser
+# is treated as a browser and gets no JWT in the body.
+_BROWSER_FETCH_HEADERS = ("sec-fetch-site", "sec-fetch-mode", "origin", "referer")
+
+
+def _is_browser_request(request: Request) -> bool:
+    """True when browser-controlled Fetch-metadata headers are present.
+
+    Page JS cannot set or strip these, so a browser-origin request is always
+    classified as such even when it also sends the `X-Auth-Mode` opt-in."""
+    try:
+        headers = request.headers
+        return any(headers.get(name) for name in _BROWSER_FETCH_HEADERS)
+    except Exception:
+        # If the request cannot be inspected, fail closed (no body token).
+        return True
+
 
 def _client_wants_body_token(request: Request) -> bool:
-    """True only when a client explicitly asks for a bearer token in the body."""
+    """True only when a NON-BROWSER client explicitly asks for a bearer token
+    in the response body.
+
+    Requires the `X-Auth-Mode: bearer` opt-in AND the absence of any
+    browser-controlled header. The custom header alone is deliberately not
+    sufficient, because any page script can send it."""
     try:
-        return request.headers.get(_BODY_TOKEN_HEADER, "").strip().lower() == _BODY_TOKEN_VALUE
+        opted_in = request.headers.get(_BODY_TOKEN_HEADER, "").strip().lower() == _BODY_TOKEN_VALUE
     except Exception:
         return False
+    return opted_in and not _is_browser_request(request)
 
 
 # Simple in-memory OTP rate limiter
@@ -116,9 +151,9 @@ def login(creds: schemas.UserLogin, request: Request, response: Response, db: Se
     token = auth.create_access_token(data={"sub": str(user.user_id), "user_id": user.user_id, "email": user.email})
 
     # SEC-01: the HttpOnly session cookie set below is the browser credential.
-    # The JWT is no longer returned to browsers, so nothing sensitive is stored
-    # in JS-readable storage. Non-browser API clients that legitimately need a
-    # bearer token opt in with the `X-Auth-Mode: bearer` request header.
+    # The JWT is only returned to a non-browser client that opts in with
+    # `X-Auth-Mode: bearer`; browser-origin requests are excluded even when they
+    # send that header (see _client_wants_body_token).
     auth.set_auth_cookie(response, token, request)
 
     return schemas.TokenResponse(
