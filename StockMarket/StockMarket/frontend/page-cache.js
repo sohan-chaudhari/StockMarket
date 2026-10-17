@@ -98,7 +98,7 @@
                     _lvPublishAuthState(false, null);
                     var p = (location.pathname.split('/').pop() || '').toLowerCase();
                     var isProtectedPage = /portfolio|profile|watchlist|orders/i.test(p);
-                    if (isProtectedPage) window.location.href = 'login.html';
+                    if (isProtectedPage) window.location.replace('login.html?redirect=' + encodeURIComponent(p));
                 }
             }).catch(function () { /* network error: keep optimistic session */ });
         } catch (e) {}

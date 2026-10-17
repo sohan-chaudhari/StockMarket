@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="auth.css?v=1">
     <link rel="stylesheet" href="index.css?v=84">
     <link rel="stylesheet" href="loader.css?v=4">
-    <script src="page-cache.js?v=4"></script>
+    <script src="page-cache.js?v=5"></script>
     <script src="ws.js"></script>
 </head>
 
@@ -862,24 +862,53 @@
             }
         }
 
+        // Pages that bounce an unauthenticated visitor straight back to login.
+        // Returning to one of these on close is what produced an infinite
+        // portfolio -> login -> close -> portfolio -> login loop, so they are
+        // treated as unsafe destinations here.
+        function _authSafeTarget(target) {
+            if (!target) return null;
+            try {
+                if (/portfolio|profile|watchlist|orders/i.test(target)) return null;
+            } catch (e) { return null; }
+            return target;
+        }
+
         function handleAuthClose() {
             // Priority 1: ?from= or ?redirect= param passed by the page that linked here
             var params = new URLSearchParams(window.location.search);
-            var from = params.get('from') || params.get('redirect');
+            var from = _authSafeTarget(params.get('from') || params.get('redirect'));
             if (from) {
-                window.location.href = from;
+                // replace(), not href: the login page must not stay in history,
+                // otherwise Back returns here after a successful sign-in.
+                window.location.replace(from);
                 return;
             }
             // Priority 2: sessionStorage saved before redirect
             var saved = sessionStorage.getItem('auth_return_url');
             if (saved) {
                 sessionStorage.removeItem('auth_return_url');
-                window.location.href = saved;
-                return;
+                var safe = _authSafeTarget(saved);
+                if (safe) {
+                    window.location.replace(safe);
+                    return;
+                }
             }
             // Fallback: home
-            window.location.href = 'index.html';
+            window.location.replace('index.html');
         }
+
+        // Already signed in? This page must not be reachable via Back after a
+        // successful sign-in, and must not sit in history. Bounce forward.
+        (function () {
+            try {
+                var hasSession = sessionStorage.getItem('token') || localStorage.getItem('token');
+                if (!hasSession) return;
+                var params = new URLSearchParams(window.location.search);
+                var target = _authSafeTarget(params.get('redirect') || params.get('from')) || 'index.html';
+                window.location.replace(target);
+            } catch (e) {}
+        })();
     </script>
 </body>
 
