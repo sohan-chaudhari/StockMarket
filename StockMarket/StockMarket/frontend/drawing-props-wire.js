@@ -134,12 +134,15 @@
         color: currentStyle().color,
         opacity: 1,
         onPick: function (c) { bar.setColor(c); setColor(c); },
-        onOpacity: function () {}
+        onOpacity: function () {},
+        onClose: function () { palette.style.display = 'none'; }
       });
       ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
         palette.addEventListener(ev, function (e) { e.stopPropagation(); });
       });
-      host.appendChild(tagGuarded(palette));
+      /* document.body, not the chart: position:fixed inside a transformed
+         ancestor is contained by it, which pushed the popovers off-screen. */
+      document.body.appendChild(tagGuarded(palette));
       palette.style.display = 'none';
     }
     if (palette.style.display === 'none') {
@@ -152,14 +155,20 @@
     }
   }
 
+  /* Viewport coordinates, because the popover is position:fixed. On mobile the
+     stylesheet docks it to the bottom and an inline top must NOT be left set —
+     an inline top plus a CSS bottom is what stretched it into a tall empty box. */
   function placePalette(anchor) {
     if (!palette || !anchor) return;
+    if (window.innerWidth <= 768) {
+      palette.style.top = '';
+      palette.style.left = '';
+      return;
+    }
     var r = anchor.getBoundingClientRect();
-    var h = host.getBoundingClientRect();
-    var left = r.left - h.left;
-    left = Math.max(8, Math.min(left, h.width - 312));
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - 312));
     palette.style.left = left + 'px';
-    palette.style.top = (r.bottom - h.top + 8) + 'px';
+    palette.style.top = (r.bottom + 8) + 'px';
   }
 
   /* Apply what the card can actually apply. Line style maps onto the EXISTING
@@ -198,16 +207,15 @@
       ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
         card.addEventListener(ev, function (e) { e.stopPropagation(); });
       });
-      host.appendChild(tagGuarded(card));
+      document.body.appendChild(tagGuarded(card));
       card.style.display = 'none';
     }
     card.style.display = 'flex';
     card.selectTab(tab || 'style');
 
-    /* Positioning: on desktop dock it beside the bar. On mobile the stylesheet
-       turns the SAME card into a bottom sheet, so inline left/right/top must be
-       CLEARED — leaving them set was overriding the mobile rules and pushing the
-       card off the left edge. */
+    /* Positioning: desktop docks it beside the bar in viewport coordinates; on
+       mobile the stylesheet's bottom sheet takes over, so every inline offset
+       must be CLEARED or it overrides the media query and hangs off-screen. */
     var isMobile = window.innerWidth <= 768;
     if (isMobile) {
       card.style.left = '';
@@ -215,13 +223,13 @@
       card.style.top = '';
       card.style.width = '';
     } else {
-      var h = host.getBoundingClientRect();
+      var br = bar ? bar.getBoundingClientRect() : null;
       card.style.left = 'auto';
       card.style.right = '12px';
       card.style.width = '';
-      var wantedTop = (bar ? bar.offsetTop + bar.offsetHeight + 8 : 64);
-      card.style.top = Math.max(12, wantedTop) + 'px';
-      if (card.offsetHeight > h.height - 80) card.style.top = '12px';
+      var wantedTop = br ? Math.round(br.bottom + 8) : 64;
+      card.style.top = Math.max(12, Math.min(wantedTop, window.innerHeight - 120)) + 'px';
+      if (card.offsetHeight > window.innerHeight - 80) card.style.top = '12px';
     }
   }
   function hideCard() { if (card) card.style.display = 'none'; }
@@ -295,20 +303,18 @@
       try { hideAll(); } catch (e) {}
     });
 
-    /* click-away and Escape, matching how the chart already behaves */
-    document.addEventListener('pointerdown', function (e) {
-      if (!bar || bar.style.display === 'none') return;
-      if (e.target && e.target.closest && e.target.closest('.dp-bar, .dp-palette, .dp-card')) return;
-      var tm2 = window.toolManager;
-      var stillSelected = tm2 && tm2.selectedDrawing;
-      if (!stillSelected) hideAll();
-    });
+    /* Hide ONLY on the engine's own deselect event. An earlier version also
+       hid on document pointerdown when toolManager.selectedDrawing looked empty,
+       which fired mid-drag while moving a drawing and made the bar vanish. */
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') hideAll();
     });
 
     window.addEventListener('resize', function () {
-      if (bar && bar.style.display !== 'none') { alignBar(); if (openPaletteFor) placePalette(openPaletteFor); }
+      if (bar && bar.style.display !== 'none') {
+        alignBar();
+        if (openPaletteFor && palette && palette.style.display !== 'none') placePalette(openPaletteFor);
+      }
     });
     window.addEventListener('scroll', function () {
       if (bar && bar.style.display !== 'none') alignBar();

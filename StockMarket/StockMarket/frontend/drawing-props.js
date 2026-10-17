@@ -202,25 +202,37 @@
       swatches.forEach(function (s) {
         s.classList.toggle('is-selected', s.dataset.color === colour);
       });
+      if (preview) preview.style.background = colour;
     }
     if (opts.color) mark(opts.color);
 
-    /* custom colour + opacity */
+    /* Selected colour preview + close. The "+" is gone: the swatch below simply
+       reflects whatever was picked in the grid. Tapping it still opens the native
+       colour picker, so custom colours stay reachable. */
     var custom = el('div', 'dp-palette__custom');
-    var plus = el('button', 'dp-palette__plus', '+');
-    plus.type = 'button';
-    plus.title = 'Custom colour';
+    var preview = el('span', 'dp-palette__preview');
+    preview.title = 'Custom colour';
+    var closeBtn = el('button', 'dp-palette__close', ICON.close);
+    closeBtn.type = 'button';
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (opts.onClose) opts.onClose();
+      else root.style.display = 'none';
+    });
+
     var picker = el('input');
     picker.type = 'color';
-    picker.className = 'dp-input';
-    picker.style.width = '48px';
-    picker.style.padding = '2px';
+    picker.style.display = 'none';
     picker.value = opts.color && opts.color.charAt(0) === '#' ? opts.color : '#2962ff';
-    plus.addEventListener('click', function (e) { e.stopPropagation(); picker.click(); });
-    picker.addEventListener('input', function () { opts.onPick && opts.onPick(picker.value); });
-    custom.appendChild(plus);
-    custom.appendChild(picker);
+    preview.addEventListener('click', function (e) { e.stopPropagation(); picker.click(); });
+    picker.addEventListener('input', function () { mark(picker.value); opts.onPick && opts.onPick(picker.value); });
+
+    custom.appendChild(preview);
+    custom.appendChild(el('div', 'dp-spacer'));
+    custom.appendChild(closeBtn);
     root.appendChild(custom);
+    root.appendChild(picker);
 
     root.appendChild(el('div', 'dp-palette__opacity-label', 'Opacity'));
     var op = el('div', 'dp-palette__opacity');

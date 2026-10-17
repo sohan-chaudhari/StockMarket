@@ -135,7 +135,7 @@
    2. Colour palette popover  —  greyscale row, saturated rows, ＋, opacity
    ------------------------------------------------------------------------ */
 .dp-palette {
-  position: absolute;
+  position: fixed;              /* viewport coords: no transformed-ancestor surprises */
   z-index: 100;                 /* above .dp-card (90) — otherwise it opens behind it */
   width: 300px;
   padding: 12px;
@@ -173,9 +173,17 @@
   padding-top: 12px;
   border-top: 1px solid var(--dp-border);
 }
-.dp-palette__plus {
-  width: 28px;
-  height: 28px;
+.dp-palette__preview {
+  width: 44px;
+  height: 30px;
+  border-radius: var(--dp-radius-sm);
+  border: 1px solid var(--dp-border-strong);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.dp-palette__close {
+  width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -183,11 +191,11 @@
   border: none;
   border-radius: var(--dp-radius-sm);
   color: var(--dp-text);
-  font-size: 18px;
-  line-height: 1;
   cursor: pointer;
+  flex: 0 0 auto;
 }
-.dp-palette__plus:hover { background: var(--dp-bg-elevated); }
+.dp-palette__close:hover { background: var(--dp-bg-elevated); }
+.dp-palette__close svg { width: 18px; height: 18px; }
 
 .dp-palette__opacity-label {
   margin-top: 14px;
@@ -225,7 +233,7 @@
    3. Settings card  —  header, tabs, body, footer
    ------------------------------------------------------------------------ */
 .dp-card {
-  position: absolute;
+  position: fixed;              /* viewport coords: see .dp-palette */
   z-index: 90;
   width: 500px;
   max-width: calc(100vw - 24px);
@@ -485,7 +493,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    top: auto;
+    top: auto !important;          /* an inline top + a CSS bottom STRETCHED it */
     width: 100%;
     max-width: 100%;
     max-height: 78vh;
@@ -509,7 +517,10 @@
     left: 12px;
     right: 12px;
     bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    top: auto !important;          /* an inline top + a CSS bottom STRETCHED it */
     width: auto;
+    max-height: 70vh;
+    overflow-y: auto;
   }
   .dp-palette__grid { gap: 6px; }
   .dp-swatch { border-radius: 6px; }
