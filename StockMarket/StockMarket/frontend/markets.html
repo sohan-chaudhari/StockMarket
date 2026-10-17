@@ -1227,12 +1227,12 @@
             function _applyGlobalIndices(data) {
                 if (!data) return;
                 var globals = [
-                    {id:'sp500',flag:'🇺🇸',name:'S&P 500',key:'^GSPC'},
-                    {id:'nasdaq',flag:'🇺🇸',name:'NASDAQ',key:'^IXIC'},
-                    {id:'nikkei',flag:'🇯🇵',name:'Nikkei 225',key:'^N225'},
-                    {id:'hsi',flag:'🇭🇰',name:'Hang Seng',key:'^HSI'},
-                    {id:'dax',flag:'🇩🇪',name:'DAX',key:'^GDAXI'},
-                    {id:'ftse',flag:'🇬🇧',name:'FTSE 100',key:'^FTSE'}
+                    {id:'sp500',flag:'US',name:'S&P 500',key:'^GSPC'},
+                    {id:'nasdaq',flag:'US',name:'NASDAQ',key:'^IXIC'},
+                    {id:'nikkei',flag:'JP',name:'Nikkei 225',key:'^N225'},
+                    {id:'hsi',flag:'HK',name:'Hang Seng',key:'^HSI'},
+                    {id:'dax',flag:'DE',name:'DAX',key:'^GDAXI'},
+                    {id:'ftse',flag:'GB',name:'FTSE 100',key:'^FTSE'}
                 ];
                 globals.forEach(function(g){
                     var d = data[g.key]||{};
