@@ -120,8 +120,10 @@
       };
     });
     menu = window.DrawingProps.createMenu(items, { onClose: function () { if (menu) { menu.remove(); menu = null; } } });
+    menu.style.visibility = 'hidden';       /* no flash at the default spot */
     document.body.appendChild(tagGuarded(menu));
     placeMenu(menu, anchor);
+    menu.style.visibility = '';
   }
 
   /* line-style dropdown: Line / Dashed line / Dotted line */
@@ -139,8 +141,10 @@
       };
     });
     menu = window.DrawingProps.createMenu(items, { onClose: function () { if (menu) { menu.remove(); menu = null; } } });
+    menu.style.visibility = 'hidden';       /* no flash at the default spot */
     document.body.appendChild(tagGuarded(menu));
     placeMenu(menu, anchor);
+    menu.style.visibility = '';
   }
 
   function placeMenu(m, anchor) {
@@ -202,6 +206,7 @@
     menu = window.DrawingProps.createMenu(items, {
       onClose: function () { if (menu) { menu.remove(); menu = null; } }
     });
+    menu.style.visibility = 'hidden';       /* no flash at the default spot */
     document.body.appendChild(tagGuarded(menu));
     /* place it just under the ••• button, kept inside the viewport */
     try {
@@ -210,6 +215,7 @@
       menu.style.left = Math.max(8, left) + 'px';
       menu.style.top = Math.min(r.bottom + 6, window.innerHeight - 340) + 'px';
     } catch (e) {}
+    menu.style.visibility = '';
   }
 
   /* T -> a colour pad that changes the TEXT colour (not the line colour), and
@@ -231,10 +237,13 @@
     ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
       palette.addEventListener(ev, function (e) { e.stopPropagation(); });
     });
+    /* hidden until positioned, so it can never flash at the default spot */
+    palette.style.visibility = 'hidden';
     document.body.appendChild(tagGuarded(palette));
     /* same rule as the line-colour pad: opens under the bar via the CSS
        variables, never at the top of the page over the header/search */
     placeUnderBar(palette);
+    palette.style.visibility = '';
   }
 
   function buildBar() {
@@ -313,8 +322,11 @@
       hideCard();                 /* one popover at a time */
       anchorRef = anchor || bar;
       openPaletteFor = anchorRef;
-      palette.style.display = 'block';
+      /* Position BEFORE showing. Revealing first and positioning afterwards made
+         the pad paint for one frame at its default spot, which is the "something
+         comes and goes, then it opens" the user saw. */
       placeUnderBar(palette);
+      palette.style.display = 'block';
     } else {
       palette.style.display = 'none';
     }
@@ -350,15 +362,27 @@
     PriceLabel: 1, Balloon: 1, ArrowLabel: 1
   };
 
-  /* Find the TextDrawing attached to the currently selected drawing. */
+  /* Find the TextDrawing attached to the currently selected drawing.
+     Matched by remembered id first, then by the deterministic name set at attach
+     time — so the link survives a page reload, when `_dpTextId` is gone. */
   function attachedText() {
     var tm = window.toolManager, eng = tm && tm.engine;
     var sel = tm && tm.selectedDrawing;
-    if (!eng || !sel || !sel._dpTextId) return null;
+    if (!eng || !sel) return null;
+    var want = sel._dpTextId || null;
+    var lineId = sel.model ? sel.model.id : null;
+    var wantName = lineId ? ('dp-label:' + lineId) : null;
+    var byName = null;
     for (var i = 0; i < eng.drawings.length; i++) {
       var d = eng.drawings[i];
       var id = d.model ? d.model.id : d.id;
-      if (id === sel._dpTextId) return d;
+      var nm = d.model ? d.model.name : null;
+      if (want && id === want) return d;
+      if (wantName && nm === wantName) byName = d;
+    }
+    if (byName) {
+      sel._dpTextId = byName.model ? byName.model.id : byName.id;
+      return byName;
     }
     return null;
   }
@@ -387,9 +411,13 @@
     } catch (e) { return false; }
   }
 
-  /* Keep an attached label glued to its drawing's midpoint, so moving or
-     reshaping the line carries the text with it. */
-  function repositionAttachedText() {
+  /* Keep an attached label glued to its drawing's midpoint AND lying along the
+     drawing's own angle, so moving or reshaping the line carries the text with
+     it and the text stays parallel to the line (a 70-degree line gets
+     70-degree text instead of always-horizontal text).
+     commit === false is the cheap in-drag path: it only repaints, so the label
+     travels smoothly with the line instead of jumping when the drag ends. */
+  function repositionAttachedText(commit) {
     try {
       var tm = window.toolManager, eng = tm && tm.engine;
       var sel = tm && tm.selectedDrawing;
@@ -397,25 +425,41 @@
       if (!eng || !sel || !td) return;
       var cs = tm.getChartState ? tm.getChartState() : null;
       if (!cs) return;
+      var ps = sel.getPixels ? sel.getPixels(cs) : null;
+      if (!ps || !ps.length) return;
+
       var px = null;
       var mid = sel.getMidpoints ? sel.getMidpoints(cs) : null;
       if (mid && mid.length && mid[0]) px = { x: mid[0].x, y: mid[0].y };
       if (!px) {
-        var ps = sel.getPixels ? sel.getPixels(cs) : null;
-        if (ps && ps.length) {
-          px = {
-            x: (ps[0].x + ps[ps.length - 1].x) / 2,
-            y: (ps[0].y + ps[ps.length - 1].y) / 2
-          };
+        px = { x: (ps[0].x + ps[ps.length - 1].x) / 2, y: (ps[0].y + ps[ps.length - 1].y) / 2 };
+      }
+
+      var rot = 0;
+      if (ps.length >= 2) {
+        var dx = ps[ps.length - 1].x - ps[0].x;
+        var dy = ps[ps.length - 1].y - ps[0].y;
+        if (dx || dy) {
+          rot = Math.atan2(dy, dx) * 180 / Math.PI;
+          /* keep the text readable: never upside-down */
+          while (rot > 90) rot -= 180;
+          while (rot < -90) rot += 180;
+          rot = Math.round(rot * 10) / 10;
         }
       }
-      if (!px) return;
+
       var c = cs.pixelToCoord(px.x, px.y);
       if (!c || c.logical == null || c.price == null) return;
+
       td.coords = [{ logical: c.logical, price: c.price, time: c.time }];
+      td.rotation = rot;
       if (typeof td._invalidateCache === 'function') td._invalidateCache();
-      if (typeof eng.syncModel === 'function') eng.syncModel(td);
-      if (typeof eng.markDirty === 'function') eng.markDirty();
+
+      if (commit !== false) {
+        if (typeof eng.syncModel === 'function') eng.syncModel(td);
+        if (typeof eng.markDirty === 'function') eng.markDirty();
+      }
+      if (tm && typeof tm.redraw === 'function') tm.redraw();
     } catch (e) {}
   }
 
@@ -509,6 +553,8 @@
        picked the TEXT and dragged it while the line stayed put. The engine skips
        any renderer flagged noHit. */
     td.noHit = true;
+    /* and it must never draw axis badges of its own — those belong to the line */
+    td.showAxisLabels = false;
     td.style = td.style || {};
     /* explicit choice > colour remembered from the T pad > the class default */
     var wantedColour = (opts && opts.textColor) || sel._dpTextColour || td.style.color;
@@ -524,10 +570,18 @@
       var res = eng.finalizeDrawing(td);
       if (res && res.drawing && res.drawing.id) {
         sel._dpTextId = res.drawing.id;    /* remember it, so re-Ok replaces it */
+        /* deterministic name -> the line/label link survives a reload, when the
+           in-memory _dpTextId is gone */
+        try {
+          var lineId = sel.model ? sel.model.id : null;
+          if (lineId) res.drawing.name = 'dp-label:' + lineId;
+        } catch (e) {}
         /* the new label is live, so the old one can go now */
         if (previousTextId && typeof eng.deleteDrawing === 'function') {
           try { eng.deleteDrawing(previousTextId); } catch (e) {}
         }
+        /* place it on the midpoint and align it with the line straight away */
+        repositionAttachedText(true);
         return true;
       }
     } catch (e) {}
@@ -705,6 +759,10 @@
     suppressLegend(true);
     var d = currentDrawing();
     if (card && d) card.setTitle((d.type || 'Drawing'));
+    /* re-assert the label's position and angle for the newly selected drawing —
+       this also restores the angle after a reload, since model.rotation is not
+       in the renderer-restore allow-list */
+    try { repositionAttachedText(true); } catch (e) {}
   }
 
   function hideAll() {
@@ -770,12 +828,39 @@
       else setTimeout(run, 16);
     }
     window.addEventListener('resize', scheduleLayoutPass);
-    window.addEventListener('scroll', scheduleLayoutPass, true);
+    /* NO scroll listener. The bar is position:absolute inside the chart
+       container, so it does NOT move when the page or the chart scrolls. The old
+       scroll listener ran alignBar() (two forced layouts) on EVERY scroll event,
+       which is a per-frame layout thrash while panning — a real source of lag.
+       A ResizeObserver fires only when the chart genuinely changes size. */
+    try {
+      if (window.ResizeObserver) {
+        var hostEl = ensureHost();
+        if (hostEl) new ResizeObserver(scheduleLayoutPass).observe(hostEl);
+      }
+    } catch (e) {}
 
-    /* After any interaction: keep an attached label on its drawing's midpoint,
-       and make sure no drawing was left with unusable coordinates. */
+    /* Smooth follow: the label must travel WITH the line, not jump when the drag
+       ends. Deferring through rAF makes this independent of listener order — it
+       always runs after the app's own drag handler has moved the line. */
+    var followPending = false;
+    function scheduleFollow() {
+      if (followPending) return;
+      followPending = true;
+      var run = function () {
+        followPending = false;
+        try { repositionAttachedText(false); } catch (e) {}
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+      else setTimeout(run, 16);
+    }
+    document.addEventListener('pointermove', scheduleFollow, true);
+    document.addEventListener('touchmove', scheduleFollow, true);
+
+    /* After any interaction: settle the label, and make sure no drawing was left
+       with unusable coordinates. */
     var afterInteraction = function () {
-      try { repositionAttachedText(); } catch (e) {}
+      try { repositionAttachedText(true); } catch (e) {}
       try { guardCoords(); } catch (e) {}
     };
     document.addEventListener('pointerup', afterInteraction, true);

@@ -3075,7 +3075,14 @@ try {
             var dims = this._getPlotDimensions(ctx.canvas);
             var plotWidth = dims.plotWidth;
             var plotHeight = dims.plotHeight;
-            var color = (this.style && this.style.color) || '#2962ff';
+            /* The axis badges and the min→max highlight band are chart chrome, not
+               part of the drawing, so they stay the app's blue whatever colour the
+               line is. Using style.color here caused two bugs: recolouring the line
+               also recoloured the axis boxes, and `color + '35'` silently produced
+               invalid CSS once the palette handed back `rgb(...)`/`hsl(...)`, which
+               made the highlight band disappear entirely. */
+            var color = '#2962ff';
+            var bandColor = 'rgba(41, 98, 255, 0.21)';
 
             // Range highlights (drawn behind labels): one connecting band per
             // highlight group, spanning that group's min→max price (Y axis)
@@ -3100,7 +3107,7 @@ try {
                 }
 
                 ctx.save();
-                ctx.fillStyle = color + '35';
+                ctx.fillStyle = bandColor;
                 ctx.fillRect(plotWidth, yMin, 3, yMax - yMin);
                 ctx.fillRect(xMin, plotHeight, xMax - xMin, 3);
                 ctx.restore();
@@ -3115,7 +3122,8 @@ try {
         _drawAxisLabel(ctx, pixel, idx, chartState, dims) {
             if (!pixel) return;
             if (!dims) dims = this._getPlotDimensions(ctx.canvas);
-            var color = (this.style && this.style.color) || '#2962ff';
+            /* fixed chrome blue — see the note in drawAxisLabels() */
+            var color = '#2962ff';
             var plotWidth = dims.plotWidth;
             var plotHeight = dims.plotHeight;
             var priceScaleWidth = dims.priceScaleWidth;
@@ -11966,6 +11974,15 @@ try {
             var borderColor = this.style.strokeColor || this.style.border || '#5d606b';
 
             ctx.save();
+            /* Rotate the label to sit ALONG its line. The context bar sets
+               this.rotation from the drawing's own angle, so a 70-degree line
+               gets 70-degree text instead of always-horizontal text. Rotating
+               about the anchor keeps the label centred on it. */
+            if (this.rotation) {
+                ctx.translate(p1.x, p1.y);
+                ctx.rotate(this.rotation * Math.PI / 180);
+                ctx.translate(-p1.x, -p1.y);
+            }
             ctx.font = (this.style.bold ? 'bold ' : '') + (this.style.italic ? 'italic ' : '') + fontSize + 'px ' + fontFamily;
             
             var lines = text.split('\n');

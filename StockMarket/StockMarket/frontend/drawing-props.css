@@ -160,7 +160,9 @@
    ------------------------------------------------------------------------ */
 .dp-palette {
   position: fixed;              /* viewport coords: no transformed-ancestor surprises */
-  z-index: 100;                 /* above .dp-card (90) — otherwise it opens behind it */
+  z-index: 2100;                /* MUST be above .dp-card (2000) — the card is a
+                                   full-height sidebar now, so a pad opened from
+                                   inside it used to open behind it */
   /* Published by the wiring from the BAR's own viewport rect, so the pad opens
      directly under the bar inside the chart — never over the page header.
      A variable (not an inline offset) so the media queries below still win. */
@@ -572,7 +574,7 @@
    ------------------------------------------------------------------------ */
 .dp-menu {
   position: fixed;
-  z-index: 110;
+  z-index: 2110;                /* above the palette and the card */
   width: max-content;           /* size to content: the 1px/2px dropdown was far too wide */
   min-width: 0;
   max-width: 320px;
