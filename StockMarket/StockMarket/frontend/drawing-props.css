@@ -532,6 +532,47 @@
   .dp-swatch { border-radius: 5px; }
 }
 
+/* ---------------------------------------------------------------------------
+   5. ••• menu — the TradingView-style action list
+   ------------------------------------------------------------------------ */
+.dp-menu {
+  position: fixed;
+  z-index: 110;
+  min-width: 264px;
+  padding: 6px;
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  box-shadow: var(--dp-shadow);
+  font-family: var(--dp-font);
+  font-size: 14px;
+  color: var(--dp-text);
+}
+.dp-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
+  border-radius: var(--dp-radius-sm);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dp-menu__item:hover { background: var(--dp-bg-elevated); }
+.dp-menu__item svg { width: 18px; height: 18px; flex: 0 0 auto; color: var(--dp-text-dim); }
+.dp-menu__item:hover svg { color: var(--dp-text); }
+.dp-menu__item > span { flex: 1 1 auto; min-width: 0; }
+.dp-menu__item kbd { font: inherit; font-size: 12px; color: var(--dp-text-dim); flex: 0 0 auto; }
+.dp-menu__item--danger:hover { color: #ff6b7a; }
+.dp-menu__item--danger:hover svg { color: #ff6b7a; }
+.dp-menu__chev { width: 14px !important; height: 14px !important; }
+.dp-menu__sep { height: 1px; margin: 6px 4px; background: var(--dp-border); }
+
 /* very small phones — keep the bar from overflowing */
 @media (max-width: 400px) {
   .dp-bar { height: 38px; padding: 0 4px; font-size: 11px; }

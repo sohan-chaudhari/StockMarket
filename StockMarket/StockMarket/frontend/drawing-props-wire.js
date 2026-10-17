@@ -104,6 +104,66 @@
   /* ---------------------------------------------------------------------
      Bar / palette / card
      ------------------------------------------------------------------ */
+  /* ---------------------------------------------------------------------
+     ••• menu — mirrors the TradingView list, but only with actions the engine
+     can actually perform. Template / Visual order / Object tree / Add alert are
+     omitted rather than shown as dead entries.
+     ------------------------------------------------------------------ */
+  var menu = null;
+
+  function setToggle(id, on) {
+    var box = document.getElementById(id);
+    if (!box) return false;
+    box.checked = !!on;
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  function openMenu(anchor) {
+    if (menu) { menu.remove(); menu = null; }
+    var I = window.DrawingProps.ICON;
+    var items = [
+      { id: 'visibility', label: 'Visibility on intervals', icon: I.eye,
+        onSelect: function () { showCard('visibility'); } },
+      { id: 'settings', label: 'Settings…', icon: I.pencil, separatorBefore: true,
+        onSelect: function () { showCard('style'); } },
+      { id: 'clone', label: 'Clone', icon: I.pencil,
+        onSelect: function () {
+          try {
+            var d = currentDrawing();
+            var engine = window.toolManager && window.toolManager.engine;
+            if (d && engine && typeof engine.duplicateDrawing === 'function') engine.duplicateDrawing(d.id);
+          } catch (e) {}
+        } },
+      { id: 'lock', label: 'Lock', icon: I.grip,
+        onSelect: function () { setToggle('sp-locked', true); } },
+      { id: 'unlock', label: 'Unlock', icon: I.grip,
+        onSelect: function () { setToggle('sp-locked', false); } },
+      { id: 'hide', label: 'Hide', icon: I.eyeOff,
+        onSelect: function () { setToggle('sp-hidden', true); } },
+      { id: 'remove', label: 'Remove', icon: I.trash, shortcut: 'Del', danger: true,
+        separatorBefore: true,
+        onSelect: function () {
+          try {
+            var tm = window.toolManager;
+            if (tm && typeof tm.deleteSelected === 'function') tm.deleteSelected();
+          } catch (e) {}
+          hideAll();
+        } }
+    ];
+    menu = window.DrawingProps.createMenu(items, {
+      onClose: function () { if (menu) { menu.remove(); menu = null; } }
+    });
+    document.body.appendChild(tagGuarded(menu));
+    /* place it just under the ••• button, kept inside the viewport */
+    try {
+      var r = anchor.getBoundingClientRect();
+      var left = Math.min(r.right - 264, window.innerWidth - 276);
+      menu.style.left = Math.max(8, left) + 'px';
+      menu.style.top = Math.min(r.bottom + 6, window.innerHeight - 340) + 'px';
+    } catch (e) {}
+  }
+
   function buildBar() {
     if (bar) return bar;
     bar = window.DrawingProps.createBar({
@@ -117,7 +177,7 @@
         } catch (e) {}
         hideAll();
       },
-      onMore:  function () { showCard('style'); }
+      onMore:  function (anchor) { openMenu(anchor || bar); }
     });
     /* Clicks inside the bar must not reach the chart, or they would deselect
        the drawing and close everything — the bug seen in the preview. */
@@ -235,6 +295,32 @@
       });
       document.body.appendChild(tagGuarded(card));
       card.style.display = 'none';
+
+      /* Text tab's colour swatch: opens its own palette and writes ONLY the text
+         colour swatch, which Ok then applies via applyText(). It must never
+         touch the line colour. */
+      try {
+        var textColorBtn = card.querySelector('#dp-text-color');
+        var textSwatch = card.querySelector('#dp-text-swatch');
+        if (textColorBtn && textSwatch) {
+          textColorBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var tp = window.DrawingProps.createPalette({
+              color: '#d1d4dc',
+              opacity: 1,
+              onPick: function (c) { textSwatch.style.background = c; },
+              onClose: function () { tp.remove(); }
+            });
+            ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
+              tp.addEventListener(ev, function (ev2) { ev2.stopPropagation(); });
+            });
+            document.body.appendChild(tagGuarded(tp));
+            var r = textColorBtn.getBoundingClientRect();
+            tp.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 312)) + 'px';
+            tp.style.top = Math.min(r.bottom + 6, window.innerHeight - 380) + 'px';
+          });
+        }
+      } catch (e) {}
     }
     card.style.display = 'flex';
     card.selectTab(tab || 'style');

@@ -532,11 +532,43 @@
     return card;
   }
 
+  /* -------------------------------------------------------------------------
+     4. ••• menu — the action list (TradingView layout)
+     items: [{ id, label, icon, shortcut, danger, separatorBefore, chevron }]
+     ---------------------------------------------------------------------- */
+  function createMenu(items, opts) {
+    opts = opts || {};
+    var root = el('div', 'dp-menu');
+    root.setAttribute('role', 'menu');
+
+    (items || []).forEach(function (it) {
+      if (it.separatorBefore) root.appendChild(el('div', 'dp-menu__sep'));
+      var b = el('button', 'dp-menu__item' + (it.danger ? ' dp-menu__item--danger' : ''));
+      b.type = 'button';
+      b.setAttribute('role', 'menuitem');
+      b.innerHTML = (it.icon || '') + '<span>' + it.label + '</span>' +
+                    (it.shortcut ? '<kbd>' + it.shortcut + '</kbd>' : '') +
+                    (it.chevron ? svg('<path d="M9 6l6 6-6 6"/>', 14).replace('class="', 'class="dp-menu__chev ') : '');
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (it.onSelect) it.onSelect();
+        if (opts.onClose) opts.onClose();
+      });
+      root.appendChild(b);
+    });
+
+    ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
+      root.addEventListener(ev, function (e) { e.stopPropagation(); });
+    });
+    return root;
+  }
+
   window.DrawingProps = {
     PALETTE: PALETTE,
     ICON: ICON,
     createBar: createBar,
     createPalette: createPalette,
-    createCard: createCard
+    createCard: createCard,
+    createMenu: createMenu
   };
 })();
