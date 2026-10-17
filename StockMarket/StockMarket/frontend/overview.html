@@ -543,7 +543,7 @@
             News & Sentiment
           </span>
           <button id="downloadPdfBtn" onclick="downloadNewsPDF()" style="background:#4A90E2; border:none; color:#fff; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:600; font-size:12px; display:inline-flex; align-items:center; gap:4px; transition:opacity 0.15s;">
-            &#128196; Download PDF
+            Download PDF
           </button>
         </h3>
         
@@ -1266,11 +1266,11 @@
               document.body.appendChild(exportEl);
               await html2pdf().set(opt).from(exportEl).save();
               document.body.removeChild(exportEl);
-              if (btn) { btn.innerHTML = '&#128196; Download PDF'; btn.style.opacity = '1'; }
+              if (btn) { btn.innerHTML = 'Download PDF'; btn.style.opacity = '1'; }
           } catch (err) {
               console.error('PDF generation failed:', err);
               alert('Failed to generate PDF.');
-              if (btn) { btn.innerHTML = '&#128196; Download PDF'; btn.style.opacity = '1'; }
+              if (btn) { btn.innerHTML = 'Download PDF'; btn.style.opacity = '1'; }
           }
       };
 

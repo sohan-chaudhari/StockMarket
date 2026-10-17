@@ -841,14 +841,14 @@
 
             <!-- Mobile Quick Scans Horizontal Strip -->
             <div class="mobile-presets-strip" id="mobilePresetsStrip">
-                <div class="m-preset-pill active" data-preset="all" onclick="runPreset('all', this)">📋 All Stocks</div>
-                <div class="m-preset-pill" data-preset="gainers" onclick="runPreset('gainers', this)">🏆 Top Gainers</div>
-                <div class="m-preset-pill" data-preset="breakout" onclick="runPreset('breakout', this)">🚀 Breakout</div>
-                <div class="m-preset-pill" data-preset="volume" onclick="runPreset('volume', this)">⚡ Volume Surge</div>
-                <div class="m-preset-pill" data-preset="momentum" onclick="runPreset('momentum', this)">📈 Momentum</div>
-                <div class="m-preset-pill" data-preset="losers" onclick="runPreset('losers', this)">📉 Top Losers</div>
-                <div class="m-preset-pill" data-preset="rsi_os" onclick="runPreset('rsi_os', this)">🟢 Oversold (&lt;30)</div>
-                <div class="m-preset-pill" data-preset="rsi_ob" onclick="runPreset('rsi_ob', this)">🔴 Overbought (&gt;70)</div>
+                <div class="m-preset-pill active" data-preset="all" onclick="runPreset('all', this)">All Stocks</div>
+                <div class="m-preset-pill" data-preset="gainers" onclick="runPreset('gainers', this)">Top Gainers</div>
+                <div class="m-preset-pill" data-preset="breakout" onclick="runPreset('breakout', this)">Breakout</div>
+                <div class="m-preset-pill" data-preset="volume" onclick="runPreset('volume', this)">Volume Surge</div>
+                <div class="m-preset-pill" data-preset="momentum" onclick="runPreset('momentum', this)">Momentum</div>
+                <div class="m-preset-pill" data-preset="losers" onclick="runPreset('losers', this)">Top Losers</div>
+                <div class="m-preset-pill" data-preset="rsi_os" onclick="runPreset('rsi_os', this)">Oversold (&lt;30)</div>
+                <div class="m-preset-pill" data-preset="rsi_ob" onclick="runPreset('rsi_ob', this)">Overbought (&gt;70)</div>
             </div>
 
             <!-- Mobile Controls Toolbar (Search + Filter Drawer Toggle) -->
@@ -863,7 +863,7 @@
                         <span class="mobile-search-clear" id="mSearchClear" onclick="clearMobileSearch()">✕</span>
                     </div>
                     <button class="btn-filter-toggle" id="btnFilterToggle" onclick="toggleMobileFilters()">
-                        <span>⚙️ Filters</span>
+                        <span>Filters</span>
                         <span class="filter-count-badge" id="filterCountBadge">0</span>
                     </button>
                 </div>
@@ -944,35 +944,35 @@
                         <h3>Quick Scans</h3>
                         <div class="preset-list">
                             <button class="preset-btn active" data-preset="all" onclick="runPreset('all',this)">
-                                <span class="preset-icon">📋</span> All Stocks
+                                All Stocks
                             </button>
                             <button class="preset-btn" data-preset="gainers" onclick="runPreset('gainers',this)">
-                                <span class="preset-icon">🏆</span> Top Gainers (&gt;2%)
+                                Top Gainers (&gt;2%)
                             </button>
                             <button class="preset-btn" data-preset="breakout" onclick="runPreset('breakout',this)">
-                                <span class="preset-icon">🚀</span> Bullish Breakout
+                                Bullish Breakout
                             </button>
                             <button class="preset-btn" data-preset="volume" onclick="runPreset('volume',this)">
-                                <span class="preset-icon">⚡</span> Unusual Volume (&gt;2×)
+                                Unusual Volume (&gt;2×)
                             </button>
                             <button class="preset-btn" data-preset="momentum" onclick="runPreset('momentum',this)">
-                                <span class="preset-icon">📈</span> High Momentum
+                                High Momentum
                             </button>
                             <button class="preset-btn" data-preset="losers" onclick="runPreset('losers',this)">
-                                <span class="preset-icon">📉</span> Top Losers (&lt;-1%)
+                                Top Losers (&lt;-1%)
                             </button>
                             <button class="preset-btn" data-preset="rsi_os" onclick="runPreset('rsi_os',this)">
-                                <span class="preset-icon">🟢</span> RSI Oversold (&lt;30)
+                                RSI Oversold (&lt;30)
                             </button>
                             <button class="preset-btn" data-preset="rsi_ob" onclick="runPreset('rsi_ob',this)">
-                                <span class="preset-icon">🔴</span> RSI Overbought (&gt;70)
+                                RSI Overbought (&gt;70)
                             </button>
                         </div>
                     </div>
 
                     <div class="filter-card">
                         <div class="filter-card-header">
-                            <span class="filter-card-title">🔍 Search</span>
+                            <span class="filter-card-title">Search</span>
                         </div>
                         <div class="filter-row" style="margin-bottom:0;">
                             <input type="text" id="fSearch" placeholder="Ticker or company name…" oninput="onSearchInput(this.value)">
@@ -981,7 +981,7 @@
 
                     <div class="filter-card">
                         <div class="filter-card-header">
-                            <span class="filter-card-title">⚙️ Filters</span>
+                            <span class="filter-card-title">Filters</span>
                         </div>
 
                         <div class="filter-row">
@@ -1115,13 +1115,13 @@
         // Preset definitions
         var PRESETS = {
             all:       { title: 'All Stocks',          params: {} },
-            gainers:   { title: '🏆 Top Gainers',       params: { change_min: 2 } },
-            breakout:  { title: '🚀 Bullish Breakout', params: { change_min: 1.5, vol_ratio_min: 1.5 } },
-            volume:    { title: '⚡ Unusual Volume',    params: { vol_ratio_min: 2 } },
-            momentum:  { title: '📈 High Momentum',    params: { change_min: 0.5, vol_ratio_min: 1 } },
-            losers:    { title: '📉 Top Losers',       params: { change_max: -1 } },
-            rsi_os:    { title: '🟢 RSI Oversold',     params: { rsi_max: 30 } },
-            rsi_ob:    { title: '🔴 RSI Overbought',   params: { rsi_min: 70 } },
+            gainers:   { title: 'Top Gainers',       params: { change_min: 2 } },
+            breakout:  { title: 'Bullish Breakout', params: { change_min: 1.5, vol_ratio_min: 1.5 } },
+            volume:    { title: 'Unusual Volume',    params: { vol_ratio_min: 2 } },
+            momentum:  { title: 'High Momentum',    params: { change_min: 0.5, vol_ratio_min: 1 } },
+            losers:    { title: 'Top Losers',       params: { change_max: -1 } },
+            rsi_os:    { title: 'RSI Oversold',     params: { rsi_max: 30 } },
+            rsi_ob:    { title: 'RSI Overbought',   params: { rsi_min: 70 } },
         };
 
         // Custom Select helpers
