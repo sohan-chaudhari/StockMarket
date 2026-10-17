@@ -30,7 +30,7 @@
                 <div class="form-group">
                     <label for="loginEmail">Email Address</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#9993;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/></svg></span>
                         <input type="email" id="loginEmail" name="email" autocomplete="username"
                             placeholder="your.email@example.com" required>
                     </div>
@@ -38,7 +38,7 @@
                 <div class="form-group">
                     <label for="loginPassword">Password</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#128274;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
                         <input type="password" id="loginPassword" name="password" autocomplete="current-password"
                             placeholder="Enter your password" required>
                         <button type="button" class="password-toggle" onclick="togglePassword('loginPassword', this)">
@@ -74,7 +74,7 @@
                 <div class="form-group">
                     <label for="signupName">Full Name</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#128100;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
                         <input type="text" id="signupName" name="name" autocomplete="name" placeholder="John Doe"
                             required>
                     </div>
@@ -82,7 +82,7 @@
                 <div class="form-group">
                     <label for="signupEmail">Email Address</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#9993;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/></svg></span>
                         <input type="email" id="signupEmail" name="email" autocomplete="username"
                             placeholder="your.email@example.com" required>
                     </div>
@@ -90,7 +90,7 @@
                 <div class="form-group">
                     <label for="signupPassword">Password</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#128274;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
                         <input type="password" id="signupPassword" name="password" autocomplete="new-password"
                             placeholder="Create a strong password" required>
                         <button type="button" class="password-toggle" onclick="togglePassword('signupPassword', this)">
@@ -106,7 +106,7 @@
                 <div class="form-group">
                     <label for="signupConfirm">Confirm Password</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#128274;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
                         <input type="password" id="signupConfirm" placeholder="Confirm your password" required>
                         <button type="button" class="password-toggle" onclick="togglePassword('signupConfirm', this)">
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
@@ -139,7 +139,7 @@
         <!-- ==================== VERIFY PAGE ==================== -->
         <div id="verificationPage" class="card hidden">
             <div class="text-center">
-                <div style="font-size: 64px; margin-bottom: 20px;">&#128231;</div>
+                <div style="font-size: 64px; margin-bottom: 20px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/></svg></div>
                 <h2 class="card-title">Verify Your Email</h2>
                 <p class="text-muted">We've sent a verification email to<br><strong id="verificationEmailDisplay"
                         style="color: white;"></strong></p>
@@ -174,7 +174,7 @@
         <!-- ==================== VERIFICATION ERROR PAGE ==================== -->
         <div id="verificationErrorPage" class="card hidden">
             <div class="text-center">
-                <div style="font-size: 64px; margin-bottom: 20px;">&#9888;</div>
+                <div style="font-size: 64px; margin-bottom: 20px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M12 3.5L21.5 20H2.5L12 3.5z"/><path d="M12 10v4"/><path d="M12 17.5h.01"/></svg></div>
                 <h2 class="card-title">Link Expired or Invalid</h2>
                 <p class="text-muted" style="margin-bottom: 24px;">This verification link has already been used or is no
                     longer valid.</p>
@@ -221,7 +221,7 @@
                 <div class="form-group">
                     <label for="forgotEmail">Email Address</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#9993;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 7l10 6 10-6"/></svg></span>
                         <input type="email" id="forgotEmail" placeholder="your.email@example.com" required>
                     </div>
                 </div>
@@ -242,7 +242,7 @@
                 <div class="form-group">
                     <label for="resetPassword">New Password</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#128274;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
                         <input type="password" id="resetPassword" placeholder="Enter new password" required>
                         <button type="button" class="password-toggle"
                             onclick="togglePassword('resetPassword', this)"><svg xmlns="http://www.w3.org/2000/svg"
@@ -256,7 +256,7 @@
                 <div class="form-group">
                     <label for="resetConfirm">Confirm New Password</label>
                     <div class="input-wrapper">
-                        <span class="input-icon">&#128274;</span>
+                        <span class="input-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
                         <input type="password" id="resetConfirm" placeholder="Confirm new password" required>
                         <button type="button" class="password-toggle"
                             onclick="togglePassword('resetConfirm', this)"><svg xmlns="http://www.w3.org/2000/svg"

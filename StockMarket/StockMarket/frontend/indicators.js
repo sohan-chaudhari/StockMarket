@@ -7821,7 +7821,7 @@
         }
 
         var eyeBtn = document.createElement('span');
-        eyeBtn.textContent = inst.visible ? '👁' : '🙈';
+        eyeBtn.innerHTML = inst.visible ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>' : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-3.2 4"/><path d="M6.6 6.6A18 18 0 0 0 2 12s3.6 7 10 7a10.9 10.9 0 0 0 4-.8"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>';
         eyeBtn.style.cssText = 'cursor:pointer;font-size:13px;opacity:0.85;padding:0 2px;line-height:1;display:inline-flex;align-items:center;transition:opacity 0.15s;';
         eyeBtn.title = inst.visible ? 'Hide' : 'Show';
         eyeBtn.onmouseenter = function () { eyeBtn.style.opacity = '1'; };
@@ -7830,7 +7830,7 @@
         chip.appendChild(eyeBtn);
 
         var gearBtn = document.createElement('span');
-        gearBtn.textContent = '⚙';
+        gearBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 7.2l2.6 1.5M17.2 15.3l2.6 1.5M4.2 16.8l2.6-1.5M17.2 8.7l2.6-1.5"/></svg>';
         gearBtn.style.cssText = 'cursor:pointer;font-size:13px;color:#9aa0a6;padding:0 2px;line-height:1;display:inline-flex;align-items:center;transition:color 0.15s;';
         gearBtn.title = 'Settings';
         gearBtn.onmouseenter = function () { gearBtn.style.color = '#fff'; };
