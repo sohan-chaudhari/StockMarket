@@ -524,7 +524,7 @@
         function renderList(items) {
             var container = document.getElementById('newsContainer');
             if (currentCategory === 'bookmarked' && (!items || items.length === 0)) {
-                container.innerHTML = '<div style="color:var(--text-secondary);padding:3.5rem 1rem;text-align:center;"><div style="font-size:2.5rem;margin-bottom:0.75rem;">🔖</div><div style="font-size:1.15rem;font-weight:600;color:#fff;margin-bottom:0.35rem;">No Bookmarked News</div><p style="font-size:0.85rem;color:#888;max-width:380px;margin:0 auto;line-height:1.5;">Click the bookmark icon on any news article card to save it here for quick access anytime.</p></div>';
+                container.innerHTML = '<div style="color:var(--text-secondary);padding:3.5rem 1rem;text-align:center;"><div style="font-size:2.5rem;margin-bottom:0.75rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M6 3h12v18l-6-4-6 4V3z"/></svg></div><div style="font-size:1.15rem;font-weight:600;color:#fff;margin-bottom:0.35rem;">No Bookmarked News</div><p style="font-size:0.85rem;color:#888;max-width:380px;margin:0 auto;line-height:1.5;">Click the bookmark icon on any news article card to save it here for quick access anytime.</p></div>';
                 return;
             }
 
@@ -558,7 +558,7 @@
                     '</div>' +
                     '<div class="title">' + _escHtml(cleanTitle) + '</div>' +
                     (n.excerpt ? '<div class="excerpt">' + _escHtml(n.excerpt) + '</div>' : '') +
-                    '<button class="bookmark-btn' + (isSaved ? ' saved' : '') + '" data-bm-idx="' + i + '" title="' + (isSaved ? 'Remove Bookmark' : 'Bookmark News') + '">🔖</button>' +
+                    '<button class="bookmark-btn' + (isSaved ? ' saved' : '') + '" data-bm-idx="' + i + '" title="' + (isSaved ? 'Remove Bookmark' : 'Bookmark News') + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M6 3h12v18l-6-4-6 4V3z"/></svg></button>' +
                     '</div>';
             }).join('');
             container.innerHTML = html;
@@ -615,7 +615,7 @@
             if (isNaN(score) || score === 0) score = 0.03;
             var label = _normaliseSentiment(n.sentiment, score);
             var sentColor = label === 'Bullish' ? '#089981' : (label === 'Bearish' ? '#f23645' : '#a1a1aa');
-            var sentEmoji = label === 'Bullish' ? '📈' : (label === 'Bearish' ? '📉' : '🎯');
+            var sentEmoji = '';
             var scoreStr = ' ' + (score > 0 ? '+' : '') + score.toFixed(2);
             var summary = _escHtml(n.excerpt || n.summary || n.snippet || 'No additional details available.');
             var cleanTitle = _cleanTitle(n.title);
@@ -915,14 +915,14 @@
                                     allNews = retryArticles;
                                     renderNews();
                                 } else if (container) {
-                                    container.innerHTML = '<div style="padding:3.5rem 1rem;text-align:center;color:#a1a1aa;"><div style="font-size:1.75rem;margin-bottom:0.75rem;">🔍</div><div style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.3rem;">No news found for "' + _escHtml(query) + '"</div><div style="font-size:0.85rem;color:#71717a;">Try searching with a different ticker (e.g. SBIN, RELIANCE, TCS).</div></div>';
+                                    container.innerHTML = '<div style="padding:3.5rem 1rem;text-align:center;color:#a1a1aa;"><div style="font-size:1.75rem;margin-bottom:0.75rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg></div><div style="font-size:1.05rem;font-weight:600;color:#fff;margin-bottom:0.3rem;">No news found for "' + _escHtml(query) + '"</div><div style="font-size:0.85rem;color:#71717a;">Try searching with a different ticker (e.g. SBIN, RELIANCE, TCS).</div></div>';
                                 }
                             }, 2500);
                         }
                     } catch(e) {
                         if (e.name !== 'AbortError' && thisReqId === self.currentSearchId) {
                             if (container) {
-                                container.innerHTML = '<div style="padding:3.5rem 1rem;text-align:center;color:#f23645;"><div style="font-size:1.75rem;margin-bottom:0.75rem;">⚠️</div><div style="font-size:1.05rem;font-weight:600;margin-bottom:0.3rem;">Failed to fetch news</div><div style="font-size:0.85rem;color:#a1a1aa;">Please check your connection or try again.</div></div>';
+                                container.innerHTML = '<div style="padding:3.5rem 1rem;text-align:center;color:#f23645;"><div style="font-size:1.75rem;margin-bottom:0.75rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M12 3.5L21.5 20H2.5L12 3.5z"/><path d="M12 10v4"/><path d="M12 17.5h.01"/></svg></div><div style="font-size:1.05rem;font-weight:600;margin-bottom:0.3rem;">Failed to fetch news</div><div style="font-size:0.85rem;color:#a1a1aa;">Please check your connection or try again.</div></div>';
                             }
                         }
                     }

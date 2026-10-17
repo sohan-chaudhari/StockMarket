@@ -444,7 +444,7 @@ function renderMarketCards() {
       <div class="market-card">
         ${isImageLogo(stock.logo)
         ? `<img src="${stock.logo}" class="card-icon" alt="${stock.ticker}" onerror="this.style.display='none'">`
-        : '<div class="card-icon">📈</div>'
+        : '<div class="card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div>'
       }
         <div class="card-ticker-group">
             <div class="card-ticker">${stock.ticker}</div>
@@ -735,13 +735,13 @@ function renderTrackerGrid() {
 
     if (isImg) {
       // Image URL (External or Local)
-      logoHTML = `<img src="${stock.logo}" class="tracker-logo" alt="${ticker}" onerror="this.parentElement.innerHTML='<span class=\\'tracker-logo-icon\\'>📈</span>'">`;
+      logoHTML = `<img src="${stock.logo}" class="tracker-logo" alt="${ticker}" onerror="this.parentElement.innerHTML='<span class=\\'tracker-logo-icon\\'><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span>'">`;
     } else if (stock.logo && stock.logo.length > 0) {
       // Emojis or short text (Fallback)
       logoHTML = `<span class="tracker-logo-icon">${stock.logo}</span>`;
     } else {
       // Ultimate Fallback
-      logoHTML = `<span class="tracker-logo-icon">📈</span>`;
+      logoHTML = `<span class="tracker-logo-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span>`;
     }
 
     return `
