@@ -269,6 +269,7 @@
   max-width: 500px;
   margin-left: auto;            /* wide screens: pins to the right at 500px;
                                    narrow screens: fills width minus 24px */
+  max-height: calc(100vh - 90px);   /* near full-screen on a phone, like the reference */
   display: flex;
   flex-direction: column;
   background: var(--dp-bg);
