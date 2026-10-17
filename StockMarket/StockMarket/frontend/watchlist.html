@@ -138,7 +138,7 @@
             <button class="wl-tab" onclick="switchList('swing',this)">Swing Trades</button>
         </div>
         <div id="wlPersistNote" style="font-size:0.72rem;color:var(--text-secondary);margin-bottom:0.75rem;display:flex;align-items:center;gap:4px;">
-            <span style="color:#089981;">&#9729;</span> <span id="wlPersistText">Synced to your account</span>
+            <span id="wlPersistText">Synced to your account</span>
         </div>
         <div class="wl-add">
             <div class="wl-search-wrap">
@@ -547,7 +547,7 @@
 
                 // Duplicate check (local)
                 if(list.indexOf(ticker) !== -1){
-                    showToast('&#9888; ' + ticker + ' is already in your watchlist', 'warn');
+                    showToast('' + ticker + ' is already in your watchlist', 'warn');
                     return;
                 }
 
@@ -571,7 +571,7 @@
                         } else if (res.status === 401 && !token) {
                             showToast('&#9888; Saved locally (sign in to sync)', 'warn');
                         } else {
-                            showToast('&#9888; ' + (errData.detail || 'Failed to add'), 'warn');
+                            showToast('' + (errData.detail || 'Failed to add'), 'warn');
                             return;
                         }
                     }
@@ -757,7 +757,7 @@
                 card.id = id;
                 card.innerHTML =
                     '<div class="notif-top">'
-                    + '<span class="notif-badge">&#128276; ALERT TRIGGERED</span>'
+                    + '<span class="notif-badge">ALERT TRIGGERED</span>'
                     + '<button class="notif-close" onclick="dismissNotif(\''+id+'\')">&#10005;</button>'
                     + '</div>'
                     + '<div class="notif-ticker">' + f.ticker + '</div>'

@@ -25,12 +25,12 @@
           jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
         };
         await html2pdf().set(opt).from(container).save();
-        if (btn) btn.innerHTML = '&#128196; Download PDF';
+        if (btn) btn.innerHTML = 'Download PDF';
       } catch (err) {
         console.error('PDF generation failed:', err);
         alert('Failed to generate PDF.');
         const btn = document.getElementById('downloadPdfBtn');
-        if (btn) btn.innerHTML = '&#128196; Download PDF';
+        if (btn) btn.innerHTML = 'Download PDF';
       }
     }
 
@@ -52,7 +52,7 @@
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:1rem;">
             <h2 id="newsModalTitle" style="color:#fff;margin:0;font-size:1.4rem;">Stock News Sentiment</h2>
             <div style="display:flex;gap:10px;">
-              <button id="downloadPdfBtn" style="background:#4A90E2;border:none;color:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:none;">&#128196; Download PDF</button>
+              <button id="downloadPdfBtn" style="background:#4A90E2;border:none;color:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;display:none;">Download PDF</button>
               <button onclick="toggleNewsModal()" style="background:none;border:none;color:#999;font-size:24px;cursor:pointer;line-height:1;">&times;</button>
             </div>
           </div>

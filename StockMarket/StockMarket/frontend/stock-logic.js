@@ -749,11 +749,11 @@
           // Badge styling for exit reason
           let reasonBadge = '';
           if (pos.exit_reason === 'TP_HIT') {
-            reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🎯 TP Hit</span>`;
+            reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">TP Hit</span>`;
           } else if (pos.exit_reason === 'SL_HIT') {
-            reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">🛑 SL Hit</span>`;
+            reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">SL Hit</span>`;
           } else {
-            reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">✋ Manual Close</span>`;
+            reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">Manual Close</span>`;
           }
 
           const tickerDisplay = _positionTicker(pos);
@@ -805,11 +805,11 @@
 
           let reasonBadge = '';
           if (pos.exit_reason === 'TP_HIT') {
-            reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">🎯 TP</span>`;
+            reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">TP</span>`;
           } else if (pos.exit_reason === 'SL_HIT') {
-            reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">🛑 SL</span>`;
+            reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">SL</span>`;
           } else {
-            reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">✋ Manual</span>`;
+            reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">Manual</span>`;
           }
 
           const tickerDisplay = _positionTicker(pos);
@@ -1103,7 +1103,7 @@
         const dayStr = nextTradingDay.toLocaleDateString('en-IN', options);
 
         closeMsg.innerHTML = `<div style="color: #ff8a80; background: rgba(255,82,82,0.12); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,82,82,0.3); font-size: 12px; line-height: 1.4; margin-top: 10px;">
-          ⛔ <strong>Market is Closed</strong><br/>Positions cannot be closed now. Square-off resumes at 09:15 AM on ${dayStr}.
+          <strong>Market is Closed</strong><br/>Positions cannot be closed now. Square-off resumes at 09:15 AM on ${dayStr}.
         </div>`;
         if (confirmBtn) {
           confirmBtn.disabled = true;
@@ -1302,7 +1302,7 @@
         const dayStr = nextTradingDay.toLocaleDateString('en-IN', options);
 
         msg.innerHTML = `<div style="color: #ff8a80; background: rgba(255,82,82,0.12); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,82,82,0.3); font-size: 12px; line-height: 1.4;">
-          ⛔ <strong>Market is Closed</strong><br/>Take Profit & Stop Loss cannot be modified now. Modifications resume at 09:15 AM on ${dayStr}.
+          <strong>Market is Closed</strong><br/>Take Profit & Stop Loss cannot be modified now. Modifications resume at 09:15 AM on ${dayStr}.
         </div>`;
         tpInput.disabled = true;
         slInput.disabled = true;
