@@ -161,8 +161,11 @@
 .dp-palette {
   position: fixed;              /* viewport coords: no transformed-ancestor surprises */
   z-index: 100;                 /* above .dp-card (90) — otherwise it opens behind it */
-  top: 64px;                    /* below the bar, like the reference */
-  left: 16px;
+  /* Published by the wiring from the BAR's own viewport rect, so the pad opens
+     directly under the bar inside the chart — never over the page header.
+     A variable (not an inline offset) so the media queries below still win. */
+  top: var(--dp-top, 64px);
+  left: max(8px, min(var(--dp-left, 16px), calc(100vw - 312px)));
   width: 300px;
   max-width: calc(100vw - 24px);
   padding: 12px;
@@ -262,7 +265,7 @@
 .dp-card {
   position: fixed;              /* viewport coords: see .dp-palette */
   z-index: 90;
-  top: 64px;                    /* below the bar; CSS owns this, never JS */
+  top: var(--dp-top, 64px);     /* just under the bar; CSS owns this, never JS */
   right: 12px;
   left: 12px;                   /* together with right:12 this can NEVER overflow */
   width: auto;
@@ -523,12 +526,16 @@
 @media (max-width: 768px) {
   .dp-card {
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    top: auto !important;          /* an inline top + a CSS bottom STRETCHED it */
-    width: 100%;
-    max-width: 100%;
+    /* !important on ALL four sides: an inline offset or an over-constrained
+       left+right+width box is what previously made the card render clipped off
+       the left edge on a phone. These four lines make that impossible. */
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-left: 0 !important;
     max-height: 78vh;
     border-radius: 14px 14px 0 0;
     border-left: none;
@@ -547,10 +554,12 @@
 
   .dp-palette {
     position: fixed;
-    left: 12px;
-    right: auto;                   /* NOT full width — the reference palette is narrow */
-    top: 64px !important;          /* stays under the bar, never stretched */
-    bottom: auto;
+    /* stays narrow like the reference, but never wider than the screen and
+       never taller than 60vh; opens under the bar (variable), not over the header */
+    left: max(8px, min(var(--dp-left, 12px), calc(100vw - 312px))) !important;
+    right: auto !important;
+    top: var(--dp-top, 64px) !important;
+    bottom: auto !important;
     width: 300px;
     max-width: calc(100vw - 24px);
     max-height: 60vh;

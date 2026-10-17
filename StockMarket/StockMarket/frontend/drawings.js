@@ -515,6 +515,24 @@ try {
                 e.stopPropagation();
                 if (e.cancelable) e.preventDefault();
                 this._selectDrawing(hitDrawing);
+
+                /* LOCKED: select it (so the context bar can come back and
+                   Unlock it) but never start a drag. This single guard covers
+                   every drawing class, including the handful whose translate()
+                   does not check `locked` itself. */
+                if (hitDrawing.locked) {
+                    this.isDraggingHandle = false;
+                    this.isDraggingDrawing = false;
+                    this.draggedHandle = null;
+                    this.dragDrawing = null;
+                    this.dragStartCoords = null;
+                    this._disableChartScroll();
+                    this.updatePointerEvents();
+                    this.engine.stopAutoScroll();
+                    this.redraw();
+                    return;
+                }
+
                 this.dragStartCoords = hitDrawing.coords ? JSON.parse(JSON.stringify(hitDrawing.coords)) : null;
                 this.dragStartTargetPrice = hitDrawing.targetPrice;
                 this.dragStartStopPrice = hitDrawing.stopPrice;

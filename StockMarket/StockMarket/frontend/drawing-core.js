@@ -1175,7 +1175,17 @@ class HitTestService {
         for (var i = drawings.length - 1; i >= 0; i--) {
             var d = drawings[i];
             if (d.hidden) continue;
-            if (d.locked) continue;
+
+            /* A LOCKED drawing must still be HIT-TESTABLE.
+               This used to be `if (d.locked) continue;`, which made a locked
+               drawing completely invisible to hit-testing. The consequence was
+               a dead end: locking a drawing meant it could never be clicked
+               again, so the context bar could never reappear, so it could never
+               be unlocked. TradingView behaves the opposite way — a locked
+               object is still selectable, it just cannot be dragged.
+               Only the draggable HANDLE tiers are skipped below, so locking
+               still prevents moving and reshaping. */
+            var isLocked = !!d.locked;
 
             var pixels = this._getPixels(d, chartState);
             if (!pixels || pixels.length === 0) continue;
@@ -1188,20 +1198,24 @@ class HitTestService {
             // handles impossible to hit on any non-zero-width drawing.
 
             // 0. Custom handles (e.g. Emoji corner resize handles, Position handles)
-            if (d.hitTestHandle) {
+            if (!isLocked && d.hitTestHandle) {
                 var handleHit = d.hitTestHandle(pos, chartState);
                 if (handleHit) {
                     return { drawing: d, hitType: 'edge', handleLabel: handleHit };
                 }
             }
 
-            // 1. Anchor handles (highest priority)
-            result = this._hitAnchorHandles(pos, d, pixels, chartState);
-            if (result) return result;
+            // 1. Anchor handles (highest priority) — never on a locked drawing
+            if (!isLocked) {
+                result = this._hitAnchorHandles(pos, d, pixels, chartState);
+                if (result) return result;
+            }
 
-            // 2. Midpoint handles (second priority)
-            result = this._hitMidpointHandles(pos, d, pixels, chartState);
-            if (result) return result;
+            // 2. Midpoint handles (second priority) — never on a locked drawing
+            if (!isLocked) {
+                result = this._hitMidpointHandles(pos, d, pixels, chartState);
+                if (result) return result;
+            }
 
             // 3. Edge hit (line segments — tight threshold)
             result = this._hitEdge(pos, d, pixels, chartState);

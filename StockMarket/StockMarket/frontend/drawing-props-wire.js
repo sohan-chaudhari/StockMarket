@@ -240,11 +240,9 @@
       palette.addEventListener(ev, function (e) { e.stopPropagation(); });
     });
     document.body.appendChild(tagGuarded(palette));
-    try {
-      var r = anchor.getBoundingClientRect();
-      palette.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 312)) + 'px';
-      palette.style.top = Math.min(r.bottom + 6, window.innerHeight - 380) + 'px';
-    } catch (e) {}
+    /* same rule as the line-colour pad: opens under the bar via the CSS
+       variables, never at the top of the page over the header/search */
+    placeUnderBar(palette);
   }
 
   function buildBar() {
@@ -275,18 +273,29 @@
     return bar;
   }
 
-  /* Position BOTH popovers from the BAR's viewport rect. They are
-     position:fixed, so this puts them just under the bar — inside the chart —
-     instead of at top:64px, which landed them over the page header and search
-     bar. Only top/left are set (never bottom), so nothing can stretch. */
+  /* The popovers are position:fixed and live in document.body, but the BAR
+     lives inside the chart. So we publish the bar's viewport rect as CSS
+     variables and let the STYLESHEET decide what to do with them.
+
+     JS deliberately sets NO inline offsets here. An inline left/top always beats
+     the media query, and on mobile that fought the docking rules
+     (`left:0; right:0; width:100%`) — the over-constrained box is what made the
+     card render clipped off the left edge. A CSS variable cannot do that. */
   function placeUnderBar(node) {
     try {
       var a = bar || anchorRef;
-      if (!a || !node) return;
+      if (!a) return;
       var r = a.getBoundingClientRect();
-      var w = node.offsetWidth || 300;
-      node.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
-      node.style.top = Math.min(r.bottom + 8, window.innerHeight - (node.offsetHeight || 200) - 12) + 'px';
+      var root = document.documentElement;
+      root.style.setProperty('--dp-top', Math.round(r.bottom + 8) + 'px');
+      root.style.setProperty('--dp-left', Math.round(r.left) + 'px');
+      if (node) {
+        node.style.left = '';
+        node.style.right = '';
+        node.style.top = '';
+        node.style.bottom = '';
+        node.style.width = '';
+      }
     } catch (e) {}
   }
   var anchorRef = null;
@@ -340,6 +349,89 @@
      `content.plain` is the text payload; colour/size/weight/alignment ride in
      `style`. Every field is optional and undefined keys are stripped, so an
      untouched control can never clobber an existing value. */
+  /* Which drawing classes paint their own text? Everything else — trendline,
+     ray, channel, rectangle, fib, position … — has NO text renderer at all.
+     `content.plain` is stored and restored but never painted, which is exactly
+     why typing text on a line did nothing visible. */
+  var TEXT_NATIVE = {
+    TextDrawing: 1, TextNote: 1, AnchoredText: 1, Callout: 1,
+    PriceLabel: 1, Balloon: 1, ArrowLabel: 1
+  };
+
+  /* Attach a REAL TextDrawing at the selected drawing's midpoint.
+     The engine's own TextDrawing paints `this.text` (see TextDrawing.draw in
+     drawings.js) and the engine exposes the class on
+     window.__ToolDefinitions.text = { class: TextDrawing, points: 1 }, so we
+     reuse the proven renderer instead of writing a new one. Registration goes
+     through engine.finalizeDrawing() — the same call the interactive tools use
+     (toolManager.finishDrawing -> engine.finalizeDrawing) — so the model, undo
+     stack, autosave and rendering all behave exactly as for any other drawing. */
+  function attachTextDrawing(text, opts) {
+    var tm = window.toolManager;
+    var eng = tm && tm.engine;
+    var def = window.__ToolDefinitions && window.__ToolDefinitions.text;
+    if (!tm || !eng || !def || !def.class) return false;
+
+    var sel = tm.selectedDrawing;                 /* the RENDERER, not the model */
+    if (!sel) return false;
+
+    var cs = tm.getChartState ? tm.getChartState() : null;
+    if (!cs) return false;
+
+    /* one attached label per drawing: drop the previous one */
+    try {
+      if (sel._dpTextId) {
+        if (typeof eng.deleteDrawing === 'function') eng.deleteDrawing(sel._dpTextId);
+        sel._dpTextId = null;
+      }
+    } catch (e) {}
+
+    /* anchor pixel = the drawing's midpoint, falling back to its own pixels */
+    var px = null;
+    try {
+      var mid = sel.getMidpoints ? sel.getMidpoints(cs) : null;
+      if (mid && mid.length && mid[0]) px = { x: mid[0].x, y: mid[0].y };
+      if (!px) {
+        var ps = sel.getPixels ? sel.getPixels(cs) : null;
+        if (ps && ps.length) {
+          px = {
+            x: (ps[0].x + ps[ps.length - 1].x) / 2,
+            y: (ps[0].y + ps[ps.length - 1].y) / 2
+          };
+        }
+      }
+    } catch (e) {}
+    if (!px) return false;
+
+    var options = {};
+    try { options = JSON.parse(JSON.stringify(def.options || {})); } catch (e) { options = {}; }
+    options.points = def.points || 1;
+
+    var td = null;
+    try { td = new def.class({ x: px.x, y: px.y }, cs, options); } catch (e) { return false; }
+    if (!td) return false;
+
+    td.text = text;
+    td._userEdited = true;                 /* TextDrawing.isValid() needs this */
+    td.style = td.style || {};
+    if (opts && opts.textColor) td.style.color = opts.textColor;
+    if (opts && opts.fontSize) {
+      var fs = parseInt(opts.fontSize, 10);
+      if (fs) td.style.fontSize = fs;
+    }
+    if (opts && opts.bold) td.style.bold = true;
+    if (opts && opts.italic) td.style.italic = true;
+
+    try {
+      var res = eng.finalizeDrawing(td);
+      if (res && res.drawing && res.drawing.id) {
+        sel._dpTextId = res.drawing.id;    /* remember it, so re-Ok replaces it */
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function applyText(v) {
     try {
       var d = currentDrawing();
@@ -357,10 +449,21 @@
       if (v.alignV) style.textAlignV = v.alignV;
       if (v.alignH) style.textAlignH = v.alignH;
       Object.keys(style).forEach(function (k) { if (style[k] === undefined) delete style[k]; });
+
+      /* keep the model's own text field in sync — that is what the app's own
+         style panel reads, so leaving it empty would look like the text was lost */
       if (typeof engine.updateDrawing === 'function') {
         engine.updateDrawing(d.id, { content: { plain: text }, style: style });
-        return true;
       }
+
+      if (!text) return true;
+
+      /* A line/shape cannot paint text, so give it a real TextDrawing. Types
+         that already render their own text are left to do so. */
+      var sel = window.toolManager.selectedDrawing;
+      var cname = (sel && sel.constructor && sel.constructor.name) || '';
+      if (!TEXT_NATIVE[cname]) attachTextDrawing(text, v);
+      return true;
     } catch (e) {}
     return false;
   }
