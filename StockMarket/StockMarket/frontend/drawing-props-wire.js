@@ -155,20 +155,16 @@
     }
   }
 
-  /* Viewport coordinates, because the popover is position:fixed. On mobile the
-     stylesheet docks it to the bottom and an inline top must NOT be left set —
-     an inline top plus a CSS bottom is what stretched it into a tall empty box. */
-  function placePalette(anchor) {
-    if (!palette || !anchor) return;
-    if (window.innerWidth <= 768) {
-      palette.style.top = '';
-      palette.style.left = '';
-      return;
-    }
-    var r = anchor.getBoundingClientRect();
-    var left = Math.max(8, Math.min(r.left, window.innerWidth - 312));
-    palette.style.left = left + 'px';
-    palette.style.top = (r.bottom + 8) + 'px';
+  /* Positioning is owned by the STYLESHEET, never by JS. Setting inline offsets
+     here is what repeatedly broke mobile: an inline value always beats the media
+     query, and a viewport-width test in JS is unreliable on real devices. CSS
+     now docks it as a panel on desktop and a bottom sheet on mobile. */
+  function placePalette() {
+    if (!palette) return;
+    palette.style.top = '';
+    palette.style.left = '';
+    palette.style.right = '';
+    palette.style.bottom = '';
   }
 
   /* Apply what the card can actually apply. Line style maps onto the EXISTING
@@ -176,24 +172,54 @@
      the app's proven handler does the work. Text / coordinates / visibility have
      no engine API for a trendline yet, so they are accepted but not applied. */
   var LINE_STYLE_ORDER = ['solid', 'dashed', 'dotted'];
+  /* Text: the engine takes content via updateDrawing(id, { content, style }).
+     `content.plain` is the text payload; colour/size/weight/alignment ride in
+     `style`. Every field is optional and undefined keys are stripped, so an
+     untouched control can never clobber an existing value. */
+  function applyText(v) {
+    try {
+      var d = currentDrawing();
+      var engine = window.toolManager && window.toolManager.engine;
+      if (!d || !engine || !v) return false;
+      var text = (v.text == null) ? '' : String(v.text);
+      var style = {};
+      if (v.textColor) style.color = v.textColor;
+      if (v.fontSize) style.fontSize = parseInt(v.fontSize, 10) || undefined;
+      style.bold = !!v.bold;
+      style.italic = !!v.italic;
+      if (v.alignV) style.textAlignV = v.alignV;
+      if (v.alignH) style.textAlignH = v.alignH;
+      Object.keys(style).forEach(function (k) { if (style[k] === undefined) delete style[k]; });
+      if (typeof engine.updateDrawing === 'function') {
+        engine.updateDrawing(d.id, { content: { plain: text }, style: style });
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function applyCardValues(v) {
     try {
-      if (!v || !v.lineStyle) return;
-      var group = document.getElementById('sp-style-group');
-      if (!group) return;
-      var btns = group.querySelectorAll('button');
-      if (!btns.length) return;
-      /* prefer an explicit data attribute, else fall back to the standard order */
-      var wanted = String(v.lineStyle).toLowerCase();
-      var idx = LINE_STYLE_ORDER.indexOf(wanted);
-      var target = null;
-      for (var i = 0; i < btns.length; i++) {
-        var b = btns[i];
-        var key = (b.dataset && (b.dataset.style || b.dataset.line || b.dataset.s)) || '';
-        if (key && String(key).toLowerCase() === wanted) { target = b; break; }
+      if (!v) return;
+      /* line style -> the EXISTING panel's buttons (proven path) */
+      if (v.lineStyle) {
+        var group = document.getElementById('sp-style-group');
+        if (group) {
+          var btns = group.querySelectorAll('button');
+          var wanted = String(v.lineStyle).toLowerCase();
+          var idx = LINE_STYLE_ORDER.indexOf(wanted);
+          var target = null;
+          for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            var key = (b.dataset && (b.dataset.style || b.dataset.line || b.dataset.s)) || '';
+            if (key && String(key).toLowerCase() === wanted) { target = b; break; }
+          }
+          if (!target && idx >= 0 && btns[idx]) target = btns[idx];
+          if (target) target.click();
+        }
       }
-      if (!target && idx >= 0 && btns[idx]) target = btns[idx];
-      if (target) target.click();
+      /* text -> the engine's own updateDrawing content API */
+      applyText(v);
     } catch (e) {}
   }
 
@@ -212,25 +238,11 @@
     }
     card.style.display = 'flex';
     card.selectTab(tab || 'style');
-
-    /* Positioning: desktop docks it beside the bar in viewport coordinates; on
-       mobile the stylesheet's bottom sheet takes over, so every inline offset
-       must be CLEARED or it overrides the media query and hangs off-screen. */
-    var isMobile = window.innerWidth <= 768;
-    if (isMobile) {
-      card.style.left = '';
-      card.style.right = '';
-      card.style.top = '';
-      card.style.width = '';
-    } else {
-      var br = bar ? bar.getBoundingClientRect() : null;
-      card.style.left = 'auto';
-      card.style.right = '12px';
-      card.style.width = '';
-      var wantedTop = br ? Math.round(br.bottom + 8) : 64;
-      card.style.top = Math.max(12, Math.min(wantedTop, window.innerHeight - 120)) + 'px';
-      if (card.offsetHeight > window.innerHeight - 80) card.style.top = '12px';
-    }
+    /* clear any inline offsets so the stylesheet always wins */
+    card.style.left = '';
+    card.style.right = '';
+    card.style.top = '';
+    card.style.width = '';
   }
   function hideCard() { if (card) card.style.display = 'none'; }
 

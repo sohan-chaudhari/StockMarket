@@ -488,6 +488,12 @@
       num.addEventListener('input', function () { range.value = num.value; });
     });
 
+    /* ---- bold / italic toggles (they had no state before) ---- */
+    ['#dp-bold', '#dp-italic'].forEach(function (sel) {
+      var b = pText.querySelector(sel);
+      if (b) b.addEventListener('click', function () { b.classList.toggle('is-active'); });
+    });
+
     card.selectTab = select;
     card.setTitle = function (t) { title.textContent = t; };
     card.setLineColor = function (c) { pStyle.querySelector('#dp-style-swatch').style.background = c; };
@@ -506,12 +512,18 @@
     card.getValues = function () {
       var vis = {};
       pVis.querySelectorAll('[data-vis]').forEach(function (c) { vis[c.dataset.vis] = c.checked; });
+      var boldBtn = pText.querySelector('#dp-bold');
+      var italicBtn = pText.querySelector('#dp-italic');
+      var textSwatch = pText.querySelector('#dp-text-swatch');
       return {
         lineStyle: (pStyle.querySelector('#dp-style-line .is-active') || {}).dataset ?
                    pStyle.querySelector('#dp-style-line .is-active').dataset.line : 'solid',
         extend: pStyle.querySelector('#dp-extend').value,
         text: pText.querySelector('#dp-text').value,
         fontSize: pText.querySelector('#dp-font-size').value,
+        textColor: (textSwatch && textSwatch.style.background) || '#d1d4dc',
+        bold: !!(boldBtn && boldBtn.classList.contains('is-active')),
+        italic: !!(italicBtn && italicBtn.classList.contains('is-active')),
         alignV: pText.querySelector('#dp-align-v').value,
         alignH: pText.querySelector('#dp-align-h').value,
         visibility: vis

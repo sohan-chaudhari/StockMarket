@@ -137,7 +137,10 @@
 .dp-palette {
   position: fixed;              /* viewport coords: no transformed-ancestor surprises */
   z-index: 100;                 /* above .dp-card (90) — otherwise it opens behind it */
+  top: 64px;                    /* below the bar, like the reference */
+  left: 16px;
   width: 300px;
+  max-width: calc(100vw - 24px);
   padding: 12px;
   background: var(--dp-bg);
   border: 1px solid var(--dp-border);
@@ -235,6 +238,8 @@
 .dp-card {
   position: fixed;              /* viewport coords: see .dp-palette */
   z-index: 90;
+  top: 64px;                    /* below the bar; CSS owns this, never JS */
+  right: 12px;
   width: 500px;
   max-width: calc(100vw - 24px);
   display: flex;
@@ -515,15 +520,16 @@
   .dp-palette {
     position: fixed;
     left: 12px;
-    right: 12px;
-    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-    top: auto !important;          /* an inline top + a CSS bottom STRETCHED it */
-    width: auto;
-    max-height: 70vh;
+    right: auto;                   /* NOT full width — the reference palette is narrow */
+    top: 64px !important;          /* stays under the bar, never stretched */
+    bottom: auto;
+    width: 300px;
+    max-width: calc(100vw - 24px);
+    max-height: 60vh;
     overflow-y: auto;
   }
-  .dp-palette__grid { gap: 6px; }
-  .dp-swatch { border-radius: 6px; }
+  .dp-palette__grid { gap: 5px; }
+  .dp-swatch { border-radius: 5px; }
 }
 
 /* very small phones — keep the bar from overflowing */
