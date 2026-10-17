@@ -250,7 +250,9 @@
   function buildBar() {
     if (bar) return bar;
     bar = window.DrawingProps.createBar({
-      onEdit:  function () { showCard('style'); },
+      /* pencil -> the LINE colour pad (as asked). The settings card is reached
+         through ••• -> Settings…, which is how the reference does it too. */
+      onEdit:  function (anchor) { togglePalette(anchor || bar); },
       onText:  function (anchor) { openTextColor(anchor || bar); },
       onWidthMenu: function (anchor) { openWidthMenu(anchor); },
       onStyleMenu: function (anchor) { openStyleMenu(anchor); },
