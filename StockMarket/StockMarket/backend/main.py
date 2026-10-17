@@ -573,6 +573,17 @@ _BACKFILL_FAIL_COOLDOWN_SEC = 300        # transient provider failure (rate limi
 _BACKFILL_PERMANENT_COOLDOWN_SEC = 1800  # invalid/unsupported symbol
 _BACKFILL_COOLDOWN_MAX_KEYS = 4000       # bounded memory
 
+# SEC-02: the 1D/1W/1M gap-fill paths in /api/stock-data/{range,weekly,monthly}
+# (and history-before, which reuses them) run on PUBLIC, unauthenticated
+# requests but were NOT covered by the per-ticker cooldown above. For a ticker
+# whose stored history is short or stale the "need fill" test stays true on
+# EVERY request, so each visit could re-download a full `period='max'` history
+# from yfinance. These routes now consult the same _backfill_cooldown registry,
+# throttling a repeat provider attempt for the same ticker to once per window.
+# A normal success is unaffected: the candles are stored by then, so the next
+# request for that ticker is served straight from the DB with no provider call.
+_DAILY_HISTORY_FILL_COOLDOWN_SEC = 300
+
 # Tickers a user just opened that are missing recent intraday data. The request
 # path only ENQUEUES them; the background gap sweep does the fetching, paced by
 # historical_service._throttle_historical_call(). That keeps the request fast and
@@ -5904,7 +5915,15 @@ def _normalize_ticker(ticker: str) -> List[str]:
 
 
 @app.get("/api/stock-data/range")
-def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db: Session = Depends(get_db)):
+@limiter.limit("120/minute")
+def get_stock_data_range(request: Request, ticker: str = Query(..., max_length=40), range: str = Query("ALL", max_length=8), db: Session = Depends(get_db)):
+    """Rate-limited public route; the payload logic (and its provider writes)
+    lives in _stock_data_range_core so /api/stock-data/history-before can reuse
+    it without re-entering the limiter."""
+    return _stock_data_range_core(ticker, range, db)
+
+
+def _stock_data_range_core(ticker: str, range: str, db) -> list:
     """Daily OHLCV range. Primary source: candles(1D). Fallback: yfinance → AngelOne (writes to candles).
     Response: list of {"time": "YYYY-MM-DD", "open", "high", "low", "close", "adj_close", "volume"}."""
     db_tickers = _normalize_ticker(ticker)
@@ -5942,7 +5961,14 @@ def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db
     # On-demand gap-fill: if missing target latest trading day or data is insufficient,
     # fetch the gap from yfinance, and fallback to AngelOne if yfinance fails or misses recent days.
     needs_gap_fill = (not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)
-    if needs_gap_fill and not _is_yfinance_failed(clean_ticker):
+
+    # SEC-02: throttle repeat provider attempts for the same ticker. Stored
+    # candles are always served; only the fetch/write side is skipped while the
+    # cooldown is active.
+    _daily_fill_key = f"{clean_ticker}:daily_gapfill"
+    _daily_fill_allowed = not _backfill_cooldown_active(_daily_fill_key)
+
+    if needs_gap_fill and not _is_yfinance_failed(clean_ticker) and _daily_fill_allowed:
         most_recent_date = records[0].timestamp.date() if records else (ist_now.date() - timedelta(days=365*5 if range.upper() == "ALL" else (range_days if range_days else 365)))
         try:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -5997,7 +6023,7 @@ def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db
 
     # Fallback to AngelOne if still missing target latest trading day or insufficient records
     records = _query_candles_1d()
-    if (not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS):
+    if ((not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)) and _daily_fill_allowed:
         try:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             if not historical_service.is_logged_in:
@@ -6046,6 +6072,12 @@ def get_stock_data_range(ticker: str = Query(...), range: str = Query("ALL"), db
                         db.rollback()
         except Exception as e:
             print(f"[WARN] AngelOne historical fallback failed for {clean_ticker}: {e}")
+
+    if needs_gap_fill and _daily_fill_allowed:
+        # A provider attempt was made on this request; throttle the next one for
+        # the same ticker regardless of outcome (on success the candles are now
+        # stored, so a later request is served from the DB with no provider call).
+        _set_backfill_cooldown(_daily_fill_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC)
 
     # Build response using date string format (preserves existing API contract).
     result = [
@@ -6409,8 +6441,9 @@ def _merge_live_5m(data: list, pending_candle, forming_candle) -> list:
 
 
 @app.get("/api/stock-data/intraday")
-def get_stock_data_intraday(ticker: str = Query(...), interval: str = Query("5m"), after: int = Query(None), db: Session = Depends(get_db)):
-    """Legacy intraday endpoint redirected to ChartService."""
+@limiter.limit("240/minute")
+def get_stock_data_intraday(request: Request, ticker: str = Query(..., max_length=40), interval: str = Query("5m", max_length=8), after: int = Query(None), db: Session = Depends(get_db)):
+    """Legacy intraday endpoint redirected to ChartService (read-only, cached)."""
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     if _chart_service is None:
         return []
@@ -6509,7 +6542,8 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
             first_stored_date > five_yr_cutoff or
             len(stored_dict) < 150
         )
-        if need_weekly_fill and not _is_yfinance_failed(clean):
+        _resample_weekly_key = f"{clean}:resample1W"
+        if need_weekly_fill and not _is_yfinance_failed(clean) and not _backfill_cooldown_active(_resample_weekly_key):
             try:
                 yf_sym = _yfinance_ticker(clean)
                 acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
@@ -6563,6 +6597,9 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                                 print(f"[GapFill] {clean} 1W: DB store error: {_pe}")
             except Exception as e:
                 print(f"[GapFill] {clean} 1W yfinance fetch error: {e}")
+                _set_backfill_cooldown(_resample_weekly_key, _BACKFILL_FAIL_COOLDOWN_SEC)
+            else:
+                _set_backfill_cooldown(_resample_weekly_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC)
 
     # ── LAYER 2 (1M only): fill 1M history from yfinance or resample stored 1W ────────────
     if target_tf == "1M":
@@ -6575,7 +6612,8 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
             first_stored_m > ten_yr_cutoff or
             len(stored_dict) < 60
         )
-        if need_monthly_fill and not _is_yfinance_failed(clean):
+        _resample_monthly_key = f"{clean}:resample1M"
+        if need_monthly_fill and not _is_yfinance_failed(clean) and not _backfill_cooldown_active(_resample_monthly_key):
             try:
                 yf_sym = _yfinance_ticker(clean)
                 acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
@@ -6624,6 +6662,9 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                                 print(f"[GapFill] {clean} 1M: DB store error: {_pe}")
             except Exception as e:
                 print(f"[GapFill] {clean} 1M yfinance fetch error: {e}")
+                _set_backfill_cooldown(_resample_monthly_key, _BACKFILL_FAIL_COOLDOWN_SEC)
+            else:
+                _set_backfill_cooldown(_resample_monthly_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC)
 
         # Also resample stored 1W → 1M to fill the middle period
         db_1w = db.query(models.Candle).filter(
@@ -6664,7 +6705,13 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
 
 
 @app.get("/api/stock-data/weekly")
-def get_weekly_intraday_candles_5min(ticker: str = Query(...), db: Session = Depends(get_db)):
+@limiter.limit("120/minute")
+def get_weekly_intraday_candles_5min(request: Request, ticker: str = Query(..., max_length=40), db: Session = Depends(get_db)):
+    """Rate-limited public route; payload logic in _weekly_candles_core."""
+    return _weekly_candles_core(ticker, db)
+
+
+def _weekly_candles_core(ticker: str, db) -> list:
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     db_tickers = _normalize_ticker(ticker)
     # 1. Stored 1W candles (the historical base)
@@ -6680,7 +6727,13 @@ def get_weekly_intraday_candles_5min(ticker: str = Query(...), db: Session = Dep
 
 
 @app.get("/api/stock-data/monthly")
-def get_monthly_intraday_candles_5min(ticker: str = Query(...), db: Session = Depends(get_db)):
+@limiter.limit("120/minute")
+def get_monthly_intraday_candles_5min(request: Request, ticker: str = Query(..., max_length=40), db: Session = Depends(get_db)):
+    """Rate-limited public route; payload logic in _monthly_candles_core."""
+    return _monthly_candles_core(ticker, db)
+
+
+def _monthly_candles_core(ticker: str, db) -> list:
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     db_tickers = _normalize_ticker(ticker)
     # 1. Stored 1M candles (the historical base)
@@ -6696,17 +6749,22 @@ def get_monthly_intraday_candles_5min(ticker: str = Query(...), db: Session = De
 
 
 @app.get("/api/stock-data/history-before")
-def get_history_before(ticker: str = Query(...), timeframe: str = Query("1W"), before: int = Query(None), limit: int = Query(1500, ge=1, le=50000), db: Session = Depends(get_db)):
-    """Paginated historical candles for 1W/1M and higher timeframes."""
+@limiter.limit("120/minute")
+def get_history_before(request: Request, ticker: str = Query(..., max_length=40), timeframe: str = Query("1W", max_length=10), before: int = Query(None), limit: int = Query(1500, ge=1, le=50000), db: Session = Depends(get_db)):
+    """Paginated historical candles for 1W/1M and higher timeframes.
+
+    SEC-02: calls the *_core helpers (not the rate-limited routes) so one HTTP
+    request is counted once, and the provider side stays bounded by the
+    per-ticker cooldown inside those helpers."""
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     tf_upper = timeframe.upper()
     if tf_upper in ("1W", "WEEKLY", "W"):
-        candles = get_weekly_intraday_candles_5min(clean, db)
+        candles = _weekly_candles_core(clean, db)
     elif tf_upper in ("1M", "MONTHLY", "M"):
-        candles = get_monthly_intraday_candles_5min(clean, db)
+        candles = _monthly_candles_core(clean, db)
     elif tf_upper in ("1D", "DAILY", "D"):
         # 1D daily
-        daily_res = get_stock_data_range(clean, range="ALL", db=db)
+        daily_res = _stock_data_range_core(clean, "ALL", db)
         candles = []
         for r in daily_res:
             t_str = r.get("time")
@@ -6735,10 +6793,11 @@ def get_history_before(ticker: str = Query(...), timeframe: str = Query("1W"), b
 # ==================== NEW CHART SERVICE ENDPOINT ====================
 
 @app.get("/api/stock-data/chart")
-def get_chart_service(ticker: str = Query(...), timeframe: str = Query("5m"),
+@limiter.limit("240/minute")
+def get_chart_service(request: Request, ticker: str = Query(..., max_length=40), timeframe: str = Query("5m", max_length=10),
                       start: int = Query(None), end: int = Query(None),
                       limit: int = Query(5000, ge=1, le=50000)):
-    """Seamless chart endpoint using ChartService.
+    """Seamless chart endpoint using ChartService (read-only, cached).
     Merges live + cached + stored + resampled data into one continuous response."""
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     if _chart_service is None:
