@@ -212,11 +212,46 @@
     } catch (e) {}
   }
 
+  /* T -> a colour pad that changes the TEXT colour (not the line colour), and
+     applies it straight away. The Text tab (font size, bold/italic, alignment)
+     stays reachable through ••• -> Settings…. */
+  function openTextColor(anchor) {
+    if (palette) { palette.remove(); palette = null; }
+    var d = currentDrawing();
+    var start = (d && d.style && (d.style.textColor || d.style.color)) || '#d1d4dc';
+    palette = window.DrawingProps.createPalette({
+      color: start,
+      opacity: 1,
+      onPick: function (c) {
+        try {
+          var eng = window.toolManager && window.toolManager.engine;
+          var dd = currentDrawing();
+          if (eng && dd && typeof eng.updateDrawing === 'function') {
+            /* text colour, kept separate from style.color (the line colour) */
+            eng.updateDrawing(dd.id, { style: { textColor: c } });
+          }
+        } catch (e) {}
+        if (card) card.setTextColor(c);
+      },
+      onOpacity: function () {},
+      onClose: function () { if (palette) { palette.remove(); palette = null; } }
+    });
+    ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
+      palette.addEventListener(ev, function (e) { e.stopPropagation(); });
+    });
+    document.body.appendChild(tagGuarded(palette));
+    try {
+      var r = anchor.getBoundingClientRect();
+      palette.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 312)) + 'px';
+      palette.style.top = Math.min(r.bottom + 6, window.innerHeight - 380) + 'px';
+    } catch (e) {}
+  }
+
   function buildBar() {
     if (bar) return bar;
     bar = window.DrawingProps.createBar({
       onEdit:  function () { showCard('style'); },
-      onText:  function () { showCard('text'); },
+      onText:  function (anchor) { openTextColor(anchor || bar); },
       onWidthMenu: function (anchor) { openWidthMenu(anchor); },
       onStyleMenu: function (anchor) { openStyleMenu(anchor); },
       onColor: function (anchor) { togglePalette(anchor); },
@@ -396,11 +431,11 @@
     bar.style.left = Math.round(r.left - h.left) + 'px';
     bar.style.top  = Math.round(r.top  - h.top)  + 'px';
   }
-  function suppressLegend(on) {
-    var lg = legend();
-    if (!lg) return;
-    if (on) lg.classList.add('dp-hide-ohlc');
-    else lg.classList.remove('dp-hide-ohlc');
+  function suppressLegend() {
+    /* DELIBERATELY EMPTY. An earlier version hid the OHLC legend while a drawing
+       was selected. The OHLC (and the ticker / LTP readout) must STAY visible and
+       simply be overlapped by the bar — it should never disappear. */
+    return;
   }
 
   /* ---------------------------------------------------------------------

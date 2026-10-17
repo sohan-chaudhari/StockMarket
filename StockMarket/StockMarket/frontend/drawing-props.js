@@ -513,6 +513,10 @@
 
     card.selectTab = select;
     card.setTitle = function (t) { title.textContent = t; };
+    card.setTextColor = function (c) {
+      var sw = pText.querySelector('#dp-text-swatch');
+      if (sw) sw.style.background = c;
+    };
     card.setLineColor = function (c) { pStyle.querySelector('#dp-style-swatch').style.background = c; };
     card.setValues = function (v) {
       v = v || {};
