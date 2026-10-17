@@ -1,0 +1,524 @@
+/* ============================================================================
+   drawing-props.css — shared styling for the drawing context bar, the colour
+   palette and the drawing settings card.
+
+   ONE component, ONE set of tokens, ONE breakpoint. Desktop docks the card as a
+   panel beside the bar; mobile turns the SAME card into a bottom sheet. The
+   colours, radii, type scale and spacing are identical in both, so the two
+   views cannot drift apart.
+
+   Breakpoint: 768px (matches the rest of the app's mobile rule).
+   ========================================================================= */
+
+:root {
+  --dp-bg:            #1e222d;   /* card / bar surface            */
+  --dp-bg-elevated:   #252a37;   /* inputs, hovered rows          */
+  --dp-border:        #2f3543;
+  --dp-border-strong: #3d4453;
+  --dp-text:          #d1d4dc;
+  --dp-text-dim:      #868993;
+  --dp-text-bright:   #ffffff;
+  --dp-accent:        #2962ff;
+  --dp-radius:        8px;
+  --dp-radius-sm:     4px;
+  --dp-gap:           8px;
+  --dp-row-h:         36px;
+  --dp-shadow:        0 8px 24px rgba(0, 0, 0, 0.45);
+  --dp-font:          'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --dp-mono:          'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---------------------------------------------------------------------------
+   1. Compact context bar  —  drag · edit · text · width · colour · delete · more
+   Shown only while a drawing is selected.
+
+   PLACEMENT RULE (deliberate): the bar sits exactly where the OHLC legend sits
+   (top:12px left:16px on stock.html) and covers it, so the OHLC is replaced by
+   the bar while a drawing is selected and returns untouched on deselect. One
+   fixed spot for mobile AND desktop — anchoring it to the drawing made the two
+   views behave differently, which is what we are avoiding.
+   The wiring step should align it to the legend's real rect (getBoundingClientRect)
+   so it stays exact if the legend ever moves per breakpoint.
+   ------------------------------------------------------------------------ */
+.dp-bar {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px;
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  box-shadow: var(--dp-shadow);
+  font-family: var(--dp-font);
+  font-size: 12px;
+  color: var(--dp-text);
+  user-select: none;
+  -webkit-user-select: none;
+  white-space: nowrap;
+}
+
+/* Utility: hide the OHLC legend while a drawing is selected. visibility (not
+   display) so nothing reflows when it comes back. */
+.dp-hide-ohlc {
+  visibility: hidden !important;
+}
+
+.dp-bar__handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+  color: var(--dp-text-dim);
+  cursor: grab;
+  border-radius: var(--dp-radius-sm);
+}
+.dp-bar__handle:active { cursor: grabbing; }
+.dp-bar__handle:hover { background: var(--dp-bg-elevated); color: var(--dp-text); }
+
+.dp-bar__sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--dp-border);
+  flex: 0 0 auto;
+}
+
+.dp-bar__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  background: transparent;
+  border: none;
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text);
+  font: inherit;
+  cursor: pointer;
+}
+.dp-bar__btn:hover { background: var(--dp-bg-elevated); }
+.dp-bar__btn.is-active { background: var(--dp-bg-elevated); color: var(--dp-text-bright); }
+
+/* the "2px" readout — fixed width so the bar never jitters when cycling */
+.dp-bar__width {
+  min-width: 38px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* the "Text" label beside the pencil */
+.dp-bar__text {
+  font-weight: 600;
+  padding: 0 9px;
+}
+
+/* the line-style swatch that opens the palette */
+.dp-bar__swatch {
+  width: 30px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--dp-border-strong);
+  flex: 0 0 auto;
+}
+
+.dp-bar__danger:hover { color: #ff6b7a; background: rgba(242, 54, 69, 0.12); }
+
+/* ---------------------------------------------------------------------------
+   2. Colour palette popover  —  greyscale row, saturated rows, ＋, opacity
+   ------------------------------------------------------------------------ */
+.dp-palette {
+  position: absolute;
+  z-index: 100;                 /* above .dp-card (90) — otherwise it opens behind it */
+  width: 300px;
+  padding: 12px;
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  box-shadow: var(--dp-shadow);
+  font-family: var(--dp-font);
+}
+
+.dp-palette__grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 5px;
+}
+
+.dp-swatch {
+  aspect-ratio: 1 / 1;
+  border: none;
+  border-radius: var(--dp-radius-sm);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+}
+.dp-swatch:hover { transform: scale(1.08); }
+.dp-swatch.is-selected {
+  box-shadow: 0 0 0 2px var(--dp-bg), 0 0 0 4px #ffffff;
+}
+
+.dp-palette__custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--dp-border);
+}
+.dp-palette__plus {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dp-palette__plus:hover { background: var(--dp-bg-elevated); }
+
+.dp-palette__opacity-label {
+  margin-top: 14px;
+  font-size: 12px;
+  color: var(--dp-text-dim);
+}
+.dp-palette__opacity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.dp-palette__opacity input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: #8ab4f8;
+}
+.dp-palette__pct {
+  flex: 0 0 auto;
+  min-width: 52px;
+  height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  background: var(--dp-bg-elevated);
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius-sm);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--dp-text);
+}
+
+/* ---------------------------------------------------------------------------
+   3. Settings card  —  header, tabs, body, footer
+   ------------------------------------------------------------------------ */
+.dp-card {
+  position: absolute;
+  z-index: 90;
+  width: 500px;
+  max-width: calc(100vw - 24px);
+  display: flex;
+  flex-direction: column;
+  background: var(--dp-bg);
+  border: 1px solid var(--dp-border);
+  border-radius: var(--dp-radius);
+  box-shadow: var(--dp-shadow);
+  font-family: var(--dp-font);
+  color: var(--dp-text);
+  overflow: hidden;
+}
+
+/* header --------------------------------------------------------------- */
+.dp-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 14px;
+  flex: 0 0 auto;
+}
+.dp-card__title {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--dp-text-bright);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dp-card__iconbtn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.dp-card__iconbtn:hover { background: var(--dp-bg-elevated); }
+.dp-card__iconbtn svg { width: 18px; height: 18px; }
+
+/* tabs ----------------------------------------------------------------- */
+.dp-tabs {
+  display: flex;
+  gap: 22px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--dp-border);
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.dp-tabs::-webkit-scrollbar { display: none; }
+.dp-tab {
+  position: relative;
+  padding: 10px 0 12px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dp-text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.dp-tab:hover { color: var(--dp-text); }
+.dp-tab.is-active { color: var(--dp-text-bright); }
+.dp-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--dp-text-bright);
+  border-radius: 2px 2px 0 0;
+}
+
+/* body ----------------------------------------------------------------- */
+.dp-card__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 16px 14px;
+}
+.dp-pane { display: none; }
+.dp-pane.is-active { display: block; }
+
+.dp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--dp-row-h);
+  margin-bottom: 12px;
+}
+.dp-row:last-child { margin-bottom: 0; }
+.dp-row__label {
+  flex: 0 0 auto;
+  min-width: 108px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dp-text);
+}
+.dp-row__control { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; }
+
+.dp-group-label {
+  margin: 18px 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dp-text-dim);
+}
+
+/* inputs --------------------------------------------------------------- */
+.dp-input,
+.dp-select {
+  height: 34px;
+  min-width: 0;
+  padding: 0 10px;
+  background: var(--dp-bg-elevated);
+  border: 1px solid var(--dp-border-strong);
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text);
+  font: inherit;
+  font-size: 13px;
+}
+.dp-input:focus,
+.dp-select:focus {
+  outline: none;
+  border-color: var(--dp-accent);
+  box-shadow: 0 0 0 1px var(--dp-accent);
+}
+.dp-input--price,
+.dp-input--num {
+  font-family: var(--dp-mono);
+  font-variant-numeric: tabular-nums;
+}
+.dp-select {
+  width: 100%;
+  appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--dp-text-dim) 50%),
+                    linear-gradient(135deg, var(--dp-text-dim) 50%, transparent 50%);
+  background-position: right 14px center, right 9px center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
+.dp-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--dp-text);
+  cursor: pointer;
+}
+.dp-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--dp-accent);
+  cursor: pointer;
+}
+
+.dp-slider { flex: 1 1 auto; min-width: 0; accent-color: var(--dp-text-dim); }
+
+.dp-seg {
+  display: inline-flex;
+  gap: 6px;
+}
+.dp-seg__btn {
+  width: 36px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dp-bg-elevated);
+  border: 1px solid var(--dp-border-strong);
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.dp-seg__btn:hover { border-color: var(--dp-text-dim); }
+.dp-seg__btn.is-active {
+  border-color: var(--dp-text-bright);
+  background: #2f3543;
+  color: var(--dp-text-bright);
+}
+
+.dp-textarea {
+  width: 100%;
+  min-height: 118px;
+  padding: 10px;
+  resize: vertical;
+  background: var(--dp-bg-elevated);
+  border: 1px solid var(--dp-border-strong);
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.dp-textarea::placeholder { color: var(--dp-text-dim); }
+.dp-textarea:focus {
+  outline: none;
+  border-color: var(--dp-accent);
+  box-shadow: 0 0 0 1px var(--dp-accent);
+}
+
+/* footer --------------------------------------------------------------- */
+.dp-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--dp-border);
+  flex: 0 0 auto;
+}
+.dp-card__foot .dp-spacer { flex: 1 1 auto; }
+
+.dp-btn {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: var(--dp-radius-sm);
+  border: 1px solid var(--dp-border-strong);
+  background: transparent;
+  color: var(--dp-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dp-btn:hover { background: var(--dp-bg-elevated); }
+.dp-btn--primary {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #131722;
+}
+.dp-btn--primary:hover { background: #e8e8e8; border-color: #e8e8e8; }
+.dp-btn--ghost { border-color: transparent; padding: 0 12px; }
+
+/* ---------------------------------------------------------------------------
+   4. MOBILE — same card, docked as a bottom sheet. Same tokens, same type,
+   same spacing; only the docking and the safe-area change.
+   ------------------------------------------------------------------------ */
+@media (max-width: 768px) {
+  .dp-card {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    max-height: 78vh;
+    border-radius: 14px 14px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .dp-card__head { height: 56px; padding: 0 16px; }
+  .dp-card__title { font-size: 18px; }
+  .dp-tabs { gap: 20px; padding: 0 16px; }
+  .dp-tab { padding: 12px 0 14px; }
+  .dp-card__body { padding: 16px; }
+  .dp-card__foot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .dp-row__label { min-width: 96px; font-size: 13px; }
+  .dp-btn { height: 44px; }                 /* comfortable touch target */
+
+  .dp-palette {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+  }
+  .dp-palette__grid { gap: 6px; }
+  .dp-swatch { border-radius: 6px; }
+}
+
+/* very small phones — keep the bar from overflowing */
+@media (max-width: 400px) {
+  .dp-bar { height: 38px; padding: 0 4px; font-size: 11px; }
+  .dp-bar__btn { min-width: 26px; padding: 0 5px; }
+  .dp-bar__width { min-width: 34px; }
+  .dp-row__label { min-width: 84px; }
+}
