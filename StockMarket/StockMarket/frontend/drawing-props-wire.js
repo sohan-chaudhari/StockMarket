@@ -35,7 +35,27 @@
     var lg = legend();
     if (!lg || !lg.parentElement) return null;
     host = lg.parentElement;
+    /* The bar/card are absolutely positioned. If the host is `static`, absolute
+       positioning would resolve against some ancestor further up and the bar
+       would land off-screen — which is why it appeared on mobile but not on
+       desktop. Make the host a containing block, in JS, so no stylesheet or
+       existing markup is touched. */
+    try {
+      if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    } catch (e) {}
     return host;
+  }
+
+  /* The app's own click-outside guards (drawings.js) already ignore
+     `.style-panel` and `.floating-panel`. Tagging our elements with those
+     classes makes the app skip them too, so clicking blank space inside the card
+     can no longer deselect the drawing — without editing drawings.js. */
+  function tagGuarded(node) {
+    try {
+      node.classList.add('style-panel');
+      node.classList.add('floating-panel');
+    } catch (e) {}
+    return node;
   }
 
   /* ---------------------------------------------------------------------
@@ -104,7 +124,7 @@
     ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
       bar.addEventListener(ev, function (e) { e.stopPropagation(); });
     });
-    host.appendChild(bar);
+    host.appendChild(tagGuarded(bar));
     return bar;
   }
 
@@ -119,7 +139,7 @@
       ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
         palette.addEventListener(ev, function (e) { e.stopPropagation(); });
       });
-      host.appendChild(palette);
+      host.appendChild(tagGuarded(palette));
       palette.style.display = 'none';
     }
     if (palette.style.display === 'none') {
@@ -142,27 +162,67 @@
     palette.style.top = (r.bottom - h.top + 8) + 'px';
   }
 
+  /* Apply what the card can actually apply. Line style maps onto the EXISTING
+     panel's #sp-style-group buttons (same indirect approach as colour/width), so
+     the app's proven handler does the work. Text / coordinates / visibility have
+     no engine API for a trendline yet, so they are accepted but not applied. */
+  var LINE_STYLE_ORDER = ['solid', 'dashed', 'dotted'];
+  function applyCardValues(v) {
+    try {
+      if (!v || !v.lineStyle) return;
+      var group = document.getElementById('sp-style-group');
+      if (!group) return;
+      var btns = group.querySelectorAll('button');
+      if (!btns.length) return;
+      /* prefer an explicit data attribute, else fall back to the standard order */
+      var wanted = String(v.lineStyle).toLowerCase();
+      var idx = LINE_STYLE_ORDER.indexOf(wanted);
+      var target = null;
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        var key = (b.dataset && (b.dataset.style || b.dataset.line || b.dataset.s)) || '';
+        if (key && String(key).toLowerCase() === wanted) { target = b; break; }
+      }
+      if (!target && idx >= 0 && btns[idx]) target = btns[idx];
+      if (target) target.click();
+    } catch (e) {}
+  }
+
   function showCard(tab) {
     if (!card) {
       card = window.DrawingProps.createCard({
         title: 'Drawing',
-        onOk: function () { hideCard(); },
+        onOk: function (v) { applyCardValues(v); hideCard(); },
         onCancel: function () { hideCard(); }
       });
       ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
         card.addEventListener(ev, function (e) { e.stopPropagation(); });
       });
-      host.appendChild(card);
+      host.appendChild(tagGuarded(card));
       card.style.display = 'none';
     }
     card.style.display = 'flex';
     card.selectTab(tab || 'style');
-    /* keep it inside the chart, away from the OHLC strip the bar occupies */
-    var h = host.getBoundingClientRect();
-    card.style.left = 'auto';
-    card.style.right = '12px';
-    card.style.top = Math.max(12, (bar ? bar.offsetTop + bar.offsetHeight + 8 : 64)) + 'px';
-    if (card.offsetHeight > h.height - 80) card.style.top = '12px';
+
+    /* Positioning: on desktop dock it beside the bar. On mobile the stylesheet
+       turns the SAME card into a bottom sheet, so inline left/right/top must be
+       CLEARED — leaving them set was overriding the mobile rules and pushing the
+       card off the left edge. */
+    var isMobile = window.innerWidth <= 768;
+    if (isMobile) {
+      card.style.left = '';
+      card.style.right = '';
+      card.style.top = '';
+      card.style.width = '';
+    } else {
+      var h = host.getBoundingClientRect();
+      card.style.left = 'auto';
+      card.style.right = '12px';
+      card.style.width = '';
+      var wantedTop = (bar ? bar.offsetTop + bar.offsetHeight + 8 : 64);
+      card.style.top = Math.max(12, wantedTop) + 'px';
+      if (card.offsetHeight > h.height - 80) card.style.top = '12px';
+    }
   }
   function hideCard() { if (card) card.style.display = 'none'; }
 
