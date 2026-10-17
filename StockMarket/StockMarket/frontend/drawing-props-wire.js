@@ -417,7 +417,10 @@
      70-degree text instead of always-horizontal text).
      commit === false is the cheap in-drag path: it only repaints, so the label
      travels smoothly with the line instead of jumping when the drag ends. */
-  function repositionAttachedText(commit) {
+  var _inReposition = false;
+  function repositionAttachedText(commit, noRedraw) {
+    if (_inReposition) return;      /* never recurse: this is called from the render hook */
+    _inReposition = true;
     try {
       var tm = window.toolManager, eng = tm && tm.engine;
       var sel = tm && tm.selectedDrawing;
@@ -459,8 +462,10 @@
         if (typeof eng.syncModel === 'function') eng.syncModel(td);
         if (typeof eng.markDirty === 'function') eng.markDirty();
       }
-      if (tm && typeof tm.redraw === 'function') tm.redraw();
-    } catch (e) {}
+      if (!noRedraw && tm && typeof tm.redraw === 'function') tm.redraw();
+    } catch (e) {} finally {
+      _inReposition = false;
+    }
   }
 
   /* Safety net: a drag must never be able to LOSE a drawing. If any renderer's
@@ -840,22 +845,21 @@
       }
     } catch (e) {}
 
-    /* Smooth follow: the label must travel WITH the line, not jump when the drag
-       ends. Deferring through rAF makes this independent of listener order — it
-       always runs after the app's own drag handler has moved the line. */
-    var followPending = false;
-    function scheduleFollow() {
-      if (followPending) return;
-      followPending = true;
-      var run = function () {
-        followPending = false;
-        try { repositionAttachedText(false); } catch (e) {}
-      };
-      if (window.requestAnimationFrame) window.requestAnimationFrame(run);
-      else setTimeout(run, 16);
-    }
-    document.addEventListener('pointermove', scheduleFollow, true);
-    document.addEventListener('touchmove', scheduleFollow, true);
+    /* SMOOTH FOLLOW. The label must travel WITH the line, not jump when the drag
+       ends. Hooking the engine's own render pass guarantees the label is moved in
+       the SAME frame the line is drawn — no extra redraw, no listener-order
+       dependence, and it works for every drag path (body drag, handle drag,
+       auto-scroll, touch). It runs before the draw, so the label is painted at
+       its new position immediately. */
+    try {
+      if (typeof engine.render === 'function') {
+        var origRender = engine.render;
+        engine.render = function () {
+          try { repositionAttachedText(false, true); } catch (e) {}
+          return origRender.apply(engine, arguments);
+        };
+      }
+    } catch (e) {}
 
     /* After any interaction: settle the label, and make sure no drawing was left
        with unusable coordinates. */
