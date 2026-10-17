@@ -99,8 +99,11 @@ class TestSessionCookie(unittest.TestCase):
         self.assertIn("HttpOnly", raw)
         self.assertIn("samesite=lax", raw.lower())
         self.assertIn("max-age=", raw.lower())
-        # The JSON contract is preserved for the current tab.
-        self.assertIn("access_token", resp.json())
+        # SEC-01: the body no longer carries the JWT for browsers; the profile
+        # is still returned and the HttpOnly cookie is the credential.
+        body = resp.json()
+        self.assertIsNone(body.get("access_token"))
+        self.assertEqual(body["user"]["email"], EMAIL)
 
     def test_cookie_authenticates_without_bearer_header(self):
         client = _client()

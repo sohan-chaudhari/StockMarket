@@ -425,17 +425,32 @@ class TestLoginEndpoint(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
-    def test_login_success_returns_token_and_user(self):
+    def test_login_success_returns_user_and_no_jwt_in_body(self):
+        # SEC-01: the browser must not receive a JS-readable JWT. The HttpOnly
+        # session cookie (set on this response) is the credential; the JSON body
+        # carries the profile only.
         resp = self.client.post("/api/auth/login", json={
             "email": "login@example.com", "password": STRONG_PASSWORD,
         })
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
         self.assertEqual(body["token_type"], "bearer")
-        self.assertTrue(len(body["access_token"]) > 20)
+        self.assertIsNone(body.get("access_token"))
         self.assertEqual(body["user"]["email"], "login@example.com")
+        # No JWT-looking value anywhere in the body (the Set-Cookie header is separate).
+        self.assertNotIn("eyJ", resp.text)
 
-        payload = auth.decode_token(body["access_token"])
+    def test_login_opt_in_returns_bearer_token(self):
+        # SEC-01: non-browser API clients get a token only when they opt in.
+        resp = self.client.post(
+            "/api/auth/login",
+            json={"email": "login@example.com", "password": STRONG_PASSWORD},
+            headers={"X-Auth-Mode": "bearer"},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        token = resp.json()["access_token"]
+        self.assertTrue(len(token) > 20)
+        payload = auth.decode_token(token)
         self.assertEqual(payload["email"], "login@example.com")
 
     def test_login_wrong_password_rejected(self):
@@ -528,9 +543,12 @@ class TestGetCurrentUserDependency(unittest.TestCase):
         self.db.close()
 
     def _login_token(self):
-        resp = self.client.post("/api/auth/login", json={
-            "email": "me@example.com", "password": STRONG_PASSWORD,
-        })
+        # SEC-01: a bearer token is only returned to clients that opt in.
+        resp = self.client.post(
+            "/api/auth/login",
+            json={"email": "me@example.com", "password": STRONG_PASSWORD},
+            headers={"X-Auth-Mode": "bearer"},
+        )
         return resp.json()["access_token"]
 
     def test_valid_token_returns_profile(self):

@@ -91,7 +91,7 @@
             <button class="strip-btn left" id="stripLeftBtn">&#8249;</button>
             <div class="strip-scroll-container" id="indexTickerContainer">
                 <!-- Pre-rendered cards: IDs used by inline seed script above and
-                     updateTickerStrip() in dashboard.js?v=1078 so values appear instantly. -->
+                     updateTickerStrip() in dashboard.js?v=1079 so values appear instantly. -->
                 <div class="ticker-card" onclick="window.location.href='overview.html?ticker=NIFTY'">
                     <h4>NIFTY 50</h4>
                     <div class="price" id="strip-price-NIFTY" data-sid="sp-NIFTY">--</div>
@@ -366,7 +366,7 @@
     <div id="logoutModal" class="modal"><div class="modal-content"><h2 style="color: #2ed573;">Logout?</h2><button class="btn-primary" onclick="confirmLogout()">Yes, Logout</button><button class="btn-secondary" onclick="hideLogoutConfirmation()">Cancel</button></div></div>
 
     <!-- JavaScript (defer for non-blocking load &ndash; page renders immediately) -->
-    <script src="page-cache.js?v=5"></script>
+    <script src="page-cache.js?v=6"></script>
     <script defer src="nav.js?v=14"></script>
     <script defer src="stocks.js?v=30"></script>
     <script defer src="loader.js?v=4"></script>
@@ -374,7 +374,7 @@
     <script defer src="ws.js?v=4"></script>
     <script defer src="cache.js?v=4"></script>
     <script defer src="axis-format.js?v=9"></script>
-    <script defer src="dashboard.js?v=1078"></script>
+    <script defer src="dashboard.js?v=1079"></script>
     <script>
         (function checkAuth() {
             const token = sessionStorage.getItem('token');

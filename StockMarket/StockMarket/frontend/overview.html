@@ -5,7 +5,7 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Overview - LEVERAGE</title>
-  <script src="page-cache.js?v=5"></script>
+  <script src="page-cache.js?v=6"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -676,7 +676,7 @@
       function _token() {
           try {
               var t = sessionStorage.getItem('token') || localStorage.getItem('token') || '';
-              return (t && t !== 'null' && t !== 'undefined' && t !== 'cookie-session') ? t.trim() : '';
+              return (t && t !== 'null' && t !== 'undefined') ? t.trim() : '';
           } catch(e) { return ''; }
       }
       async function _fetchCsrf() {
@@ -712,7 +712,7 @@
               return;
           }
           var localList = JSON.parse(localStorage.getItem('_wl_cache') || '[]');
-          var headers = { 'Authorization': 'Bearer ' + token };
+          var headers = (token && token !== 'cookie-session') ? { 'Authorization': 'Bearer ' + token } : {};
           
           try {
               var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
@@ -761,7 +761,7 @@
           if (inWatchlist) {
               // Remove
               var headers = {};
-              if (token) headers['Authorization'] = 'Bearer ' + token;
+              if (token && token !== 'cookie-session') headers['Authorization'] = 'Bearer ' + token;
               var csrf = await _fetchCsrf();
               if (csrf) headers['X-CSRF-Token'] = csrf;
 
@@ -789,7 +789,7 @@
           } else {
               // Add
               var headers = {};
-              if (token) headers['Authorization'] = 'Bearer ' + token;
+              if (token && token !== 'cookie-session') headers['Authorization'] = 'Bearer ' + token;
               var csrf = await _fetchCsrf();
               if (csrf) headers['X-CSRF-Token'] = csrf;
 

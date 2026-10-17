@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="auth.css?v=1">
     <link rel="stylesheet" href="index.css?v=84">
     <link rel="stylesheet" href="loader.css?v=4">
-    <script src="page-cache.js?v=5"></script>
+    <script src="page-cache.js?v=6"></script>
     <script src="ws.js"></script>
 </head>
 
@@ -653,7 +653,13 @@
                     hiddenForm.submit();
                     setTimeout(() => hiddenForm.remove(), 100);
 
-                    sessionStorage.setItem('token', data.access_token);
+                    // SEC-01: no JWT is exposed to the browser any more. The
+                    // HttpOnly session cookie set by /api/auth/login is the
+                    // credential. 'cookie-session' is only a NON-SECRET
+                    // "signed in" marker that the existing UI gates read; the
+                    // backend discards a "Bearer cookie-session" header and
+                    // falls back to the cookie.
+                    sessionStorage.setItem('token', 'cookie-session');
                     var _lvUser = JSON.stringify({
                         email,
                         full_name: data.user.full_name,
@@ -661,7 +667,7 @@
                     });
                     sessionStorage.setItem('user', _lvUser);
                     try {
-                        localStorage.setItem('token', data.access_token);
+                        localStorage.setItem('token', 'cookie-session');
                         localStorage.setItem('user', _lvUser);
                     } catch (e) {}
                     document.getElementById('loadingAccountOverlay').style.display = 'flex';

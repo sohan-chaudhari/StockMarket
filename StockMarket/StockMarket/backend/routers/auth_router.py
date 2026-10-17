@@ -12,6 +12,22 @@ from rate_limiter import limiter
 
 router = APIRouter()
 
+# SEC-01: only an explicit opt-in may receive the JWT in a JSON response body.
+# Browsers never send this header, so their login response carries no
+# JS-readable credential -- the HttpOnly session cookie is used instead.
+# Non-browser API clients that need bearer auth send `X-Auth-Mode: bearer`.
+_BODY_TOKEN_HEADER = "X-Auth-Mode"
+_BODY_TOKEN_VALUE = "bearer"
+
+
+def _client_wants_body_token(request: Request) -> bool:
+    """True only when a client explicitly asks for a bearer token in the body."""
+    try:
+        return request.headers.get(_BODY_TOKEN_HEADER, "").strip().lower() == _BODY_TOKEN_VALUE
+    except Exception:
+        return False
+
+
 # Simple in-memory OTP rate limiter
 _otp_attempts = {}
 _otp_lock = threading.Lock()
@@ -99,13 +115,14 @@ def login(creds: schemas.UserLogin, request: Request, response: Response, db: Se
     
     token = auth.create_access_token(data={"sub": str(user.user_id), "user_id": user.user_id, "email": user.email})
 
-    # BUG-2: persist the session in an HttpOnly cookie so closing/reopening the
-    # browser keeps the user signed in for the token lifetime. The JSON token is
-    # still returned for the current tab (backwards-compatible API contract).
+    # SEC-01: the HttpOnly session cookie set below is the browser credential.
+    # The JWT is no longer returned to browsers, so nothing sensitive is stored
+    # in JS-readable storage. Non-browser API clients that legitimately need a
+    # bearer token opt in with the `X-Auth-Mode: bearer` request header.
     auth.set_auth_cookie(response, token, request)
 
     return schemas.TokenResponse(
-        access_token=token,
+        access_token=token if _client_wants_body_token(request) else None,
         token_type="bearer",
         user=schemas.UserResponse.from_orm(user)
     )

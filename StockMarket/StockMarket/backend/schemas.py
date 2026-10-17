@@ -83,7 +83,11 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 class TokenResponse(BaseModel):
-    access_token: str
+    # SEC-01: the JWT is no longer returned to browsers. It stays an optional
+    # field so non-browser API clients that explicitly opt in
+    # (header `X-Auth-Mode: bearer`) still receive a bearer token; for browser
+    # logins this is null and the HttpOnly session cookie is the credential.
+    access_token: Optional[str] = None
     token_type: str = "bearer"
     user: UserResponse
 

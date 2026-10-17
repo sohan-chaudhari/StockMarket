@@ -1614,8 +1614,10 @@
       ws.onopen = () => {
         console.log('[User WS] Connected');
         window._wsReconnectAttempts = 0;
-        // Send auth token as first message (not in URL)
-        ws.send(JSON.stringify({ token: token }));
+        // SEC-01: the browser no longer holds a JWT. The HttpOnly session
+        // cookie is sent on this same-origin WebSocket handshake, so send an
+        // empty auth message and let the server authenticate from the cookie.
+        ws.send(JSON.stringify({}));
       };
 
       ws.onmessage = (event) => {

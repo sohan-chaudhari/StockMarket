@@ -116,7 +116,7 @@
             .modal .content{max-width:100%;width:92%;padding:1.25rem;}
         }
     </style>
-    <script src="page-cache.js?v=5"></script>
+    <script src="page-cache.js?v=6"></script>
     <script src="ws.js"></script>
 </head>
 <body style="background-color: #0A0A0B;">
@@ -212,7 +212,7 @@
             function _wlToken() {
                 try {
                     var t = sessionStorage.getItem('token') || localStorage.getItem('token') || '';
-                    return (t && t !== 'null' && t !== 'undefined' && t !== 'cookie-session') ? t.trim() : '';
+                    return (t && t !== 'null' && t !== 'undefined') ? t.trim() : '';
                 } catch(e) { return ''; }
             }
 
@@ -235,7 +235,7 @@
                     } catch(e) {}
                     return;
                 }
-                var headers = { 'Authorization': 'Bearer ' + token };
+                var headers = (token && token !== 'cookie-session') ? { 'Authorization': 'Bearer ' + token } : {};
 
                 try {
                     var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
@@ -554,7 +554,7 @@
                 // Save to backend API (requires CSRF token)
                 var token = _wlToken();
                 var headers = {};
-                if (token) headers['Authorization'] = 'Bearer ' + token;
+                if (token && token !== 'cookie-session') headers['Authorization'] = 'Bearer ' + token;
                 var csrf = await _fetchCsrf();
                 if (csrf) headers['X-CSRF-Token'] = csrf;
 
@@ -606,7 +606,7 @@
             window.removeTicker = async function(ticker){
                 var token = _wlToken();
                 var headers = {};
-                if (token) headers['Authorization'] = 'Bearer ' + token;
+                if (token && token !== 'cookie-session') headers['Authorization'] = 'Bearer ' + token;
                 var csrf = await _fetchCsrf();
                 if (csrf) headers['X-CSRF-Token'] = csrf;
 

@@ -4071,7 +4071,7 @@ async function fetchWatchlist() {
   var _hasAuthToken = false;
   var _wlToken = '';
   try { _wlToken = sessionStorage.getItem('token') || localStorage.getItem('token') || ''; } catch(e) {}
-  if (_wlToken && _wlToken !== 'null' && _wlToken !== 'undefined' && _wlToken !== 'cookie-session' && _wlToken.trim() !== '') {
+  if (_wlToken && _wlToken !== 'null' && _wlToken !== 'undefined' && _wlToken.trim() !== '') {
     _hasAuthToken = true;
   }
 
@@ -4086,7 +4086,7 @@ async function fetchWatchlist() {
   } else {
     var _fetchedFromApi = false;
     try {
-      var headers = { 'Authorization': 'Bearer ' + _wlToken.trim() };
+      var headers = (_wlToken && _wlToken !== 'cookie-session' && _wlToken.trim() !== '') ? { 'Authorization': 'Bearer ' + _wlToken.trim() } : {};
       var res = await fetch('/api/watchlist', { headers: headers, credentials: 'same-origin' });
       if (res.ok) {
         var data = await res.json();

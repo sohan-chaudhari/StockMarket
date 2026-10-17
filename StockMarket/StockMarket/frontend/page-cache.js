@@ -54,8 +54,14 @@
      * ------------------------------------------------------------------ */
     (function _lvRehydrateSession() {
         try {
+            // SEC-01: rehydrate the non-secret "signed in" marker into
+            // sessionStorage so the existing UI gates keep working after a
+            // fresh browser/tab. The marker is NOT a JWT -- the real credential
+            // is the HttpOnly cookie -- so it is copied like any marker. The
+            // Authorization header is still skipped below when the value is the
+            // 'cookie-session' sentinel.
             var locTok = localStorage.getItem('token');
-            if (locTok && locTok !== 'cookie-session' && !sessionStorage.getItem('token')) {
+            if (locTok && !sessionStorage.getItem('token')) {
                 sessionStorage.setItem('token', locTok);
             }
             var storedUser = localStorage.getItem('user');
