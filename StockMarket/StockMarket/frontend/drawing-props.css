@@ -129,6 +129,17 @@
   flex: 0 0 auto;
 }
 
+/* the line-style swatch that opens the Line / Dashed / Dotted menu */
+.dp-bar__style {
+  min-width: 34px;
+}
+.dp-bar__style-line {
+  display: block;
+  width: 24px;
+  height: 0;
+  border-top: 2px solid var(--dp-text);
+}
+
 .dp-bar__danger:hover { color: #ff6b7a; background: rgba(242, 54, 69, 0.12); }
 
 /* ---------------------------------------------------------------------------

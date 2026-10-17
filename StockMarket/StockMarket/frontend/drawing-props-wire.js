@@ -104,6 +104,54 @@
   /* ---------------------------------------------------------------------
      Bar / palette / card
      ------------------------------------------------------------------ */
+  /* width dropdown: 1px / 2px / 3px / 4px, like the reference */
+  function openWidthMenu(anchor) {
+    if (menu) { menu.remove(); menu = null; }
+    var items = [1, 2, 3, 4].map(function (px) {
+      return {
+        id: 'w' + px,
+        label: px + 'px',
+        icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" ' +
+              'stroke-width="' + px + '" stroke-linecap="round"><path d="M3 12h18"/></svg>',
+        onSelect: function () {
+          if (bar) bar.setWidth(px);
+          setWidth(px);
+        }
+      };
+    });
+    menu = window.DrawingProps.createMenu(items, { onClose: function () { if (menu) { menu.remove(); menu = null; } } });
+    document.body.appendChild(tagGuarded(menu));
+    placeMenu(menu, anchor);
+  }
+
+  /* line-style dropdown: Line / Dashed line / Dotted line */
+  var STYLE_LABELS = { solid: 'Line', dashed: 'Dashed line', dotted: 'Dotted line' };
+  function openStyleMenu(anchor) {
+    if (menu) { menu.remove(); menu = null; }
+    var items = LINE_STYLE_ORDER.map(function (id) {
+      var dash = id === 'dashed' ? ' stroke-dasharray="4 3"' : id === 'dotted' ? ' stroke-dasharray="1.5 3"' : '';
+      return {
+        id: id,
+        label: STYLE_LABELS[id],
+        icon: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" ' +
+              'stroke-width="2" stroke-linecap="round"' + dash + '><path d="M3 12h18"/></svg>',
+        onSelect: function () { applyCardValues({ lineStyle: id }); }
+      };
+    });
+    menu = window.DrawingProps.createMenu(items, { onClose: function () { if (menu) { menu.remove(); menu = null; } } });
+    document.body.appendChild(tagGuarded(menu));
+    placeMenu(menu, anchor);
+  }
+
+  function placeMenu(m, anchor) {
+    try {
+      var r = anchor.getBoundingClientRect();
+      var w = m.offsetWidth || 264;
+      m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+      m.style.top = Math.min(r.bottom + 6, window.innerHeight - (m.offsetHeight || 200) - 12) + 'px';
+    } catch (e) {}
+  }
+
   /* ---------------------------------------------------------------------
      ••• menu — mirrors the TradingView list, but only with actions the engine
      can actually perform. Template / Visual order / Object tree / Add alert are
@@ -169,6 +217,8 @@
     bar = window.DrawingProps.createBar({
       onEdit:  function () { showCard('style'); },
       onText:  function () { showCard('text'); },
+      onWidthMenu: function (anchor) { openWidthMenu(anchor); },
+      onStyleMenu: function (anchor) { openStyleMenu(anchor); },
       onColor: function (anchor) { togglePalette(anchor); },
       onDelete: function () {
         try {

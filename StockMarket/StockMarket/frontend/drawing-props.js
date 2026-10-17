@@ -72,6 +72,9 @@
     pencil:  svg('<path d="M4 20h4L18 10l-4-4L4 16v4z"/><path d="M14 6l4 4"/>', 16),
     trash:   svg('<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/><path d="M10 10v7M14 10v7"/>', 16),
     more:    svg('<circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>', 16),
+    text:    svg('<path d="M5 5h14M12 5v14"/>', 16),
+    duplicate: svg('<rect x="3" y="3" width="12" height="12" rx="1.5"/><rect x="9" y="9" width="12" height="12" rx="1.5"/>', 16),
+    chevron: svg('<path d="M9 6l6 6-6 6"/>', 14),
     close:   svg('<path d="M6 6l12 12M18 6L6 18"/>', 18)
   };
 
@@ -102,19 +105,21 @@
     editBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onEdit && opts.onEdit(); });
     bar.appendChild(editBtn);
 
-    /* "Text" sits beside the pencil and opens the card already switched to the
-       Text tab, so the common case is one tap instead of tab-hunting. */
-    var textBtn = el('button', 'dp-bar__btn dp-bar__text', 'Text');
+    /* "T" — a real icon, as in the reference (was the word "Text") */
+    var textBtn = el('button', 'dp-bar__btn', ICON.text);
     textBtn.type = 'button';
     textBtn.title = 'Add or edit text';
     textBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onText && opts.onText(); });
     bar.appendChild(textBtn);
 
+    /* width: a DROPDOWN (1-4px), not a cycle — matches the reference */
     var widthBtn = el('button', 'dp-bar__btn dp-bar__width', '2px');
     widthBtn.type = 'button';
     widthBtn.title = 'Line width';
     widthBtn.addEventListener('click', function (e) {
       e.stopPropagation();
+      if (opts.onWidthMenu) { opts.onWidthMenu(widthBtn); return; }
+      /* fallback so this button is never dead if the menu is not wired */
       var cur = parseInt(widthBtn.textContent, 10) || 2;
       var next = WIDTHS[(WIDTHS.indexOf(cur) + 1) % WIDTHS.length];
       widthBtn.textContent = next + 'px';
@@ -122,6 +127,7 @@
     });
     bar.appendChild(widthBtn);
 
+    /* colour swatch -> palette */
     var swatchBtn = el('button', 'dp-bar__btn');
     swatchBtn.type = 'button';
     swatchBtn.title = 'Line colour';
@@ -129,6 +135,17 @@
     swatchBtn.appendChild(swatch);
     swatchBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onColor && opts.onColor(swatchBtn); });
     bar.appendChild(swatchBtn);
+
+    /* line style swatch -> Line / Dashed line / Dotted line */
+    var styleBtn = el('button', 'dp-bar__btn dp-bar__style');
+    styleBtn.type = 'button';
+    styleBtn.title = 'Line style';
+    styleBtn.innerHTML = '<span class="dp-bar__style-line"></span>';
+    styleBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (opts.onStyleMenu) opts.onStyleMenu(styleBtn);
+    });
+    bar.appendChild(styleBtn);
 
     bar.appendChild(el('div', 'dp-bar__sep'));
 
@@ -141,7 +158,7 @@
     var moreBtn = el('button', 'dp-bar__btn', ICON.more);
     moreBtn.type = 'button';
     moreBtn.title = 'More options';
-    moreBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onMore && opts.onMore(); });
+    moreBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onMore && opts.onMore(moreBtn); });
     bar.appendChild(moreBtn);
 
     /* drag the bar by its handle */
