@@ -262,27 +262,31 @@
 /* ---------------------------------------------------------------------------
    3. Settings card  —  header, tabs, body, footer
    ------------------------------------------------------------------------ */
+/* Same presentation as the Trade panel (#tradePanelOverlay): a full-height
+   right sidebar that SLIDES IN with transform + transition. Previously the card
+   was a floating box whose size and position changed with the viewport, which is
+   why it never looked consistent. It is now one fixed, predictable surface at
+   every width, and it cannot cover the OHLC legend. */
 .dp-card {
-  position: fixed;              /* viewport coords: see .dp-palette */
-  z-index: 90;
-  top: var(--dp-top, 64px);     /* just under the bar; CSS owns this, never JS */
-  right: 12px;
-  left: 12px;                   /* together with right:12 this can NEVER overflow */
-  width: auto;
-  max-width: 500px;
-  margin-left: auto;            /* wide screens: pins to the right at 500px;
-                                   narrow screens: fills width minus 24px */
-  max-height: calc(100vh - 90px);   /* near full-screen on a phone, like the reference */
+  position: fixed;
+  z-index: 2000;                /* same layer as the Trade panel */
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  max-width: 100vw;
   display: flex;
   flex-direction: column;
-  background: var(--dp-bg);
-  border: 1px solid var(--dp-border);
-  border-radius: var(--dp-radius);
-  box-shadow: var(--dp-shadow);
+  background: #0A0A0B;          /* same surface as the Trade panel */
+  border-left: 1px solid #2a2e39;
+  box-shadow: -5px 0 15px rgba(0, 0, 0, 0.5);
+  transform: translateX(100%);
+  transition: transform 0.3s ease-in-out;
   font-family: var(--dp-font);
   color: var(--dp-text);
   overflow: hidden;
 }
+.dp-card.is-open { transform: translateX(0); }
 
 /* header --------------------------------------------------------------- */
 .dp-card__head {
@@ -524,23 +528,17 @@
    same spacing; only the docking and the safe-area change.
    ------------------------------------------------------------------------ */
 @media (max-width: 768px) {
+  /* exactly the Trade panel's mobile treatment (responsive.css sets the trade
+     panel to 92vw too), so both panels open identically on a phone */
   .dp-card {
-    position: fixed;
-    /* !important on ALL four sides: an inline offset or an over-constrained
-       left+right+width box is what previously made the card render clipped off
-       the left edge on a phone. These four lines make that impossible. */
-    left: 0 !important;
-    right: 0 !important;
+    width: 92vw !important;
+    max-width: 92vw !important;
+    top: 0 !important;
     bottom: 0 !important;
-    top: auto !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    margin-left: 0 !important;
-    max-height: 78vh;
-    border-radius: 14px 14px 0 0;
-    border-left: none;
-    border-right: none;
-    border-bottom: none;
+    right: 0 !important;
+    left: auto !important;
+    margin: 0 !important;
+    border-radius: 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .dp-card__head { height: 56px; padding: 0 16px; }

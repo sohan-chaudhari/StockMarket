@@ -217,22 +217,14 @@
      stays reachable through ••• -> Settings…. */
   function openTextColor(anchor) {
     if (palette) { palette.remove(); palette = null; }
-    var d = currentDrawing();
-    var start = (d && d.style && (d.style.textColor || d.style.color)) || '#d1d4dc';
+    var tdStart = attachedText();
+    var selStart = window.toolManager && window.toolManager.selectedDrawing;
+    var start = (tdStart && tdStart.style && tdStart.style.color) ||
+                (selStart && selStart._dpTextColour) || '#d1d4dc';
     palette = window.DrawingProps.createPalette({
       color: start,
       opacity: 1,
-      onPick: function (c) {
-        try {
-          var eng = window.toolManager && window.toolManager.engine;
-          var dd = currentDrawing();
-          if (eng && dd && typeof eng.updateDrawing === 'function') {
-            /* text colour, kept separate from style.color (the line colour) */
-            eng.updateDrawing(dd.id, { style: { textColor: c } });
-          }
-        } catch (e) {}
-        if (card) card.setTextColor(c);
-      },
+      onPick: function (c) { setTextColour(c); },
       onOpacity: function () {},
       onClose: function () { if (palette) { palette.remove(); palette = null; } }
     });
@@ -358,6 +350,108 @@
     PriceLabel: 1, Balloon: 1, ArrowLabel: 1
   };
 
+  /* Find the TextDrawing attached to the currently selected drawing. */
+  function attachedText() {
+    var tm = window.toolManager, eng = tm && tm.engine;
+    var sel = tm && tm.selectedDrawing;
+    if (!eng || !sel || !sel._dpTextId) return null;
+    for (var i = 0; i < eng.drawings.length; i++) {
+      var d = eng.drawings[i];
+      var id = d.model ? d.model.id : d.id;
+      if (id === sel._dpTextId) return d;
+    }
+    return null;
+  }
+
+  /* Change the TEXT colour. The old code called
+     engine.updateDrawing(selectedId, {style:{textColor:c}}) — i.e. it set the
+     property on the LINE, which nothing renders, so the pick appeared to do
+     nothing (and users read the unchanged text as "it disappeared"). Now the
+     colour is written straight onto the attached TextDrawing, which is the
+     object that actually paints it (TextDrawing.draw reads this.style.color). */
+  function setTextColour(c) {
+    try {
+      var tm = window.toolManager, eng = tm && tm.engine;
+      var sel = tm && tm.selectedDrawing;
+      if (sel) sel._dpTextColour = c;          /* remembered for the next attach */
+      var td = attachedText();
+      if (td && eng) {
+        td.style = td.style || {};
+        td.style.color = c;
+        if (typeof eng.syncModel === 'function') eng.syncModel(td);
+        if (typeof eng.markDirty === 'function') eng.markDirty();
+      }
+      if (tm && typeof tm.redraw === 'function') tm.redraw();
+      if (card && typeof card.setTextColor === 'function') card.setTextColor(c);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* Keep an attached label glued to its drawing's midpoint, so moving or
+     reshaping the line carries the text with it. */
+  function repositionAttachedText() {
+    try {
+      var tm = window.toolManager, eng = tm && tm.engine;
+      var sel = tm && tm.selectedDrawing;
+      var td = attachedText();
+      if (!eng || !sel || !td) return;
+      var cs = tm.getChartState ? tm.getChartState() : null;
+      if (!cs) return;
+      var px = null;
+      var mid = sel.getMidpoints ? sel.getMidpoints(cs) : null;
+      if (mid && mid.length && mid[0]) px = { x: mid[0].x, y: mid[0].y };
+      if (!px) {
+        var ps = sel.getPixels ? sel.getPixels(cs) : null;
+        if (ps && ps.length) {
+          px = {
+            x: (ps[0].x + ps[ps.length - 1].x) / 2,
+            y: (ps[0].y + ps[ps.length - 1].y) / 2
+          };
+        }
+      }
+      if (!px) return;
+      var c = cs.pixelToCoord(px.x, px.y);
+      if (!c || c.logical == null || c.price == null) return;
+      td.coords = [{ logical: c.logical, price: c.price, time: c.time }];
+      if (typeof td._invalidateCache === 'function') td._invalidateCache();
+      if (typeof eng.syncModel === 'function') eng.syncModel(td);
+      if (typeof eng.markDirty === 'function') eng.markDirty();
+    } catch (e) {}
+  }
+
+  /* Safety net: a drag must never be able to LOSE a drawing. If any renderer's
+     coords ever become non-finite (NaN/undefined), restore the last good copy
+     instead of leaving an invisible, unpickable object behind. */
+  var lastGoodCoords = {};
+  function coordsFinite(d) {
+    if (!d || !d.coords || !d.coords.length) return false;
+    for (var i = 0; i < d.coords.length; i++) {
+      var c = d.coords[i];
+      if (!c) return false;
+      if (typeof c.logical !== 'number' || !isFinite(c.logical)) return false;
+      if (typeof c.price !== 'number' || !isFinite(c.price)) return false;
+    }
+    return true;
+  }
+  function guardCoords() {
+    try {
+      var eng = window.toolManager && window.toolManager.engine;
+      if (!eng || !eng.drawings) return;
+      for (var i = 0; i < eng.drawings.length; i++) {
+        var d = eng.drawings[i];
+        var id = d.model ? d.model.id : d.id;
+        if (!id) continue;
+        if (coordsFinite(d)) {
+          lastGoodCoords[id] = JSON.parse(JSON.stringify(d.coords));
+        } else if (lastGoodCoords[id]) {
+          d.coords = JSON.parse(JSON.stringify(lastGoodCoords[id]));
+          if (typeof eng.syncModel === 'function') eng.syncModel(d);
+          if (typeof eng.markDirty === 'function') eng.markDirty();
+        }
+      }
+    } catch (e) {}
+  }
+
   /* Attach a REAL TextDrawing at the selected drawing's midpoint.
      The engine's own TextDrawing paints `this.text` (see TextDrawing.draw in
      drawings.js) and the engine exposes the class on
@@ -378,13 +472,10 @@
     var cs = tm.getChartState ? tm.getChartState() : null;
     if (!cs) return false;
 
-    /* one attached label per drawing: drop the previous one */
-    try {
-      if (sel._dpTextId) {
-        if (typeof eng.deleteDrawing === 'function') eng.deleteDrawing(sel._dpTextId);
-        sel._dpTextId = null;
-      }
-    } catch (e) {}
+    /* Remember the previous label, but do NOT delete it yet: it is only removed
+       after the new one exists, so a failed re-create can never leave the
+       drawing with no text at all (that was a real way for text to vanish). */
+    var previousTextId = sel._dpTextId || null;
 
     /* anchor pixel = the drawing's midpoint, falling back to its own pixels */
     var px = null;
@@ -414,7 +505,9 @@
     td.text = text;
     td._userEdited = true;                 /* TextDrawing.isValid() needs this */
     td.style = td.style || {};
-    if (opts && opts.textColor) td.style.color = opts.textColor;
+    /* explicit choice > colour remembered from the T pad > the class default */
+    var wantedColour = (opts && opts.textColor) || sel._dpTextColour || td.style.color;
+    if (wantedColour) td.style.color = wantedColour;
     if (opts && opts.fontSize) {
       var fs = parseInt(opts.fontSize, 10);
       if (fs) td.style.fontSize = fs;
@@ -426,6 +519,10 @@
       var res = eng.finalizeDrawing(td);
       if (res && res.drawing && res.drawing.id) {
         sel._dpTextId = res.drawing.id;    /* remember it, so re-Ok replaces it */
+        /* the new label is live, so the old one can go now */
+        if (previousTextId && typeof eng.deleteDrawing === 'function') {
+          try { eng.deleteDrawing(previousTextId); } catch (e) {}
+        }
         return true;
       }
     } catch (e) {}
@@ -503,8 +600,25 @@
       ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
         card.addEventListener(ev, function (e) { e.stopPropagation(); });
       });
+      /* The app's global keydown handler (drawings.js init) treats Delete AND
+         Backspace as "delete the selected drawing". Without this guard, pressing
+         Backspace to fix a typo in the Text tab DELETED THE DRAWING instead of
+         erasing a character — which is also why the drawing seemed to "suddenly
+         disappear". The app's listener is on window in the bubble phase, so
+         stopping propagation at the card is enough, and the fix stays in this
+         file. */
+      var swallowEditingKeys = function (e) {
+        var k = e.key;
+        if (k === 'Backspace' || k === 'Delete' || k === 'Del') {
+          e.stopPropagation();
+        }
+      };
+      card.addEventListener('keydown', swallowEditingKeys);
+      card.addEventListener('keyup', swallowEditingKeys);
+      card.addEventListener('keypress', swallowEditingKeys);
+
       document.body.appendChild(tagGuarded(card));
-      card.style.display = 'none';
+      card.style.display = '';
 
       /* Text tab's colour swatch: opens its own palette and writes ONLY the text
          colour swatch, which Ok then applies via applyText(). It must never
@@ -532,16 +646,24 @@
         }
       } catch (e) {}
     }
-    card.style.display = 'flex';
-    card.selectTab(tab || 'style');
-    /* clear inline offsets, then place under the bar (viewport coords) */
+    /* The card is now a right sidebar (like the Trade panel): it is always
+       display:flex and slides in via the .is-open class. Never set display here —
+       that is what stopped the transition from ever being seen. */
+    card.style.display = '';
     card.style.left = '';
     card.style.right = '';
     card.style.top = '';
+    card.style.bottom = '';
     card.style.width = '';
-    placeUnderBar(card);
+    card.style.transform = '';
+    card.classList.add('is-open');
+    card.selectTab(tab || 'style');
   }
-  function hideCard() { if (card) card.style.display = 'none'; }
+  function hideCard() {
+    if (!card) return;
+    card.classList.remove('is-open');
+    card.style.transform = '';
+  }
 
   /* ---------------------------------------------------------------------
      Placement rule: the bar takes the OHLC legend's rectangle and the legend
@@ -611,6 +733,10 @@
     engine.eventBus.on('drawing:create', function () {
       try { hideAll(); } catch (e) {}
     });
+    engine.eventBus.on('drawing:update', function () {
+      /* moving or reshaping the line carries its attached label with it */
+      try { repositionAttachedText(); } catch (e) {}
+    });
 
     /* Hide ONLY on the engine's own deselect event. An earlier version also
        hid on document pointerdown when toolManager.selectedDrawing looked empty,
@@ -619,15 +745,37 @@
       if (e.key === 'Escape') hideAll();
     });
 
-    window.addEventListener('resize', function () {
-      if (bar && bar.style.display !== 'none') {
-        alignBar();
-        if (openPaletteFor && palette && palette.style.display !== 'none') placePalette(openPaletteFor);
-      }
-    });
-    window.addEventListener('scroll', function () {
-      if (bar && bar.style.display !== 'none') alignBar();
-    }, true);
+    /* ONE rAF-throttled pass for every scroll and resize. Previously every
+       scroll event ran alignBar() synchronously (two forced layouts each), which
+       on a phone is a layout thrash on every frame — a real source of the lag. */
+    var rafPending = false;
+    function scheduleLayoutPass() {
+      if (rafPending) return;
+      rafPending = true;
+      var run = function () {
+        rafPending = false;
+        try {
+          if (bar && bar.style.display !== 'none') {
+            alignBar();
+            if (palette && palette.style.display !== 'none') placeUnderBar(palette);
+          }
+        } catch (e) {}
+      };
+      if (window.requestAnimationFrame) window.requestAnimationFrame(run);
+      else setTimeout(run, 16);
+    }
+    window.addEventListener('resize', scheduleLayoutPass);
+    window.addEventListener('scroll', scheduleLayoutPass, true);
+
+    /* After any interaction: keep an attached label on its drawing's midpoint,
+       and make sure no drawing was left with unusable coordinates. */
+    var afterInteraction = function () {
+      try { repositionAttachedText(); } catch (e) {}
+      try { guardCoords(); } catch (e) {}
+    };
+    document.addEventListener('pointerup', afterInteraction, true);
+    document.addEventListener('touchend', afterInteraction, true);
+    document.addEventListener('pointercancel', afterInteraction, true);
 
     /* if a drawing is already selected when we attach, reflect it */
     try { if (window.toolManager && window.toolManager.selectedDrawing) showForSelection(); } catch (e) {}
