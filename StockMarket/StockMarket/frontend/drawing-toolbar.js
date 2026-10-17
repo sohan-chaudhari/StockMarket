@@ -544,7 +544,7 @@
             <button type="button" class="emoji-picker-close-btn" title="Close">&times;</button>
           </div>
           <div class="emoji-search-wrapper">
-            <span class="emoji-search-icon">🔍</span>
+            <span class="emoji-search-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg></span>
             <input type="text" class="emoji-search-input" placeholder="Search emojis (e.g. rocket, bull, star)..." value="${this.searchQuery}">
           </div>
           <div class="emoji-category-tabs">

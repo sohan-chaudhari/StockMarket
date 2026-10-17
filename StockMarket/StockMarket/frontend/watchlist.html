@@ -631,7 +631,7 @@
                         if(card.parentNode) card.parentNode.removeChild(card);
                         var grid = document.getElementById('watchlistGrid');
                         if(grid && !grid.querySelector('.wl-card')){
-                            grid.innerHTML = '<div class="wl-empty"><div class="icon">&#128194;</div><p>Your watchlist is empty. Search and add stocks above.</p></div>';
+                            grid.innerHTML = '<div class="wl-empty"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-2 9a2 2 0 0 1-2 1.6H5.5A2 2 0 0 1 3.6 19z"/></svg></div><p>Your watchlist is empty. Search and add stocks above.</p></div>';
                         }
                     }, 220);
                 }
@@ -669,7 +669,7 @@
                 var grid = document.getElementById('watchlistGrid');
                 updateLimitBar();
                 if(!tickers.length){
-                    grid.innerHTML = '<div class="wl-empty"><div class="icon">&#128194;</div><p>Your watchlist is empty. Search and add stocks above.</p></div>';
+                    grid.innerHTML = '<div class="wl-empty"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v1H3z"/><path d="M3 10h18l-2 9a2 2 0 0 1-2 1.6H5.5A2 2 0 0 1 3.6 19z"/></svg></div><p>Your watchlist is empty. Search and add stocks above.</p></div>';
                     return;
                 }
                 // Build all cards from scratch (only happens on load or tab switch)
@@ -793,7 +793,7 @@
         })();
     </script>
     <script src="stocks.js"></script>
-    <script src="nav.js?v=13"></script>
+    <script src="nav.js?v=14"></script>
 </body>
 </html>
 

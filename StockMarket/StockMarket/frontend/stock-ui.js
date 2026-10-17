@@ -98,7 +98,7 @@
               console.error(e);
               if (container) container.innerHTML =
                   '<div style="padding:3rem 1rem;text-align:center;">' +
-                  '<div style="font-size:1.75rem;margin-bottom:0.75rem;">📡</div>' +
+                  '<div style="font-size:1.75rem;margin-bottom:0.75rem;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M4 22h13a2 2 0 0 0 2-2V4H6v16a2 2 0 0 1-2 2z"/><path d="M19 8h2v12a2 2 0 0 1-2 2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg></div>' +
                   '<div style="color:#e2e8f0;font-weight:600;margin-bottom:0.4rem;font-size:0.95rem;">Failed to load news</div>' +
                   '<div style="color:#6b7280;font-size:0.82rem;margin-bottom:1.25rem;">Check your connection and try again.</div>' +
                   '<button onclick="toggleNewsModal()" style="padding:7px 18px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-size:0.82rem;">Close</button>' +

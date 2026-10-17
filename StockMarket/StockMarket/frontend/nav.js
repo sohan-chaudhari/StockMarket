@@ -617,12 +617,12 @@
     panel.className = 'app-notification-panel';
     panel.innerHTML = 
       '<div class="notif-header">' +
-      '  <div class="notif-header-title">&#128276; Notifications <span class="notif-header-badge">3</span></div>' +
+      '  <div class="notif-header-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M18 9a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6"/><path d="M10.5 20a2 2 0 0 0 3 0"/></svg> Notifications <span class="notif-header-badge">3</span></div>' +
       '  <button type="button" class="notif-close-btn" id="notifCloseBtn" aria-label="Close">&times;</button>' +
       '</div>' +
       '<div class="notif-body">' +
       '  <div class="notif-item unread">' +
-      '    <div class="notif-icon-circle">&#128200;</div>' +
+      '    <div class="notif-icon-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></div>' +
       '    <div class="notif-content">' +
       '      <div class="notif-title">Market Live Tracking</div>' +
       '      <div class="notif-desc">NIFTY 50 and Bank Nifty active streaming.</div>' +
@@ -630,7 +630,7 @@
       '    </div>' +
       '  </div>' +
       '  <div class="notif-item">' +
-      '    <div class="notif-icon-circle">&#128176;</div>' +
+      '    <div class="notif-icon-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><rect x="2" y="7" width="20" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><path d="M2 12h20"/></svg></div>' +
       '    <div class="notif-content">' +
       '      <div class="notif-title">Virtual Trading Account</div>' +
       '      <div class="notif-desc">₹10,00,000 practice balance active.</div>' +
@@ -638,7 +638,7 @@
       '    </div>' +
       '  </div>' +
       '  <div class="notif-item">' +
-      '    <div class="notif-icon-circle">&#9889;</div>' +
+      '    <div class="notif-icon-circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:1em;height:1em;vertical-align:-0.125em;display:inline-block;flex-shrink:0"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"/></svg></div>' +
       '    <div class="notif-content">' +
       '      <div class="notif-title">Watchlist Alerts Ready</div>' +
       '      <div class="notif-desc">Configure price alerts and trigger conditions.</div>' +
