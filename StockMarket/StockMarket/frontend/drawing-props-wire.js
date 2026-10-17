@@ -330,7 +330,10 @@
       if (!d || !engine || !v) return false;
       var text = (v.text == null) ? '' : String(v.text);
       var style = {};
-      if (v.textColor) style.color = v.textColor;
+      /* TEXT colour, not the line colour. Setting style.color here was a real
+         bug: choosing a text colour in the card then pressing Ok recoloured the
+         LINE instead of the text. */
+      if (v.textColor) style.textColor = v.textColor;
       if (v.fontSize) style.fontSize = parseInt(v.fontSize, 10) || undefined;
       style.bold = !!v.bold;
       style.italic = !!v.italic;

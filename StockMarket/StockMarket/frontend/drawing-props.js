@@ -99,17 +99,19 @@
 
     bar.appendChild(el('div', 'dp-bar__sep'));
 
-    var editBtn = el('button', 'dp-bar__btn', ICON.pencil);
+    var editBtn = el('button', 'dp-bar__btn dp-bar__under-host',
+      ICON.pencil + '<i class="dp-bar__under" id="dp-under-line"></i>');
     editBtn.type = 'button';
-    editBtn.title = 'Edit style';
-    editBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onEdit && opts.onEdit(); });
+    editBtn.title = 'Line colour';
+    editBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onEdit && opts.onEdit(editBtn); });
     bar.appendChild(editBtn);
 
-    /* "T" — a real icon, as in the reference (was the word "Text") */
-    var textBtn = el('button', 'dp-bar__btn', ICON.text);
+    /* "T" — a real icon, with the TEXT colour shown as its underline */
+    var textBtn = el('button', 'dp-bar__btn dp-bar__under-host',
+      ICON.text + '<i class="dp-bar__under" id="dp-under-text"></i>');
     textBtn.type = 'button';
-    textBtn.title = 'Add or edit text';
-    textBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onText && opts.onText(); });
+    textBtn.title = 'Text colour';
+    textBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onText && opts.onText(textBtn); });
     bar.appendChild(textBtn);
 
     /* width: a DROPDOWN (1-4px), not a cycle — matches the reference */
@@ -127,16 +129,7 @@
     });
     bar.appendChild(widthBtn);
 
-    /* colour swatch -> palette */
-    var swatchBtn = el('button', 'dp-bar__btn');
-    swatchBtn.type = 'button';
-    swatchBtn.title = 'Line colour';
-    var swatch = el('span', 'dp-bar__swatch');
-    swatchBtn.appendChild(swatch);
-    swatchBtn.addEventListener('click', function (e) { e.stopPropagation(); opts.onColor && opts.onColor(swatchBtn); });
-    bar.appendChild(swatchBtn);
-
-    /* line style swatch -> Line / Dashed line / Dotted line */
+    /* line style swatch -> Line / Dashed line / Dotted line (kept: image 4 shows it) */
     var styleBtn = el('button', 'dp-bar__btn dp-bar__style');
     styleBtn.type = 'button';
     styleBtn.title = 'Line style';
@@ -183,7 +176,14 @@
     })();
 
     bar.setWidth = function (px) { widthBtn.textContent = px + 'px'; };
-    bar.setColor = function (c) { swatch.style.background = c; };
+    bar.setColor = function (c) {
+      var u = document.getElementById('dp-under-line');
+      if (u) u.style.background = c;
+    };
+    bar.setTextColor = function (c) {
+      var u = document.getElementById('dp-under-text');
+      if (u) u.style.background = c;
+    };
     return bar;
   }
 

@@ -129,6 +129,19 @@
   flex: 0 0 auto;
 }
 
+/* chosen-colour underline under the pencil (line) and the T (text) */
+.dp-bar__under-host { position: relative; padding-bottom: 5px; }
+.dp-bar__under {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  pointer-events: none;
+}
+
 /* the line-style swatch that opens the Line / Dashed / Dotted menu */
 .dp-bar__style {
   min-width: 34px;
@@ -251,8 +264,11 @@
   z-index: 90;
   top: 64px;                    /* below the bar; CSS owns this, never JS */
   right: 12px;
-  width: 500px;
-  max-width: calc(100vw - 24px);
+  left: 12px;                   /* together with right:12 this can NEVER overflow */
+  width: auto;
+  max-width: 500px;
+  margin-left: auto;            /* wide screens: pins to the right at 500px;
+                                   narrow screens: fills width minus 24px */
   display: flex;
   flex-direction: column;
   background: var(--dp-bg);
