@@ -504,6 +504,11 @@
 
     td.text = text;
     td._userEdited = true;                 /* TextDrawing.isValid() needs this */
+    /* The label belongs to the drawing, so it must never intercept the pointer:
+       it sits exactly on the midpoint, and without this the engine's hit-test
+       picked the TEXT and dragged it while the line stayed put. The engine skips
+       any renderer flagged noHit. */
+    td.noHit = true;
     td.style = td.style || {};
     /* explicit choice > colour remembered from the T pad > the class default */
     var wantedColour = (opts && opts.textColor) || sel._dpTextColour || td.style.color;

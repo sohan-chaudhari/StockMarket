@@ -1176,6 +1176,12 @@ class HitTestService {
             var d = drawings[i];
             if (d.hidden) continue;
 
+            /* Decorative objects (e.g. the text label the context bar attaches to
+               a drawing) render normally but are never hit-tested. Without this
+               the label sits exactly on its drawing's midpoint and steals the
+               click, so dragging "the line" moved the text instead. */
+            if (d.noHit) continue;
+
             /* A LOCKED drawing must still be HIT-TESTABLE.
                This used to be `if (d.locked) continue;`, which made a locked
                drawing completely invisible to hit-testing. The consequence was
