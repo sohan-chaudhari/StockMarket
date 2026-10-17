@@ -275,6 +275,22 @@
     return bar;
   }
 
+  /* Position BOTH popovers from the BAR's viewport rect. They are
+     position:fixed, so this puts them just under the bar — inside the chart —
+     instead of at top:64px, which landed them over the page header and search
+     bar. Only top/left are set (never bottom), so nothing can stretch. */
+  function placeUnderBar(node) {
+    try {
+      var a = bar || anchorRef;
+      if (!a || !node) return;
+      var r = a.getBoundingClientRect();
+      var w = node.offsetWidth || 300;
+      node.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+      node.style.top = Math.min(r.bottom + 8, window.innerHeight - (node.offsetHeight || 200) - 12) + 'px';
+    } catch (e) {}
+  }
+  var anchorRef = null;
+
   function togglePalette(anchor) {
     if (!palette) {
       palette = window.DrawingProps.createPalette({
@@ -294,9 +310,10 @@
     }
     if (palette.style.display === 'none') {
       hideCard();                 /* one popover at a time */
-      openPaletteFor = anchor;
-      placePalette(anchor);
+      anchorRef = anchor || bar;
+      openPaletteFor = anchorRef;
       palette.style.display = 'block';
+      placeUnderBar(palette);
     } else {
       palette.style.display = 'none';
     }
@@ -414,11 +431,12 @@
     }
     card.style.display = 'flex';
     card.selectTab(tab || 'style');
-    /* clear any inline offsets so the stylesheet always wins */
+    /* clear inline offsets, then place under the bar (viewport coords) */
     card.style.left = '';
     card.style.right = '';
     card.style.top = '';
     card.style.width = '';
+    placeUnderBar(card);
   }
   function hideCard() { if (card) card.style.display = 'none'; }
 

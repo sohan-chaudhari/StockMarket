@@ -505,7 +505,13 @@ try {
             var hitResult = this.hitTestFull(pos, chartState);
             var hitDrawing = hitResult ? hitResult.drawing : null;
 
-            if (hitDrawing && !hitDrawing.locked) {
+            // A LOCKED drawing must still be SELECTABLE. Previously this read
+            // `hitDrawing && !hitDrawing.locked`, so locking a drawing made it
+            // impossible to select — which meant the context bar could never
+            // reappear to unlock it. Locking only blocks MOVING, and every
+            // class already returns early from translate() when locked, so
+            // selecting is safe.
+            if (hitDrawing) {
                 e.stopPropagation();
                 if (e.cancelable) e.preventDefault();
                 this._selectDrawing(hitDrawing);
