@@ -7425,7 +7425,7 @@ def get_intraday_since(request: Request, ticker: str = Query(..., max_length=40)
 
 
 @app.post("/api/holidays/refresh")
-def refresh_holidays(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def refresh_holidays(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_admin)):
     """Fetch latest NSE holiday calendar and update DB + aggregator."""
     import httpx
     from bs4 import BeautifulSoup
@@ -7492,7 +7492,7 @@ def get_candle_gaps(
 
 
 @app.post("/api/backfill-symbol/{ticker}")
-def backfill_symbol(ticker: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def backfill_symbol(ticker: str, db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_admin)):
     """On-demand backfill for any symbol. Fetches recent data from yfinance."""
     import threading
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
@@ -7502,7 +7502,7 @@ def backfill_symbol(ticker: str, db: Session = Depends(get_db), current_user: mo
 
 
 @app.post("/api/validate-intraday_candles_5min/{ticker}")
-def validate_intraday_candles_5min(ticker: str, timeframe: str = Query("1D"), db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def validate_intraday_candles_5min(ticker: str, timeframe: str = Query("1D"), db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_admin)):
     """Validate all intraday_candles_5min for a ticker against yfinance for reconciliation."""
     from aggregator import fix_ohlc, validate_ohlc
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
@@ -7580,7 +7580,7 @@ def get_today_session(db: Session = Depends(get_db)):
 
 
 @app.api_route("/api/sessions/refresh", methods=["GET", "POST"])
-def refresh_sessions_from_nse(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def refresh_sessions_from_nse(db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_admin)):
     """Scrape NSE for holiday/session data and update market_sessions table."""
     import httpx
     from models import MarketSession

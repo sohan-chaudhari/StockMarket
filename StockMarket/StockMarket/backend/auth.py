@@ -732,3 +732,43 @@ def get_current_user_optional(
         return user if user and user.is_active else None
     except Exception:
         return None
+
+
+# ==================== ADMIN AUTHORIZATION (SEC-05) ====================
+# The maintenance/operator endpoints (holiday + session refresh, on-demand
+# symbol backfill, candle validation) used to require only *any* authenticated
+# account, so an ordinary user could drive NSE scraping, yfinance backfills and
+# candle writes. There is no role column, so "admin" is defined by configuration:
+# a comma-separated email allowlist in ADMIN_EMAILS.
+#
+# Fails CLOSED: an unset or empty allowlist denies everyone, so forgetting the
+# configuration can never re-open these endpoints.
+ADMIN_EMAILS_ENV = "ADMIN_EMAILS"
+
+
+def admin_allowlist() -> set:
+    """Lower-cased set of configured ADMIN_EMAILS entries (empty when unset)."""
+    raw = os.getenv(ADMIN_EMAILS_ENV, "") or ""
+    return {entry.strip().lower() for entry in raw.split(",") if entry.strip()}
+
+
+def require_admin(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    """FastAPI dependency for operator-only endpoints.
+
+    Requires an authenticated account that is ACTIVE (enforced by
+    get_current_user, which also rejects revoked/blacklisted tokens), VERIFIED,
+    and whose email appears in `ADMIN_EMAILS`. The allowlist is checked first so
+    that a non-admin cannot learn whether a given email is allowlisted.
+    """
+    allow = admin_allowlist()
+    email = (current_user.email or "").strip().lower()
+    if not allow or email not in allow:
+        raise HTTPException(status_code=403, detail="Administrator access required")
+    if current_user.is_verified is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="Administrator access requires a verified email address",
+        )
+    return current_user
