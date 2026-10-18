@@ -18,6 +18,18 @@ function _computeFormingOpen(seedOpen, isFirstBar, dayOpen, prevClose, liveCurre
 
 function escapeHTML(str) { var div = document.createElement('div'); div.appendChild(document.createTextNode(str)); return div.innerHTML; }
 
+// SEC-07: strict escaper for untrusted values interpolated into markup.
+// escapeHTML() above round-trips through a text node, so it escapes &, < and >
+// but NOT quotes -- safe for element text, unsafe inside src="..."/title="...".
+// This one escapes quotes too, so it is safe in BOTH text and quoted-attribute
+// contexts (mirrors news.js's _newsEscHtml, which the audit confirmed correct).
+function escapeHTMLStrict(str) {
+  if (str == null) return '';
+  return String(str).replace(/[&<>"'`]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' }[c];
+  });
+}
+
 // Compact Indian volume formatting: 13.94 Cr, 1.17 L, 38.00 K
 function formatVolumeCompact(n) {
   if (n == null || n === '') return '--';
@@ -3958,14 +3970,18 @@ function renderMoverList(containerId, listData) {
     var volDisplay = (s.volume != null && !isNaN(Number(s.volume))) 
       ? formatVolumeCompact(s.volume) 
       : (s.volume_display ? formatVolumeCompact(s.volume_display) : '--');
-    var sectorTag = s.sector ? '<span class="mover-sector-tag">' + s.sector + '</span>' : '';
+    // SEC-07: sector/logo/ticker are DB/provider-sourced strings -- escape them.
+    var sectorTag = s.sector ? '<span class="mover-sector-tag">' + escapeHTMLStrict(s.sector) + '</span>' : '';
     
     // Logo resolution: prefer s.logo if valid, else /logos/{cleanTicker}.svg with SVG onerror fallback to ticker initials
     var logoSrc = (s.logo && !s.logo.includes('gstatic.com') && !s.logo.includes('faviconV2')) ? s.logo : ('/logos/' + cleanTicker + '.svg');
     var c = _tickerColor(cleanTicker || ticker);
-    var initialText = (cleanTicker || ticker).substring(0, 2).toUpperCase();
+    // SEC-07: initialText lands inside an inline JS string (onerror=...innerHTML='X'),
+    // where HTML entities are decoded BEFORE the JS is parsed -- so entity escaping
+    // cannot protect it. Projecting to [A-Za-z0-9] guarantees it is inert there.
+    var initialText = ((cleanTicker || ticker || '').replace(/[^A-Za-z0-9]/g, '')).substring(0, 2).toUpperCase() || '?';
     var logoHtml = '<div class="mv-avatar" style="background:#ffffff;display:flex;align-items:center;justify-content:center;overflow:hidden;border:1px solid rgba(255,255,255,0.08);padding:2px;box-sizing:border-box;">' +
-      '<img src="' + logoSrc + '" alt="' + cleanTicker + '" style="width:100%;height:100%;object-fit:contain;border-radius:50%;display:block;" onerror="this.onerror=null;this.parentElement.style.background=\'' + c + '\';this.parentElement.style.color=\'#ffffff\';this.parentElement.innerHTML=\'' + initialText + '\';">' +
+      '<img src="' + escapeHTMLStrict(logoSrc) + '" alt="' + cleanTicker + '" style="width:100%;height:100%;object-fit:contain;border-radius:50%;display:block;" onerror="this.onerror=null;this.parentElement.style.background=\'' + c + '\';this.parentElement.style.color=\'#ffffff\';this.parentElement.innerHTML=\'' + initialText + '\';">' +
       '</div>';
 
     var keyMetric = '<div class="mv-change mv-change-' + cleanTicker + ' ' + cls + '">' + arrow + ' ' + Math.abs(changePct).toFixed(2) + '%' +
@@ -3973,11 +3989,11 @@ function renderMoverList(containerId, listData) {
       '<div class="mv-volume mv-volume-' + cleanTicker + '">Volume: ' + volDisplay + '</div>';
     var isIndex = ['NIFTY','SENSEX','BANKNIFTY','FINNIFTY','MIDCAP','SMALLCAP','BSE500','NIFTYMIDCAP100','NIFTYSMLCAP100'].indexOf(cleanTicker) !== -1;
     var moverLink = isIndex ? '/overview.html?ticker=' : '/overview.html?ticker=';
-    html += '<div class="mover-row mv-row-' + cleanTicker + '" id="mv-item-' + containerId + '-' + cleanTicker + '" data-ticker="' + cleanTicker + '" onclick="window.location.href=\'' + moverLink + encodeURIComponent(ticker) + '\'">' +
+    html += '<div class="mover-row mv-row-' + cleanTicker + '" id="mv-item-' + containerId + '-' + cleanTicker + '" data-ticker="' + cleanTicker + '" onclick="window.location.href=\'' + moverLink + encodeURIComponent(ticker).replace(/'/g, '%27') + '\'">' +
               '<div class="mover-left">' +
                 logoHtml +
                 '<div class="mover-info">' +
-                  '<h4>' + ticker + (sectorTag ? ' ' + sectorTag : '') + '</h4>' +
+                  '<h4>' + escapeHTMLStrict(ticker) + (sectorTag ? ' ' + sectorTag : '') + '</h4>' +
                 '</div>' +
               '</div>' +
               '<div class="mover-right">' +
@@ -4149,16 +4165,16 @@ async function fetchWatchlist() {
     var logoHtml;
     if (validLogo) {
       var c2 = _tickerColor(tkr);
-      logoHtml = '<div class="wl-avatar" style="background:' + c2 + ';border:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;overflow:hidden;"><img src="' + logo + '" alt="" style="width:28px;height:28px;border-radius:4px;object-fit:contain;display:block;" onerror="this.parentElement.style.fontSize=\'0\'"></div>';
+      logoHtml = '<div class="wl-avatar" style="background:' + c2 + ';border:none;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;overflow:hidden;"><img src="' + escapeHTMLStrict(logo) + '" alt="" style="width:28px;height:28px;border-radius:4px;object-fit:contain;display:block;" onerror="this.parentElement.style.fontSize=\'0\'"></div>';
     } else {
       logoHtml = '<div class="wl-avatar" style="background:' + _tickerColor(tkr) + ';font-size:0;"></div>';
     }
     var isIdx = ['NIFTY','SENSEX','BANKNIFTY','FINNIFTY','MIDCAP','SMALLCAP','BSE500','NIFTYMIDCAP100','NIFTYSMLCAP100'].indexOf(tkr) !== -1;
     var wlLink = isIdx ? '/overview.html?ticker=' : '/overview.html?ticker=';
-    return '<div class="watchlist-card" onclick="window.location.href=\'' + wlLink + encodeURIComponent(tkr) + '\'">' +
+    return '<div class="watchlist-card" onclick="window.location.href=\'' + wlLink + encodeURIComponent(tkr).replace(/'/g, '%27') + '\'">' +
               logoHtml +
               '<div class="wl-body">' +
-                '<div class="wl-symbol">' + tkr + '</div>' +
+                '<div class="wl-symbol">' + escapeHTMLStrict(tkr) + '</div>' +
                 '<div class="wl-exchange">' + (isIdx ? 'Index' : (tkr.indexOf('.BO') !== -1 ? 'BSE' : 'NSE')) + '</div>' +
                 '<div class="wl-price" id="wl-price-' + tkr + '">\u20B9--</div>' +
                 '<div class="wl-change" id="wl-change-' + tkr + '"></div>' +
