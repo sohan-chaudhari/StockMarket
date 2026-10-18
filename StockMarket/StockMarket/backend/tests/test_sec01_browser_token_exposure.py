@@ -18,12 +18,15 @@ Locked in here:
     the `X-Auth-Mode: bearer` opt-in (that header is not a trust boundary).
 
 Isolated app + in-memory SQLite (same pattern as test_auth.py /
-test_auth_session_cookie.py) -- no Postgres, no network.
+test_auth_session_cookie.py) -- no Postgres, no network. `auth.send_email` is
+patched for the whole module (see setUpModule) so registration never triggers a
+real SMTP send.
 """
 import os
 import unittest
 from datetime import timedelta
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-auth-tests-only")
 
@@ -69,6 +72,29 @@ def _override_get_db():
 
 
 app.dependency_overrides[get_db] = _override_get_db
+
+# SEC-01 test-isolation fix: /api/auth/register, /resend-verification,
+# /forgot-password and /verify-email all funnel through auth.send_email(),
+# which performs a REAL SMTP send when SMTP credentials are configured -- and
+# they are, in backend/.env. A register test using a placeholder address
+# therefore sent real mail from the project's own mail account to a bogus
+# domain (which then bounced back). Tests must never touch that account, so the
+# sender is patched for the entire module.
+_send_email_patch = None
+
+
+def setUpModule():
+    global _send_email_patch
+    _send_email_patch = mock.patch.object(auth, "send_email")
+    _send_email_patch.start()
+
+
+def tearDownModule():
+    global _send_email_patch
+    if _send_email_patch is not None:
+        _send_email_patch.stop()
+        _send_email_patch = None
+
 
 PASSWORD = "Str0ng!Passw0rd123"
 EMAIL = "sec01@example.com"
@@ -351,6 +377,25 @@ class FrontendDoesNotPersistJwtTests(unittest.TestCase):
     def test_user_ws_does_not_send_a_jwt(self):
         t = (FRONTEND / "stock-logic.js").read_text(encoding="utf-8", errors="replace")
         self.assertNotIn("JSON.stringify({ token: token })", t)
+
+
+class EmailIsolationTests(unittest.TestCase):
+    """Guard: the test-suite must never send real mail from the project's
+    configured SMTP account. If this fails, a refactor has re-enabled live
+    email sending from tests."""
+
+    def test_auth_send_email_is_mocked(self):
+        self.assertIsInstance(auth.send_email, mock.Mock)
+
+    def test_registration_attempts_a_mocked_send(self):
+        client = _client()
+        resp = client.post("/api/auth/register", json={
+            "email": "isolation@example.com", "password": PASSWORD, "full_name": "Isolation",
+        })
+        self.assertEqual(resp.status_code, 201, resp.text)
+        # The verification email WAS attempted (so the code path is exercised),
+        # but the sender was the mock -- nothing left the machine.
+        self.assertGreaterEqual(auth.send_email.call_count, 1)
 
 
 if __name__ == "__main__":
