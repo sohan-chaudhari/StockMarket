@@ -674,8 +674,19 @@
                     var redirect = new URLSearchParams(window.location.search).get('redirect') || 'home.html';
                     setTimeout(() => window.location.href = redirect, 1000);
                 } else {
-                    showMessage('loginMessage', data.detail || 'Access denied');
+                    var _loginMsg = data.detail || 'Access denied';
+                    showMessage('loginMessage', _loginMsg);
                     setLoading('loginBtn', 'loginBtnText', false, 'Sign In');
+                    // SEC-04: an unverified account cannot sign in yet. Send the
+                    // user to the existing verification flow (OTP entry) instead
+                    // of stranding them on the login form -- the backend only
+                    // reveals this state once the password is correct.
+                    if (response.status === 403 && /verify your email/i.test(_loginMsg)) {
+                        try { sessionStorage.setItem('auth_return_url', window.location.href); } catch (e) {}
+                        setTimeout(function () {
+                            window.location.href = 'verify-email.html?email=' + encodeURIComponent(email);
+                        }, 1200);
+                    }
                 }
             } catch (err) {
                 showMessage('loginMessage', 'Security transmission error');

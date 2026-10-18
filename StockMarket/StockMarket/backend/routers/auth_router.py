@@ -151,6 +151,22 @@ def login(creds: schemas.UserLogin, request: Request, response: Response, db: Se
         auth.log_login_attempt(db, creds.email, False, request, "Account inactive")
         raise HTTPException(status_code=401, detail="Account is disabled")
 
+    # SEC-04: an unverified email must not be able to sign in. Anything that is
+    # not an explicit True blocks. `is_verified` is NULLABLE in the database, and
+    # a NULL row (created before the registration flow, or by raw SQL) used to
+    # reach the response model as NULL and fail validation with a 500; treating
+    # it as unverified turns that crash into the same actionable verification
+    # error, and the account can verify (or resend a code) and then sign in.
+    # Placed AFTER the password and `is_active` checks, so the verification state
+    # is only ever revealed to a caller who already proved the password, and a
+    # denied attempt has no side effects (last_login / lock untouched).
+    if user.is_verified is not True:
+        auth.log_login_attempt(db, creds.email, False, request, "Email not verified")
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email address before signing in.",
+        )
+
     # Success
     auth.reset_failed_attempts(db, user)
     auth.log_login_attempt(db, creds.email, True, request)
