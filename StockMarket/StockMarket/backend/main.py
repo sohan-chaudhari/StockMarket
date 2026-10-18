@@ -602,8 +602,41 @@ def _request_gap_sweep(ticker: str):
         pass
 
 
+# SEC-02 follow-up: injectable clock so reservation/cooldown expiry is testable
+# deterministically (no sleeps). Defaults to the wall clock used before.
+_backfill_clock = time.time
+
+# A reservation is a SHORT-lived cooldown entry written BEFORE provider work
+# starts, so a concurrent caller for the same key cannot also begin the fill.
+# It also self-expires, so a crashed/aborted fill can never block a ticker
+# permanently. Transient failures are finalised with a short backoff rather than
+# the (longer) success cooldown.
+_BACKFILL_INFLIGHT_SEC = 45
+_BACKFILL_FAIL_MIN_SEC = 30
+
+# Process-wide ceiling on NEW on-demand provider-backed fills per minute. This
+# bounds the "one client enumerates many DISTINCT tickers" case that the per-IP
+# request limit cannot (each request is a different ticker). 60/min ~= 1 fill/s
+# process-wide = 5x the strictest existing provider control (AngelOne account
+# pacing in historical_service, 1 call per 5s). Override with
+# ONDEMAND_FILL_BUDGET_PER_MIN; 0 disables the budget.
+_ONDEMAND_FILL_BUDGET_PER_MIN = int(os.getenv("ONDEMAND_FILL_BUDGET_PER_MIN", "60"))
+_ondemand_budget_lock = threading.Lock()
+_ondemand_budget = {"window_start": 0.0, "used": 0}
+
+
+def _cooldown_put_locked(key: str, until: float):
+    """Insert/overwrite a cooldown entry with the bounded-eviction policy.
+    Caller must hold `_backfill_cooldown_lock`."""
+    if len(_backfill_cooldown) >= _BACKFILL_COOLDOWN_MAX_KEYS and key not in _backfill_cooldown:
+        # Drop the oldest quarter to stay bounded without unbounded growth.
+        for k in sorted(_backfill_cooldown, key=_backfill_cooldown.get)[:max(1, _BACKFILL_COOLDOWN_MAX_KEYS // 4)]:
+            _backfill_cooldown.pop(k, None)
+    _backfill_cooldown[key] = until
+
+
 def _backfill_cooldown_active(key: str) -> bool:
-    now = time.time()
+    now = _backfill_clock()
     with _backfill_cooldown_lock:
         until = _backfill_cooldown.get(key, 0.0)
         if until > now:
@@ -614,13 +647,50 @@ def _backfill_cooldown_active(key: str) -> bool:
 
 
 def _set_backfill_cooldown(key: str, seconds: float):
-    now = time.time()
+    now = _backfill_clock()
     with _backfill_cooldown_lock:
-        if len(_backfill_cooldown) >= _BACKFILL_COOLDOWN_MAX_KEYS and key not in _backfill_cooldown:
-            # Drop the oldest quarter to stay bounded without unbounded growth.
-            for k in sorted(_backfill_cooldown, key=_backfill_cooldown.get)[:max(1, _BACKFILL_COOLDOWN_MAX_KEYS // 4)]:
-                _backfill_cooldown.pop(k, None)
-        _backfill_cooldown[key] = now + seconds
+        _cooldown_put_locked(key, now + seconds)
+
+
+def _try_reserve_backfill(key: str, inflight_sec: float = _BACKFILL_INFLIGHT_SEC) -> bool:
+    """Atomically claim `key` for a provider fill (check-and-set under one lock).
+
+    Returns True only if the key is currently free; installs a short-lived
+    in-flight reservation so a concurrent caller cannot start the same fill. The
+    caller must finalise it with `_set_backfill_cooldown`, or the reservation
+    expires on its own after `inflight_sec`."""
+    now = _backfill_clock()
+    with _backfill_cooldown_lock:
+        if _backfill_cooldown.get(key, 0.0) > now:
+            return False
+        _cooldown_put_locked(key, now + inflight_sec)
+        return True
+
+
+def _release_backfill(key: str):
+    """Drop a reservation when no provider call was actually started (e.g. the
+    global budget was exhausted), so the ticker is not penalised."""
+    with _backfill_cooldown_lock:
+        _backfill_cooldown.pop(key, None)
+
+
+def _try_consume_ondemand_budget() -> bool:
+    """Atomically take one slot from the process-wide on-demand fill budget.
+
+    Non-blocking: returns False immediately when the current window is exhausted
+    (callers then serve stored data only). Stored reads / cache hits never reach
+    here, so they are not counted."""
+    if _ONDEMAND_FILL_BUDGET_PER_MIN <= 0:
+        return True
+    now = _backfill_clock()
+    with _ondemand_budget_lock:
+        if now - _ondemand_budget["window_start"] >= 60.0:
+            _ondemand_budget["window_start"] = now
+            _ondemand_budget["used"] = 0
+        if _ondemand_budget["used"] >= _ONDEMAND_FILL_BUDGET_PER_MIN:
+            return False
+        _ondemand_budget["used"] += 1
+        return True
 
 def _safe_logo(val, ticker=None):
     """Return logo only if it is a valid, trusted image URL; otherwise default to local /logos/{ticker}.svg."""
@@ -1394,6 +1464,15 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
     try:
 
         model = models.Candle
+
+        # SEC-02 follow-up: process-wide on-demand fill budget (non-blocking).
+        # Reached only after the cooldown / lock / closed-market guards above --
+        # i.e. only when a real provider fill is about to start. If the window is
+        # exhausted the fill is skipped; the caller already has its stored
+        # candles, and nothing is fabricated or reported as repaired.
+        if not _try_consume_ondemand_budget():
+            print(f"[GapFill] On-demand provider budget exhausted; skipping {clean_ticker} {interval}")
+            return 0
 
         # Ensure logged in
 
@@ -5962,13 +6041,21 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
     # fetch the gap from yfinance, and fallback to AngelOne if yfinance fails or misses recent days.
     needs_gap_fill = (not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)
 
-    # SEC-02: throttle repeat provider attempts for the same ticker. Stored
-    # candles are always served; only the fetch/write side is skipped while the
-    # cooldown is active.
+    # SEC-02 follow-up: atomically reserve this ticker BEFORE any provider work
+    # and take one slot of the process-wide on-demand budget. A concurrent
+    # request for the same ticker therefore cannot also start the fill, and the
+    # reserve happens only because stored data was found insufficient (so
+    # ordinary reads never consume budget).
     _daily_fill_key = f"{clean_ticker}:daily_gapfill"
-    _daily_fill_allowed = not _backfill_cooldown_active(_daily_fill_key)
+    _daily_fill_claimed = False
+    if needs_gap_fill:
+        if _try_reserve_backfill(_daily_fill_key):
+            if _try_consume_ondemand_budget():
+                _daily_fill_claimed = True
+            else:
+                _release_backfill(_daily_fill_key)
 
-    if needs_gap_fill and not _is_yfinance_failed(clean_ticker) and _daily_fill_allowed:
+    if needs_gap_fill and not _is_yfinance_failed(clean_ticker) and _daily_fill_claimed:
         most_recent_date = records[0].timestamp.date() if records else (ist_now.date() - timedelta(days=365*5 if range.upper() == "ALL" else (range_days if range_days else 365)))
         try:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -6023,7 +6110,7 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
 
     # Fallback to AngelOne if still missing target latest trading day or insufficient records
     records = _query_candles_1d()
-    if ((not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)) and _daily_fill_allowed:
+    if ((not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)) and _daily_fill_claimed:
         try:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             if not historical_service.is_logged_in:
@@ -6073,11 +6160,13 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
         except Exception as e:
             print(f"[WARN] AngelOne historical fallback failed for {clean_ticker}: {e}")
 
-    if needs_gap_fill and _daily_fill_allowed:
-        # A provider attempt was made on this request; throttle the next one for
-        # the same ticker regardless of outcome (on success the candles are now
-        # stored, so a later request is served from the DB with no provider call).
-        _set_backfill_cooldown(_daily_fill_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC)
+    if _daily_fill_claimed:
+        # Finalise the reservation: a fill that produced the expected stored
+        # candles gets the success cooldown; anything else (empty result or an
+        # unexpected error) gets only a short backoff, so a transient failure is
+        # retried soon without becoming a retry storm.
+        _fresh = bool(records) and records[0].timestamp.date() >= target_latest_trading_day and len(records) >= MIN_DAILY_RECORDS
+        _set_backfill_cooldown(_daily_fill_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC if _fresh else _BACKFILL_FAIL_MIN_SEC)
 
     # Build response using date string format (preserves existing API contract).
     result = [
@@ -6543,7 +6632,15 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
             len(stored_dict) < 150
         )
         _resample_weekly_key = f"{clean}:resample1W"
-        if need_weekly_fill and not _is_yfinance_failed(clean) and not _backfill_cooldown_active(_resample_weekly_key):
+        _weekly_claimed = False
+        _weekly_got_data = False
+        if need_weekly_fill and not _is_yfinance_failed(clean):
+            if _try_reserve_backfill(_resample_weekly_key):
+                if _try_consume_ondemand_budget():
+                    _weekly_claimed = True
+                else:
+                    _release_backfill(_resample_weekly_key)
+        if _weekly_claimed:
             try:
                 yf_sym = _yfinance_ticker(clean)
                 acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
@@ -6555,6 +6652,7 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                         _yf_semaphore.release()
 
                     if df_w is not None and not df_w.empty:
+                        _weekly_got_data = True
                         if isinstance(df_w.columns, pd.MultiIndex):
                             df_w.columns = df_w.columns.get_level_values(0)
                         to_store_db = []  # completed weeks to persist
@@ -6597,9 +6695,10 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                                 print(f"[GapFill] {clean} 1W: DB store error: {_pe}")
             except Exception as e:
                 print(f"[GapFill] {clean} 1W yfinance fetch error: {e}")
-                _set_backfill_cooldown(_resample_weekly_key, _BACKFILL_FAIL_COOLDOWN_SEC)
+                _set_backfill_cooldown(_resample_weekly_key, _BACKFILL_FAIL_MIN_SEC)
             else:
-                _set_backfill_cooldown(_resample_weekly_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC)
+                _set_backfill_cooldown(_resample_weekly_key,
+                                       _DAILY_HISTORY_FILL_COOLDOWN_SEC if _weekly_got_data else _BACKFILL_FAIL_MIN_SEC)
 
     # ── LAYER 2 (1M only): fill 1M history from yfinance or resample stored 1W ────────────
     if target_tf == "1M":
@@ -6613,7 +6712,15 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
             len(stored_dict) < 60
         )
         _resample_monthly_key = f"{clean}:resample1M"
-        if need_monthly_fill and not _is_yfinance_failed(clean) and not _backfill_cooldown_active(_resample_monthly_key):
+        _monthly_claimed = False
+        _monthly_got_data = False
+        if need_monthly_fill and not _is_yfinance_failed(clean):
+            if _try_reserve_backfill(_resample_monthly_key):
+                if _try_consume_ondemand_budget():
+                    _monthly_claimed = True
+                else:
+                    _release_backfill(_resample_monthly_key)
+        if _monthly_claimed:
             try:
                 yf_sym = _yfinance_ticker(clean)
                 acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
@@ -6625,6 +6732,7 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                         _yf_semaphore.release()
 
                     if df_m is not None and not df_m.empty:
+                        _monthly_got_data = True
                         if isinstance(df_m.columns, pd.MultiIndex):
                             df_m.columns = df_m.columns.get_level_values(0)
                         to_store_m_db = []
@@ -6662,9 +6770,10 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
                                 print(f"[GapFill] {clean} 1M: DB store error: {_pe}")
             except Exception as e:
                 print(f"[GapFill] {clean} 1M yfinance fetch error: {e}")
-                _set_backfill_cooldown(_resample_monthly_key, _BACKFILL_FAIL_COOLDOWN_SEC)
+                _set_backfill_cooldown(_resample_monthly_key, _BACKFILL_FAIL_MIN_SEC)
             else:
-                _set_backfill_cooldown(_resample_monthly_key, _DAILY_HISTORY_FILL_COOLDOWN_SEC)
+                _set_backfill_cooldown(_resample_monthly_key,
+                                       _DAILY_HISTORY_FILL_COOLDOWN_SEC if _monthly_got_data else _BACKFILL_FAIL_MIN_SEC)
 
         # Also resample stored 1W → 1M to fill the middle period
         db_1w = db.query(models.Candle).filter(
@@ -6808,8 +6917,10 @@ def get_chart_service(request: Request, ticker: str = Query(..., max_length=40),
 # ==================== PAGINATED / CACHE-OPTIMIZED ENDPOINTS ====================
 
 @app.get("/api/stock-data/candle/latest")
-def get_latest_candle(ticker: str = Query(...), interval: str = Query("5m"), db: Session = Depends(get_db)):
-    """Return the latest completed candle for WS reconnect candle recovery."""
+@limiter.limit("240/minute")
+def get_latest_candle(request: Request, ticker: str = Query(..., max_length=40), interval: str = Query("5m", max_length=8), db: Session = Depends(get_db)):
+    """Return the latest completed candle for WS reconnect candle recovery
+    (single indexed row read; no provider work)."""
     db_tickers = _normalize_ticker(ticker)
     
     if interval in INTRADAY_TFS:
@@ -6832,6 +6943,16 @@ def get_latest_candle(ticker: str = Query(...), interval: str = Query("5m"), db:
 
 
 @app.get("/api/stock-data/intraday/paginated")
+@limiter.limit("120/minute")
+def _intraday_paginated_route(request: Request, ticker: str = Query(..., max_length=40), interval: str = Query("5m", max_length=8), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
+    """Rate-limited public route. The body stays in `get_intraday_paginated`
+    (which the test-suite and other in-process callers invoke directly); slowapi
+    requires a `Request` argument, so the route must be a separate function."""
+    return get_intraday_paginated(ticker=ticker, interval=interval, before=before,
+                                  after=after, limit=limit,
+                                  background_tasks=background_tasks, db=db)
+
+
 def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     """Paginated intraday intraday_candles_5min. Auto-triggers gap fill on first page load (before=None)."""
     db_tickers = _normalize_ticker(ticker)
@@ -7052,20 +7173,33 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             _ss, _se = _stable_job_range("5m", now)
             if (not _backfill_cooldown_active(_sync_key)
                     and _bj.has_missing(db, clean_ticker, "5m", _ss, _se)):
-                if _sync_repair_recent(db, clean_ticker, now):
-                    _set_backfill_cooldown(_sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
-                    _q2 = q_base
-                    if before is not None and isinstance(before, (int, float)):
-                        _q2 = _q2.filter(model.timestamp < _epoch_to_ist_dt(before))
-                    if after is not None and isinstance(after, (int, float)):
-                        _q2 = _q2.filter(model.timestamp > _epoch_to_ist_dt(after))
-                    records = _q2.order_by(model.timestamp.desc()).limit(limit + 1).all()
-                    print(f"[SyncRepair] {clean_ticker} {interval}: response rebuilt with "
-                          f"{len(records)} stored candle(s)")
-                else:
-                    # Nothing new came back (e.g. every remaining bucket is a
-                    # no-trade window) -> back off so the next open is fast.
-                    _set_backfill_cooldown(_sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
+                # SEC-02 follow-up: a real fill is required (has_missing above),
+                # so reserve this ticker atomically and take one slot of the
+                # process-wide budget BEFORE any provider call. Budget exhaustion
+                # leaves the stored response untouched.
+                _sync_claimed = False
+                if _try_reserve_backfill(_sync_key):
+                    if _try_consume_ondemand_budget():
+                        _sync_claimed = True
+                    else:
+                        _release_backfill(_sync_key)
+                if _sync_claimed:
+                    if _sync_repair_recent(db, clean_ticker, now):
+                        _set_backfill_cooldown(_sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
+                        _q2 = q_base
+                        if before is not None and isinstance(before, (int, float)):
+                            _q2 = _q2.filter(model.timestamp < _epoch_to_ist_dt(before))
+                        if after is not None and isinstance(after, (int, float)):
+                            _q2 = _q2.filter(model.timestamp > _epoch_to_ist_dt(after))
+                        records = _q2.order_by(model.timestamp.desc()).limit(limit + 1).all()
+                        print(f"[SyncRepair] {clean_ticker} {interval}: response rebuilt with "
+                              f"{len(records)} stored candle(s)")
+                    else:
+                        # Nothing came back (empty / no-trade window or a
+                        # transient error): short backoff rather than the full
+                        # success cooldown, so a transient failure retries soon
+                        # without a retry storm.
+                        _set_backfill_cooldown(_sync_key, _BACKFILL_FAIL_MIN_SEC)
         except Exception as _sr_err:
             print(f"[SyncRepair] {clean_ticker} error: {_sr_err}")
 
@@ -7209,7 +7343,8 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
 
 
 @app.get("/api/stock-data/range/paginated")
-def get_range_paginated(ticker: str = Query(...), range: str = Query("ALL"), before: str = Query(None), after: str = Query(None), limit: int = Query(1500, ge=1, le=50000), db: Session = Depends(get_db)):
+@limiter.limit("120/minute")
+def get_range_paginated(request: Request, ticker: str = Query(..., max_length=40), range: str = Query("ALL", max_length=8), before: str = Query(None), after: str = Query(None), limit: int = Query(1500, ge=1, le=50000), db: Session = Depends(get_db)):
     """Paginated daily OHLCV. Reads from candles(1D) — the SSOT for daily chart data.
     Response format is preserved: time=YYYY-MM-DD string (toTimeNum handles both formats)."""
     db_tickers = _normalize_ticker(ticker)
@@ -7242,7 +7377,8 @@ def get_range_paginated(ticker: str = Query(...), range: str = Query("ALL"), bef
 
 
 @app.get("/api/stock-data/intraday/since")
-def get_intraday_since(ticker: str = Query(...), interval: str = Query("5m"), since: int = Query(None), db: Session = Depends(get_db)):
+@limiter.limit("240/minute")
+def get_intraday_since(request: Request, ticker: str = Query(..., max_length=40), interval: str = Query("5m", max_length=8), since: int = Query(None), db: Session = Depends(get_db)):
     """Return all intraday candles since a given timestamp (used for WS reconnect recovery)."""
     if since is None:
         return []
