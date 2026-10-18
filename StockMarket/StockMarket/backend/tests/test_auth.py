@@ -494,12 +494,30 @@ class TestLoginEndpoint(unittest.TestCase):
             })
             self.assertEqual(resp.status_code, 401)
 
-        # 6th attempt, even with the CORRECT password, must be locked out.
+        # SEC-03: brute-force protection is unchanged -- a further WRONG password
+        # is still refused while the account is locked.
         resp = self.client.post("/api/auth/login", json={
-            "email": "login@example.com", "password": STRONG_PASSWORD,
+            "email": "login@example.com", "password": "WrongPassword123!",
         })
         self.assertEqual(resp.status_code, 403)
         self.assertIn("temporarily locked", resp.json()["detail"])
+
+        # ...but the lock must never deny the account OWNER. Previously this
+        # returned 403, which let anyone who knew the email lock the real user
+        # out on demand; the correct password now always signs in and clears the
+        # lock.
+        resp = self.client.post("/api/auth/login", json={
+            "email": "login@example.com", "password": STRONG_PASSWORD,
+        })
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+        db = _db_session()
+        try:
+            user = db.query(models.User).filter(models.User.email == "login@example.com").first()
+            self.assertEqual(user.failed_login_attempts, 0)
+            self.assertIsNone(user.locked_until)
+        finally:
+            db.close()
 
     def test_successful_login_resets_failed_attempt_counter(self):
         for _ in range(3):

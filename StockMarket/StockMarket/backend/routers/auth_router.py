@@ -129,13 +129,20 @@ def register(request: Request, user: schemas.UserRegister, db: Session = Depends
 def login(creds: schemas.UserLogin, request: Request, response: Response, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == creds.email).with_for_update().first()
     
-    if user:
-        is_locked, lock_msg = auth.check_account_locked(user)
-        if is_locked:
-            raise HTTPException(status_code=403, detail=lock_msg)
+    # SEC-03: the account lock exists to stop GUESSING, not to deny the account
+    # owner. Verify the password FIRST so a correct password always signs in --
+    # otherwise anyone who knows the email could lock the real user out on demand
+    # by burning the failed-attempt budget (the previous order checked the lock
+    # before the password, so 5 anonymous failures denied the owner for 30 min).
+    # A WRONG password is still rejected while locked, and does not extend the
+    # lock, so the 5-attempts / 30-minutes brute-force ceiling is unchanged.
+    password_ok = bool(user) and auth.verify_password(creds.password, user.password_hash)
             
-    if not user or not auth.verify_password(creds.password, user.password_hash):
+    if not password_ok:
         if user:
+            is_locked, lock_msg = auth.check_account_locked(user)
+            if is_locked:
+                raise HTTPException(status_code=403, detail=lock_msg)
             auth.handle_failed_login(db, user)
         auth.log_login_attempt(db, creds.email, False, request, "Invalid credentials")
         raise HTTPException(status_code=401, detail="Invalid email or password")
