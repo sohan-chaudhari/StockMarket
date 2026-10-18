@@ -371,5 +371,94 @@ class NewRouteRateLimitTests(unittest.TestCase):
             client.get("/intraday/since", params={"ticker": "A" * 41, "since": 1}).status_code, 422)
 
 
+# ==========================================================================
+# N1: the on-demand budget is charged only when a provider call is made
+# ==========================================================================
+def _empty_session_ctx():
+    """Context-manager stub for database.SessionLocal() whose reads return []."""
+    ctx = mock.MagicMock()
+    ctx.__enter__.return_value.query.return_value.filter.return_value \
+        .order_by.return_value.all.return_value = []
+    return ctx
+
+
+class DerivedTimeframeBudgetTests(_Isolated):
+    """A derived timeframe served entirely from stored 5m must not spend a
+    provider-budget slot (it performs no provider call)."""
+
+    def _call(self, ticker, interval):
+        now = main.database.get_ist_now()
+        with mock.patch.object(main, "historical_service", mock.MagicMock(is_logged_in=True)), \
+             mock.patch.object(main, "is_market_open_now", return_value=True), \
+             mock.patch.object(main.database, "SessionLocal", side_effect=_empty_session_ctx):
+            return main.perform_on_demand_backfill(ticker, interval, now - timedelta(days=1), now)
+
+    def test_derived_timeframe_from_stored_data_charges_no_budget(self):
+        before = main._ondemand_budget["used"]
+        out = self._call("ZZN1DERIVED", "15m")
+        self.assertEqual(out, 0)
+        self.assertEqual(
+            main._ondemand_budget["used"], before,
+            "a stored-only derived-timeframe fill must not spend a provider-budget slot",
+        )
+
+    def test_exhausted_budget_skips_a_provider_interval_without_charging(self):
+        orig = main._ONDEMAND_FILL_BUDGET_PER_MIN
+        main._ONDEMAND_FILL_BUDGET_PER_MIN = 1
+        try:
+            self.assertTrue(main._try_consume_ondemand_budget())  # exhaust the window
+            before = main._ondemand_budget["used"]
+            out = self._call("ZZN1SPOT", "5m")
+            self.assertEqual(out, 0, "an exhausted budget must skip the provider fill")
+            self.assertEqual(main._ondemand_budget["used"], before)
+        finally:
+            main._ONDEMAND_FILL_BUDGET_PER_MIN = orig
+
+
+# ==========================================================================
+# N2: bounded eviction must never drop a live in-flight reservation
+# ==========================================================================
+class InflightReservationEvictionTests(_Isolated):
+    def test_live_reservation_survives_eviction_and_still_blocks_duplicates(self):
+        key = "ZZN2KEEP:resample1W"
+        self.assertTrue(main._try_reserve_backfill(key))
+        self.assertIn(key, main._backfill_inflight)
+
+        n = main._BACKFILL_COOLDOWN_MAX_KEYS
+        for i in range(n):
+            main._set_backfill_cooldown(f"ZZN2D{i}:5m", 3600)
+
+        self.assertIn(key, main._backfill_cooldown,
+                      "a live in-flight reservation must survive registry eviction")
+        self.assertFalse(main._try_reserve_backfill(key),
+                         "a duplicate fill must still be blocked after eviction pressure")
+
+    def test_finalise_clears_the_inflight_marker(self):
+        key = "ZZN2FIN:resample1W"
+        self.assertTrue(main._try_reserve_backfill(key))
+        self.assertIn(key, main._backfill_inflight)
+        main._set_backfill_cooldown(key, 30)
+        self.assertNotIn(key, main._backfill_inflight)
+        self.assertTrue(main._backfill_cooldown_active(key))
+
+    def test_expiry_clears_the_inflight_marker(self):
+        key = "ZZN2EXP:resample1W"
+        self.assertTrue(main._try_reserve_backfill(key))
+        self.clock.advance(main._BACKFILL_INFLIGHT_SEC + 1)
+        self.assertFalse(main._backfill_cooldown_active(key))
+        self.assertNotIn(key, main._backfill_inflight)
+
+    def test_registry_stays_bounded_when_every_slot_is_reserved(self):
+        n = main._BACKFILL_COOLDOWN_MAX_KEYS
+        with main._backfill_cooldown_lock:
+            for i in range(n):
+                k = f"ZZN2R{i}:5m"
+                main._backfill_cooldown[k] = self.clock.t + main._BACKFILL_INFLIGHT_SEC
+                main._backfill_inflight.add(k)
+        main._set_backfill_cooldown("ZZN2OVER:5m", 3600)
+        self.assertLessEqual(len(main._backfill_cooldown), n,
+                             "the registry must stay bounded even if every slot is reserved")
+
+
 if __name__ == "__main__":
     unittest.main()

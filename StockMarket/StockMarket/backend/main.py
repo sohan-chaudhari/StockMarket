@@ -568,6 +568,10 @@ _backfill_lock = threading.Lock()
 # called again for it. State is a bounded in-process dict -- no new infra.
 _backfill_cooldown: Dict[str, float] = {}
 _backfill_cooldown_lock = threading.Lock()
+# Keys currently RESERVED by a running fill (see _try_reserve_backfill). Tracked
+# separately so bounded eviction can never drop a live reservation and let a
+# concurrent duplicate fill start. Guarded by `_backfill_cooldown_lock`.
+_backfill_inflight: set = set()
 _BACKFILL_OK_COOLDOWN_SEC = 60           # success: allow later polls to fill new gaps
 _BACKFILL_FAIL_COOLDOWN_SEC = 300        # transient provider failure (rate limit/network)
 _BACKFILL_PERMANENT_COOLDOWN_SEC = 1800  # invalid/unsupported symbol
@@ -630,8 +634,18 @@ def _cooldown_put_locked(key: str, until: float):
     Caller must hold `_backfill_cooldown_lock`."""
     if len(_backfill_cooldown) >= _BACKFILL_COOLDOWN_MAX_KEYS and key not in _backfill_cooldown:
         # Drop the oldest quarter to stay bounded without unbounded growth.
-        for k in sorted(_backfill_cooldown, key=_backfill_cooldown.get)[:max(1, _BACKFILL_COOLDOWN_MAX_KEYS // 4)]:
+        # Prefer entries that are NOT live in-flight reservations: a running
+        # fill's reservation (the shortest expiry, now+45s) would otherwise be
+        # evicted first and let a concurrent duplicate start. Falls back to any
+        # entry only if every slot is currently reserved -- keeps the registry
+        # bounded in the pathological case.
+        victims = sorted((k for k in _backfill_cooldown if k not in _backfill_inflight),
+                         key=_backfill_cooldown.get)
+        if not victims:
+            victims = sorted(_backfill_cooldown, key=_backfill_cooldown.get)
+        for k in victims[:max(1, _BACKFILL_COOLDOWN_MAX_KEYS // 4)]:
             _backfill_cooldown.pop(k, None)
+            _backfill_inflight.discard(k)
     _backfill_cooldown[key] = until
 
 
@@ -643,12 +657,14 @@ def _backfill_cooldown_active(key: str) -> bool:
             return True
         if until:
             _backfill_cooldown.pop(key, None)
+            _backfill_inflight.discard(key)
     return False
 
 
 def _set_backfill_cooldown(key: str, seconds: float):
     now = _backfill_clock()
     with _backfill_cooldown_lock:
+        _backfill_inflight.discard(key)
         _cooldown_put_locked(key, now + seconds)
 
 
@@ -663,6 +679,9 @@ def _try_reserve_backfill(key: str, inflight_sec: float = _BACKFILL_INFLIGHT_SEC
     with _backfill_cooldown_lock:
         if _backfill_cooldown.get(key, 0.0) > now:
             return False
+        # Mark in-flight BEFORE inserting so the insert's own eviction pass can
+        # never evict the reservation we are about to take.
+        _backfill_inflight.add(key)
         _cooldown_put_locked(key, now + inflight_sec)
         return True
 
@@ -671,6 +690,7 @@ def _release_backfill(key: str):
     """Drop a reservation when no provider call was actually started (e.g. the
     global budget was exhausted), so the ticker is not penalised."""
     with _backfill_cooldown_lock:
+        _backfill_inflight.discard(key)
         _backfill_cooldown.pop(key, None)
 
 
@@ -1466,13 +1486,20 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         model = models.Candle
 
         # SEC-02 follow-up: process-wide on-demand fill budget (non-blocking).
-        # Reached only after the cooldown / lock / closed-market guards above --
-        # i.e. only when a real provider fill is about to start. If the window is
-        # exhausted the fill is skipped; the caller already has its stored
-        # candles, and nothing is fabricated or reported as repaired.
-        if not _try_consume_ondemand_budget():
-            print(f"[GapFill] On-demand provider budget exhausted; skipping {clean_ticker} {interval}")
-            return 0
+        # It is charged LAZILY, at the first real provider call (see
+        # _provider_budget_ok below), not on entry: a derived timeframe served
+        # entirely from stored 5m never calls a provider and must not spend a
+        # slot. If the window is exhausted the fill is skipped; the caller
+        # already has its stored candles, and nothing is fabricated.
+        _budget_checked = False
+        _budget_ok = False
+
+        def _provider_budget_ok() -> bool:
+            nonlocal _budget_checked, _budget_ok
+            if not _budget_checked:
+                _budget_checked = True
+                _budget_ok = _try_consume_ondemand_budget()
+            return _budget_ok
 
         # Ensure logged in
 
@@ -1495,7 +1522,7 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
         is_index = (clean_ticker in ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP"] or
                     clean_ticker in INDEX_MAP or clean_ticker in YFINANCE_INDEX_MAP)
 
-        if is_index:
+        if is_index and _provider_budget_ok():
             try:
                 yf_data = _fetch_yfinance_intraday(None, clean_ticker, interval, use_bg_semaphore=True)
                 if yf_data:
@@ -1560,6 +1587,9 @@ def perform_on_demand_backfill(ticker: str, interval: str, backfill_start: datet
             return 0
 
         if not intraday_candles:
+            if not _provider_budget_ok():
+                print(f"[GapFill] On-demand provider budget exhausted; skipping {clean_ticker} {interval}")
+                return 0
             angel_interval_map = {
                 "1m": "ONE_MINUTE",
                 "5m": "FIVE_MINUTE",
