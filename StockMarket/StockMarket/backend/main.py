@@ -1280,8 +1280,8 @@ def get_all_stocks(db: Session = Depends(get_db)):
     # Search universe: EVERY instrument known in `stock_metadata`, collapsed to
     # one row per ticker (NSE preferred) below. A genuinely listed company must
     # be searchable even when its `is_active` flag is stale AND it has no stored
-    # history yet: the yfinance failure tracker (POST /api/yfinance/sync-inactive)
-    # de-lists any symbol that merely failed to resolve, and no data is then ever
+    # history yet: the yfinance failure tracker's periodic sync de-lists any
+    # symbol that merely failed to resolve, and no data is then ever
     # fetched for it -- e.g. TAPARIA / Taparia Tools Ltd. (0 rows in stock_data
     # and 0 candles). Being searchable is a metadata concern, not a
     # data-availability one. A single query; no per-ticker round trips and no
@@ -2952,35 +2952,19 @@ async def health_check(top_allocations: int = 0):
 # ==================== YFINANCE REPORT & SYNC ====================
 
 @app.get("/api/yfinance/report")
-def yfinance_failure_report():
+def yfinance_failure_report(current_user: models.User = Depends(auth.require_admin)):
     """Return the yfinance failure report with all tracked invalid/delisted symbols."""
     report = yf_downloader.get_failure_report()
     report["invalid_symbols"] = yf_downloader.get_invalid_symbols_report()
     return report
 
-@app.post("/api/yfinance/sync-inactive")
-def yfinance_sync_inactive(db: Session = Depends(get_db)):
-    """Persist tracked inactive symbols to the database as is_active=False."""
-    inactive = yf_downloader.get_inactive_symbols()
-    updated = 0
-    for ticker, reason in inactive.items():
-        existing = db.query(models.StockMetadata).filter(
-            models.StockMetadata.ticker == ticker
-        ).first()
-        if existing:
-            existing.is_active = False
-            updated += 1
-        else:
-            rec = models.StockMetadata(
-                ticker=ticker, name=f"[{reason}]", exchange="NSE",
-                is_active=False
-            )
-            db.add(rec)
-            updated += 1
-    if updated:
-        db.commit()
-        yf_downloader.clear_inactive_symbols()
-    return {"synced": updated, "remaining_inactive": len(yf_downloader.get_inactive_symbols())}
+# NOTE (SEC-06): the former `POST /api/yfinance/sync-inactive` route was REMOVED.
+# It had no callers at all (no frontend, test or internal reference) and was a
+# verbatim duplicate of the already-scheduled sync -- `_sync_yfinance_inactive_symbols`
+# (below), driven by `_yfinance_inactive_sync()` inside startup() every 300s --
+# while being an UNAUTHENTICATED database write (is_active=False flips plus new
+# stock_metadata rows). The scheduled job and its helper are unchanged; a manual
+# trigger, if ever needed, should be an admin-gated route calling that helper.
 
 # ==================== MARKET MOVERS ====================
 
@@ -3048,7 +3032,7 @@ except Exception as e:
     print(f"[Movers] Could not load stock metadata: {e}")
 
 @app.get("/api/aggregator-stats")
-def get_aggregator_stats():
+def get_aggregator_stats(current_user: models.User = Depends(auth.require_admin)):
     """Diagnostic: tick ordering stats, active tickers, stale skips, and the
     shared historical-provider counters (calls, dedup hits, throttles, cooldowns)
     used to measure whether redundant provider requests are actually reduced."""
@@ -3062,7 +3046,7 @@ def get_aggregator_stats():
 
 
 @app.get("/api/poller-stats")
-def get_poller_stats():
+def get_poller_stats(current_user: models.User = Depends(auth.require_admin)):
     """Returns stats about the multi-threaded price poller."""
     poller = getattr(app.state, "price_poller", None)
     if not poller:
@@ -7470,7 +7454,7 @@ def refresh_holidays(db: Session = Depends(get_db), current_user: models.User = 
 # ==================== CANDLE HEALTH & GAPS ====================
 
 @app.get("/api/candle-health")
-def get_candle_health(ticker: str = Query(None), db: Session = Depends(get_db)):
+def get_candle_health(ticker: str = Query(None), db: Session = Depends(get_db), current_user: models.User = Depends(auth.require_admin)):
     """Data quality dashboard: count, timeframes, recent activity."""
     from aggregator import compute_candle_health
     return compute_candle_health(ticker=ticker, db_session=db)
@@ -7482,6 +7466,7 @@ def get_candle_gaps(
     timeframe: str = Query("5m"),
     days: int = Query(7, ge=1, le=90),
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_admin),
 ):
     """Detect missing intervals for a ticker+timeframe."""
     from aggregator import detect_missing_intervals
@@ -10382,7 +10367,7 @@ def init_recovery_service():
 # ==================== MONITORING ENDPOINT ====================
 
 @app.get("/api/monitoring/candle-system")
-def get_candle_system_health():
+def get_candle_system_health(current_user: models.User = Depends(auth.require_admin)):
     """Health status for all candle system components."""
     return monitor.get_health()
 
@@ -10391,7 +10376,8 @@ def get_candle_system_health():
 
 @app.get("/api/validation/run")
 def run_validation(ticker: str = Query(...), timeframe: str = Query("5m"),
-                   db: Session = Depends(get_db)):
+                   db: Session = Depends(get_db),
+                   current_user: models.User = Depends(auth.require_admin)):
     """Run all validation checks for a given ticker/timeframe."""
     from models import Candle
     clean = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
