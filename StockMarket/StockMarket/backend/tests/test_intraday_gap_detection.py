@@ -530,11 +530,29 @@ class AuthErrorTests(unittest.TestCase):
                       "an auth error must never reach permanently_failed")
 
     def test_derived_timeframes_ignore_stored_rows(self):
+        """Derived TFs must not merge the legacy stored rows into the LATEST
+        window: merging them there left permanent holes (stored 15m is a subset
+        of what 5m produces).
+
+        The discard is now scoped to `is_latest_request`. It used to be
+        unconditional, which silently broke the other half of the contract:
+        a scroll-back page (`before=...`) returns zero rows and has_more=false,
+        so the chart could never load 15m/30m/1h history older than
+        `_intraday_cutoff()` even though the retained stored rows were sitting
+        in the DB (measured 2026-10-18: ETERNAL 15m had 3476 stored rows back to
+        March, every scroll-back returned 0). The history-page contract is
+        covered by tests/test_derived_tf_history_page.py.
+        """
         src = inspect.getsource(main.get_intraday_paginated)
-        i = src.find("DERIVED TIMEFRAMES: ignore the stored rows")
-        self.assertGreater(i, -1, "the derived-TF branch must exist")
-        self.assertIn("records = []", src[i:i + 1000],
-                      "a derived timeframe must not merge legacy stored rows")
+        self.assertIn("DERIVED TIMEFRAMES", src, "the derived-TF branch must exist")
+        i = src.find("if interval in DERIVED_FROM_5M and is_latest_request:")
+        self.assertGreater(i, -1,
+                           "the derived-TF discard must be scoped to the latest window")
+        self.assertIn("records = []", src[i:i + 200],
+                      "a derived timeframe must not merge legacy stored rows into "
+                      "the latest window")
+        self.assertNotIn("if interval in DERIVED_FROM_5M:\n        records = []", src,
+                         "the unconditional discard broke lazy-load and must not return")
 
     def test_sweep_only_enqueues_real_active_nse_instruments(self):
         src = inspect.getsource(main._sweep_intraday_gaps_once)

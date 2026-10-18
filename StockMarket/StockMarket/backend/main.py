@@ -7227,15 +7227,31 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         except Exception as _yf_fb_err:
             print(f"[GapFill] On-the-fly direct fallback error for {clean_ticker}: {_yf_fb_err}")
 
-    # === DERIVED TIMEFRAMES: ignore the stored rows entirely ===
-    # 15m/30m/1h/4h are built purely from stored 5m below. The legacy stored
-    # 15m/30m/1h rows are deliberately NOT merged in: they are a strict subset of
-    # what 5m produces (measured: RELIANCE over 30 days had 432 stored 15m buckets
+    # === DERIVED TIMEFRAMES ===
+    # For the LATEST window (before=None: the first page and every live refresh)
+    # 15m/30m/1h/4h are built purely from stored 5m. The legacy stored 15m/30m/1h
+    # rows are deliberately NOT merged into that window: they are a subset of what
+    # 5m produces (measured: RELIANCE over 30 days had 432 stored 15m buckets
     # against 500 derivable ones), so merging them left permanent holes wherever a
     # bucket was absent from stored AND older than the newest stored bar. 4h has no
     # stored rows at all, which is exactly why it is the only timeframe that never
     # showed a gap.
-    if interval in DERIVED_FROM_5M:
+    #
+    # HISTORY PAGES (before=<epoch>, i.e. lazy-load scroll-back) are a different
+    # problem and MUST NOT discard the stored rows. The 5m resample below is gated
+    # on `is_latest_request`, so discarding unconditionally made every scroll-back
+    # return zero rows with has_more=false: the chart could never load history
+    # older than _intraday_cutoff(). Measured on production 2026-10-18:
+    #   ETERNAL 15m before=<45d cutoff> -> rows=0 has_more=false
+    #   ETERNAL  5m before=<same epoch> -> rows=600 has_more=true
+    # while 3476 stored 15m rows back to 2026-03-06 sat unused, for all 3398
+    # tickers holding pre-cutoff 15m rows. The stored rows ARE the deep-history
+    # tier (config/retention_policy.py keeps the newest ~60 5m sessions and the
+    # older bands as 15m/30m/1h), so they are exactly what a history page wants.
+    # The two sources share bucket alignment (every stored 15m row sits on a
+    # 15-minute boundary, verified 3476/3476) and the client de-dupes on exact
+    # timestamp, so the seam between them is clean.
+    if interval in DERIVED_FROM_5M and is_latest_request:
         records = []
 
     has_more = len(records) > limit
