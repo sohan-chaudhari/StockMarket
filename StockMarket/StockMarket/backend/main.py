@@ -5996,6 +5996,72 @@ INDEX_ALIASES_MAP = {
     '^CNXSC': ['SMALLCAP', 'NIFTYSMLCAP100', 'NIFTY SMALLCAP 50', 'NIFTY_SMALLCAP_100', '^CNXSC'],
 }
 
+# One page of N DISTINCT candles needs at most N rows per ticker spelling (only one
+# row per spelling can exist for a given timestamp), so the fetch is scaled by the
+# number of spellings -- but capped, because this box runs on 1 GB with a single
+# Gunicorn worker and an index alias can carry up to 7 spellings.
+_DEDUPE_FETCH_CAP = 60000
+
+
+def _dedupe_candles_prefer_canonical(rows, ticker_variants, limit=None):
+    """Collapse rows sharing a timestamp to ONE row, preferring the CANONICAL spelling.
+
+    Returns rows DESCENDING by timestamp (the order every caller already expects),
+    truncated to `limit` when given.
+
+    `ticker_variants` comes from `_normalize_ticker()`, which puts the primary spelling
+    first: for an index alias that is the spelling the user requested (requesting
+    NIFTY50 yields [NIFTY50, NIFTY, ...] because it prepends the request), and for an
+    equity it is the unsuffixed base (requesting TCS.NS yields [TCS, TCS.NS], so the
+    base row wins -- the suffix is only ever a storage variant, never a preference).
+
+    Why this exists: candles() legitimately stores the same trading day / intraday
+    bucket under more than one ticker spelling -- TCS and TCS.NS (the yfinance-style
+    spelling), or NIFTY and NIFTY50 (an index alias). `_normalize_ticker()` fans the
+    query out over every spelling on purpose, so a ticker is found whichever one its
+    rows happen to be stored under; but a payload must carry exactly one candle per
+    timestamp, or the client receives two bars for the same time with different OHLCV
+    (measured on production: TCS 2026-02-23 closes 2626.0986328125 and 2676.3;
+    NIFTY/NIFTY50 2026-10-16 closes 23080.35 and 23083.2).
+
+    Determinism: `ticker_variants` is ordered with the canonical spelling first, so
+    its rank decides the winner; a row whose spelling is not in the list never
+    outranks one that is, and a tie is broken by the higher row id, so the result
+    never depends on the order the database returned the rows in.
+
+    Suffixed-only data is preserved: when a timestamp exists only under TCS.NS it is
+    kept, because it is simply the only candidate.
+    """
+    rank = {}
+    for i, variant in enumerate(ticker_variants):
+        if variant not in rank:
+            rank[variant] = i
+    unknown = len(rank) + 1
+
+    best = {}
+    for r in rows:
+        ts = r.timestamp
+        current = best.get(ts)
+        if current is None:
+            best[ts] = r
+            continue
+        if (rank.get(r.ticker, unknown), -(r.id or 0)) < (rank.get(current.ticker, unknown), -(current.id or 0)):
+            best[ts] = r
+
+    out = sorted(best.values(), key=lambda r: r.timestamp, reverse=True)
+    if limit is not None and len(out) > limit:
+        out = out[:limit]
+    return out
+
+
+def _page_fetch_limit(distinct_wanted, ticker_variants):
+    """Rows to pull so `distinct_wanted` DISTINCT timestamps can be filled even when
+    several spellings duplicate them. Never below `distinct_wanted` (so an extreme
+    `limit` behaves exactly as before) and never above the box's cap."""
+    spellings = max(1, len(ticker_variants))
+    return max(distinct_wanted, min(distinct_wanted * spellings, _DEDUPE_FETCH_CAP))
+
+
 def _normalize_ticker(ticker: str) -> List[str]:
     t = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
     if t in INDEX_ALIASES_MAP:
@@ -6043,7 +6109,13 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
         if range_days is not None:
             cutoff = ist_now.date() - timedelta(days=range_days)
             q = q.filter(models.Candle.timestamp >= datetime(cutoff.year, cutoff.month, cutoff.day))
-        return q.order_by(models.Candle.timestamp.desc()).limit(500).all()
+        # Fetch one row per spelling so 500 DISTINCT days can still be filled:
+        # candles() legitimately holds the same day under e.g. TCS and TCS.NS, and
+        # without the scale-up those duplicates ate the page (measured: 500 rows =
+        # 442 distinct days for TCS, so 58 days of the oldest history were dropped).
+        rows = q.order_by(models.Candle.timestamp.desc()).limit(
+            _page_fetch_limit(500, db_tickers)).all()
+        return _dedupe_candles_prefer_canonical(rows, db_tickers, limit=500)
 
     records = _query_candles_1d()
 
@@ -6992,7 +7064,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     if after is not None and isinstance(after, (int, float)):
         q = q.filter(model.timestamp > _epoch_to_ist_dt(after))
     
-    records = q.order_by(model.timestamp.desc()).limit(limit + 1).all()
+    # Scale the fetch so `limit` DISTINCT candles can still be filled when the same
+    # bucket exists under more than one ticker spelling, then collapse them (an API
+    # page must carry one candle per timestamp).
+    _page_rows = q.order_by(model.timestamp.desc()).limit(
+        _page_fetch_limit(limit + 1, db_tickers)).all()
+    records = _dedupe_candles_prefer_canonical(_page_rows, db_tickers)
 
     # === AUTO GAP FILL (Synchronous on first page load) ===
     # On first page load (before=None / is_latest_request), fill gaps BEFORE returning data
@@ -7193,7 +7270,10 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     q_fresh = q_base
                     if after is not None and isinstance(after, (int, float)):
                         q_fresh = q_fresh.filter(model.timestamp > _epoch_to_ist_dt(after))
-                    records = q_fresh.order_by(model.timestamp.desc()).limit(limit + 1).all()
+                    records = _dedupe_candles_prefer_canonical(
+                        q_fresh.order_by(model.timestamp.desc())
+                               .limit(_page_fetch_limit(limit + 1, db_tickers)).all(),
+                        db_tickers)
                     print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
@@ -7231,7 +7311,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                             _q2 = _q2.filter(model.timestamp < _epoch_to_ist_dt(before))
                         if after is not None and isinstance(after, (int, float)):
                             _q2 = _q2.filter(model.timestamp > _epoch_to_ist_dt(after))
-                        records = _q2.order_by(model.timestamp.desc()).limit(limit + 1).all()
+                        # Same collapse: the rebuilt page must not reintroduce a bar for
+                        # a timestamp an alias spelling also covers.
+                        records = _dedupe_candles_prefer_canonical(
+                            _q2.order_by(model.timestamp.desc())
+                               .limit(_page_fetch_limit(limit + 1, db_tickers)).all(),
+                            db_tickers)
                         print(f"[SyncRepair] {clean_ticker} {interval}: response rebuilt with "
                               f"{len(records)} stored candle(s)")
                     else:
@@ -7298,11 +7383,16 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             try:
                 from resampler import CandleResampler
                 clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
-                five_min_rows = db.query(models.Candle).filter(
-                    models.Candle.ticker.in_(db_tickers),
-                    models.Candle.timeframe == "5m",
-                    models.Candle.timestamp > last_dt
-                ).order_by(models.Candle.timestamp.asc()).all()
+                # Collapse the multi-spelling case BEFORE resampling: a duplicated 5m
+                # bucket would otherwise double the derived bar's volume and merge two
+                # bodies into one candle. The helper returns DESC, so reverse it for
+                # the resampler's ascending contract.
+                five_min_rows = list(reversed(_dedupe_candles_prefer_canonical(
+                    db.query(models.Candle).filter(
+                        models.Candle.ticker.in_(db_tickers),
+                        models.Candle.timeframe == "5m",
+                        models.Candle.timestamp > last_dt
+                    ).all(), db_tickers)))
                 
                 if five_min_rows:
                     five_min_dicts = [{
@@ -7420,7 +7510,11 @@ def get_range_paginated(request: Request, ticker: str = Query(..., max_length=40
         cutoff = database.get_ist_now().date() - timedelta(days=range_days)
         cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day)
         q = q.filter(models.Candle.timestamp >= cutoff_dt)
-    records = q.order_by(models.Candle.timestamp.desc()).limit(limit + 1).all()
+    # One row per spelling can share a timestamp, so scale the fetch before deduping.
+    # has_more then counts DISTINCT candles, which is what the client paginates on.
+    rows = q.order_by(models.Candle.timestamp.desc()).limit(
+        _page_fetch_limit(limit + 1, db_tickers)).all()
+    records = _dedupe_candles_prefer_canonical(rows, db_tickers)
     has_more = len(records) > limit
     if has_more:
         records = records[:limit]
