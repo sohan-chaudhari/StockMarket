@@ -29,7 +29,13 @@ MAX_BACKOFF_INTERVAL = 60.0
 
 # Critical indices polled on a fast dedicated thread
 CRITICAL_INDICES = ['NIFTY', 'SENSEX', 'BANKNIFTY', 'FINNIFTY', 'MIDCAP', 'SMALLCAP']
-CRITICAL_POLL_INTERVAL = 0.5  # seconds between each poll round (was 1.0 — halved for faster index updates)
+CRITICAL_POLL_INTERVAL = 0.5  # seconds between each poll round (was 1.0 - halved for faster index updates)
+
+# One AngelOne account serves BOTH the live quotes and the historical API (no
+# HISTORICAL_API_KEY is configured, which historical_service.py:248 calls out as the
+# two "fighting"). Every REST quote we do not need is quota taken away from backfill,
+# so both pollers must skip a ticker the WebSocket is already streaming.
+WS_TICK_FRESH_SEC = 10.0
 
 def is_market_open_now() -> bool:
     """True if Indian stock market is currently open for regular trading."""
@@ -174,7 +180,7 @@ class PricePoller:
             with svc.latest_ticks_lock:
                 existing = svc.latest_ticks.get(t, {})
                 ws_received_ts = existing.get("_received_ts", 0)
-                if now_ts - ws_received_ts < 10 and existing.get("_source") == "angel_ws":
+                if now_ts - ws_received_ts < WS_TICK_FRESH_SEC and existing.get("_source") == "angel_ws":
                     return True
 
             with self._api_sem:
@@ -315,6 +321,24 @@ class CriticalIndexPoller:
         instrument = self._token_cache.get(ticker)
         if not instrument:
             return False
+
+        # CRIT-03: skip the REST call ENTIRELY when the WebSocket already has a fresh
+        # tick for this index. This check used to happen only AFTER ltpData() had been
+        # called (see the "WS is fresher" branch below), so a WS-covered index still
+        # consumed a quota slot on every poll and the result was then discarded.
+        # Measured: 6 indices x ~2 polls/s ~= 720 REST calls per minute of pure waste,
+        # on the same account the historical API draws from -- which is why every
+        # backfill attempt returned "Access denied because of exceeding access rate"
+        # (10 hits in 20 minutes, each pausing ALL historical calls for 90 seconds).
+        # Same threshold and same fallback as PricePoller._poll_one: if the WS tick
+        # goes stale, REST polling resumes automatically, so this cannot make a price
+        # go missing -- it only stops re-fetching a value we already have.
+        _pre_ts = time.time()
+        with svc.latest_ticks_lock:
+            _pre = svc.latest_ticks.get(ticker, {})
+            if (_pre_ts - _pre.get("_received_ts", 0) < WS_TICK_FRESH_SEC
+                    and _pre.get("_source") == "angel_ws"):
+                return True
 
         try:
             raw = svc.smart_api.ltpData(
