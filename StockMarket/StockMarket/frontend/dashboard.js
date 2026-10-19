@@ -2911,10 +2911,25 @@ async function initBigChart() {
     }
 
     if (window.bigWhitespaceSeries && displayData.length > 0) {
+      // Future "whitespace" bars only ever exist to give the time scale a little
+      // room to the right of the newest bar (the same margin rightOffset already
+      // provides) so the user can pan/draw slightly ahead.
+      //
+      // The pad MUST stay small. Lightweight Charts pins the visible range's
+      // right edge to "last bar in the time domain + rightOffset" on the paint
+      // that follows setData, and it re-applies that pin after any
+      // setVisibleLogicalRange we issue (verified live: a reactive re-assert
+      // loses -- the library re-anchors silently). So the pad sets where the
+      // chart opens: with the old +3000-bar pad (and +365 on 1D, +150 on 1W,
+      // +80 on 1M) the whole domain was inflated several times over and a
+      // freshly opened chart parked in that empty region -- candles pushed off
+      // screen and every axis tick past the last real bar unlabelled, which is
+      // what produced the duplicated-then-missing dates on the 15m x-axis.
+      // A bounded pad keeps the newest candles on screen on every width.
       var wsData = [];
       var baseVal = (candleData[0] && candleData[0].close) ? candleData[0].close : 100;
       if (_isIntraday && _BAR_SECS) {
-        var totalBars = candleData.length + 3000;
+        var totalBars = candleData.length + 40;
         for (var wi = 0; wi < totalBars; wi++) {
           wsData.push({ time: wi * _BAR_SECS, value: baseVal });
         }
@@ -2923,19 +2938,19 @@ async function initBigChart() {
         var lastTime = candleData[candleData.length - 1].time;
         if (range === '1W') {
           var curW = lastTime;
-          for (var wi = 1; wi <= 150; wi++) {
+          for (var wi = 1; wi <= 12; wi++) {
             curW = _addDays(curW, 7);
             wsData.push({ time: curW, value: baseVal });
           }
         } else if (range === '1M') {
           var curM = lastTime;
-          for (var wi = 1; wi <= 80; wi++) {
+          for (var wi = 1; wi <= 6; wi++) {
             curM = _addDays(curM, 30);
             wsData.push({ time: curM, value: baseVal });
           }
         } else {
           var curD = lastTime;
-          for (var wi = 1; wi <= 365; wi++) {
+          for (var wi = 1; wi <= 30; wi++) {
             curD = _nextBizDay(curD);
             wsData.push({ time: curD, value: baseVal });
           }

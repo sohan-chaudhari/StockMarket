@@ -77,22 +77,30 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, frameArmed: false, renderIdxs: null, rangeKey: null }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, frameArmed: false, clearedThisFrame: false, renderIdxs: null, rangeKey: null }; ST.set(chart, s); }
     return s;
   }
 
-  // Reset the per-render "already labelled" sets on the next animation frame.
-  // LWC lays out tick marks within a single frame, so every formatter call for
-  // one render shares these sets (giving one date per day) and they are cleared
-  // before the next render -- which a fixed time gap cannot guarantee when two
-  // renders happen back to back.
-  function armFrameReset(s) {
+  // Mark the current animation frame as "in progress" and re-open the
+  // once-per-frame clear on the next frame.
+  //
+  // LWC lays out every tick mark of one render inside a single frame, so all
+  // formatter calls for that render are meant to share the "already labelled"
+  // sets (that is what yields one date per trading day). The sets were cleared
+  // on every visible-range change, which is fine while the range is stable --
+  // but the range is NOT stable for the whole frame when the chart re-anchors
+  // itself after setData. A change between two ticks of the same render then
+  // wiped the sets mid-render, and the day's date was emitted twice ("09 Oct"
+  // then "09 Oct" again) while later ticks fell off the bar map and went blank.
+  // Clearing at most once per frame fixes both without weakening the intended
+  // re-label on zoom/pan (each new frame still clears once).
+  function armFrame(s) {
     if (s.frameArmed) return;
     s.frameArmed = true;
-    var clear = function () { s.seen = { d: {}, m: 0, y: 0 }; s.frameArmed = false; };
+    var end = function () { s.frameArmed = false; s.clearedThisFrame = false; };
     try {
-      (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(clear);
-    } catch (e) { clear(); }
+      (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(end);
+    } catch (e) { end(); }
   }
 
   function onRangeChange(chart) {
@@ -285,16 +293,22 @@
     var s = state(chart);
     // ── Reset the "already labelled" sets when the VISIBLE RANGE changes ──
     // A range/zoom/pan change re-invokes the formatter; a plain candle repaint
-    // does not (verified). The visible range is constant for every tick within
-    // one render, so keying the reset on it cannot fire mid-render (which is
-    // what previously let the same day be dated twice) yet still re-emits the
-    // dates on every zoom.
+    // does not (verified). The sets are cleared at most ONCE per animation
+    // frame: with a stable range that is once per render (dates re-emitted on
+    // every zoom, never twice for one day), and if the range drifts between two
+    // ticks of the same render -- which is what happens while the chart
+    // re-anchors to the end of the time domain after setData -- the second
+    // change no longer wipes the sets, so the day cannot be dated twice.
     var _lr = null;
     try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
     var _rk = _lr ? (Math.round(_lr.from * 100) + ':' + Math.round(_lr.to * 100)) : null;
     if (_rk !== s.rangeKey) {
       s.rangeKey = _rk;
-      s.seen = { d: {}, m: 0, y: 0 };
+      if (!s.clearedThisFrame) {
+        s.clearedThisFrame = true;
+        s.seen = { d: {}, m: 0, y: 0 };
+      }
+      armFrame(s);
     }
     // Does the visible range span more than one trading day? Date labels are only
     // meaningful then -- a single-session view (all visible bars on one trading
