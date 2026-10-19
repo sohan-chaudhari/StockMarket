@@ -95,7 +95,19 @@ def _retry_after_seconds(message) -> float:
 #   HIST_MIN_INTERVAL_SEC  default 2.0   min gap between provider calls
 #   HIST_BURST             default 1     bucket depth
 #   HIST_BACKOFF_SEC       default 90    cooldown after a throttle
-_HISTORICAL_MIN_INTERVAL_SEC = float(os.getenv("HIST_MIN_INTERVAL_SEC", "5.0"))
+# HIST_MIN_INTERVAL_SEC default 2.0 -> 5.0 -> 15.0
+#
+# Measured on production at 5.0s: 13 "Access denied because of exceeding access rate"
+# rejections in 12 minutes and 6 x 90s global pauses (~9 of those 12 minutes spent
+# locked out), with **0** successful repairs. The pattern was self-perpetuating:
+# every ~2 minutes the pause expired, a few calls went out 5s apart, one was rejected,
+# and everything was paused again -- so backfill never actually ran.
+#
+# A wider gap is the only way to make the SAME number of calls succeed: at 15s our
+# own traffic stays under the provider's limit, so a ticker opened by a user gets its
+# repair (the priority slot still lets a user repair jump the queue) instead of being
+# refused. Slower overall drain, but 0 successes -> steady successes is the win.
+_HISTORICAL_MIN_INTERVAL_SEC = float(os.getenv("HIST_MIN_INTERVAL_SEC", "15.0"))
 _HISTORICAL_BURST = max(1, int(os.getenv("HIST_BURST", "1")))
 _RATE_LIMIT_BACKOFF_SEC = float(os.getenv("HIST_BACKOFF_SEC", "90"))
 

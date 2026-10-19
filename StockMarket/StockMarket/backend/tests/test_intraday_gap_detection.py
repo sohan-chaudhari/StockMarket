@@ -623,8 +623,15 @@ class QuotaRebalanceTests(unittest.TestCase):
 
     def test_account_pacing_is_slower(self):
         import historical_service as hs
-        self.assertGreaterEqual(hs._HISTORICAL_MIN_INTERVAL_SEC, 4.0,
-                                "2.0s pacing kept the account continuously throttled")
+        # Raised again after measuring 5.0s on production: 13 "Access denied" rejections
+        # and 6 x 90s global pauses in 12 minutes with ZERO successful repairs. Spacing
+        # our own calls wider than the provider's limit is what turns 0 successes into
+        # steady ones -- backfill was being refused, not merely delayed.
+        self.assertGreaterEqual(hs._HISTORICAL_MIN_INTERVAL_SEC, 10.0,
+                                "pacing must stay wider than the provider's limit or backfill "
+                                "gets refused instead of served")
+        self.assertLessEqual(hs._HISTORICAL_BURST, 2,
+                             "a burst lets several calls out at once and trips the limit")
 
     def test_prefill_does_not_retry_a_rate_limit(self):
         import inspect as _i
