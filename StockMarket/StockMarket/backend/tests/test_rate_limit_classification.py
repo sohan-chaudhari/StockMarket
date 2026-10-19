@@ -56,7 +56,7 @@ class PrefillGateTests(unittest.TestCase):
 
     def test_the_prefill_break_is_gated_on_the_classifier_in_source(self):
         import intraday_prefill as ip
-        src = inspect.getsource(ip._fetch_range)
+        src = inspect.getsource(ip._fetch_candles)
         self.assertIn("if _is_rate_limited(exc):", src,
                       "the prefill must consult the classifier before retrying")
         self.assertIn("break", src, "a throttle must abandon the retry budget")
