@@ -77,7 +77,7 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, renderIdxs: null, rangeKey: null }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, renderIdxs: null, rangeKey: null, labels: null, labelKey: null }; ST.set(chart, s); }
     return s;
   }
 
@@ -125,7 +125,7 @@
   function reset(chart) {
     if (!chart) return;
     var s = ST.get(chart);
-    if (s) { s.last = null; s.seen = { d: {}, m: 0, y: 0 }; s.renderIdxs = null; }
+    if (s) { s.last = null; s.seen = { d: {}, m: 0, y: 0 }; s.renderIdxs = null; s.labels = null; s.labelKey = null; }
   }
 
   function barsOf(chart) {
@@ -240,24 +240,26 @@
     //   - the previous call was a while ago (>= 250 ms) -> a new paint.
     var _lr = null;
     try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
-    var _passStart = false;
-    if (_lr && idx != null && _lr.from != null && _lr.to != null) {
-      // Measured first-tick offset is 5-7% of the span and tick spacing about span/4.5 (e.g. 672, 684, 696, 708, 720 in a
-      // 61-bar view), so a span/10 band catches the first tick of a pass and never
-      // the second (at ~span/4).
-      var _band = Math.max(2, Math.ceil((_lr.to - _lr.from) / 10));
-      _passStart = idx <= Math.ceil(_lr.from) + _band;
-    }
-    // The left edge is the ONLY reset signal, for two reasons:
-    //  - the visible range is not stable enough to key on: the live forming candle
-    //    nudges it on every tick, which would clear the sets between repaints and
-    //    date a session again at the right-hand end ("16 Oct" ... "16 Oct");
-    //  - a timeout reset has the same effect on a delayed or crosshair-driven
-    //    repaint, which re-asks for labels with the same range.
-    // Every pass begins at the left edge, so this fires exactly once per pass.
-    if (_passStart) {
+    // -- Deterministic labels: one decision per (bar index, visible window) --
+    // The library repaints the axis many times for a single view: one full pass,
+    // then partial passes (a crosshair move, a delayed paint, the live forming
+    // candle nudging the range). Each of those re-asks tickMarkFormatter, so any
+    // rule that "clears the dated set between passes" let the trailing tick of an
+    // already-dated session print its date again -- a session dated at both ends,
+    // which is the bug this replaces.
+    // The label is therefore memoised per bar index for the current window. A tick
+    // returns the same string whichever pass asks for it, so a repeated date is
+    // structurally impossible. The memo is dropped only when the window itself
+    // changes (zoom / pan / new data), where a fresh single date per session is
+    // exactly what is wanted.
+    var _winKey = (_lr && _lr.from != null && _lr.to != null)
+      ? (Math.round(_lr.from) + ':' + Math.round(_lr.to)) : 'x';
+    if (s.labelKey !== _winKey) {
+      s.labelKey = _winKey;
+      s.labels = {};
       s.seen = { d: {}, m: 0, y: 0 };
     }
+    if (idx != null && s.labels && s.labels[idx] !== undefined) return s.labels[idx];
     // Does the visible range span more than one trading day? Date labels are only
     // meaningful then -- a single-session view (all visible bars on one trading
     // day) must show times only, with no date at all.
@@ -325,7 +327,9 @@
               realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
               newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay,
               tradingDays: tradingDays };
-    return intraday ? fmtIntraday(o) : fmtDay(o);
+    var _out = intraday ? fmtIntraday(o) : fmtDay(o);
+    if (idx != null && s.labels) s.labels[idx] = _out;
+    return _out;
   }
 
   window.LeverageAxis = {
