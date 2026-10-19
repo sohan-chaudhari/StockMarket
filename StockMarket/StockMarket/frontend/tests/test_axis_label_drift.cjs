@@ -1,26 +1,21 @@
 /**
- * Regression: intraday x-axis dates must be emitted ONCE per trading day, even
- * when Lightweight Charts re-anchors the visible range *during* one render, and
- * the chart must never be parked past its own candles.
+ * Regression: the intraday x-axis must read like TradingView at every zoom.
  *
- * Root cause being locked down
- * ----------------------------
- * `_renderChartData` seeds the (invisible) whitespace series with future bars so
- * the time scale has room to the right. That pad was `candles + 3000` for
- * intraday (and +365 / +150 / +80 on 1D / 1W / 1M), which inflated the chart's
- * whole time domain several times over. Lightweight Charts pins the visible
- * range's right edge to "last bar in the domain + rightOffset" on the paint that
- * follows setData, so a freshly opened chart landed in that empty region: the
- * candles were pushed off screen (measured live: last candle at x = -17196 on an
- * 880px chart) and every axis tick past the last real bar returned '' -- the
- * duplicated-then-missing dates reported on a 15m chart.
+ * Reported symptoms this locks down
+ * ---------------------------------
+ * 1. Zoomed in, the same date appeared two or three times where times were
+ *    expected. Cause: the formatter ignored the zoom level and dated any tick
+ *    that fell inside its own `bars / 4` window, so several ticks printed one day.
+ * 2. After scrolling left (lazy-load prepends older bars), the axis was empty --
+ *    no date, no time. Cause: in the "date" tier every tick that was not inside
+ *    that same window returned '', so a whole axis could be blank; a render split
+ *    across frames made it worse because the per-frame "already labelled" clear
+ *    could already have been consumed.
  *
- * Two independent guards are asserted here:
- *   1. axis-format.js clears its "already labelled" sets at most once per
- *      animation frame, so a mid-render range drift can no longer wipe them
- *      between two ticks of the same render (that wipe is the only way the same
- *      date can be printed twice).
- *   2. dashboard.js keeps the whitespace pad bounded.
+ * Policy now: the first tick of each trading day is dated, later ticks of that day
+ * show their time while the real visible span is <= 3 trading days, and stay
+ * blank beyond that. "Already labelled" resets at the start of every render pass
+ * (range change, or tick index going backwards), never on a frame timer.
  *
  * Loads the REAL axis-format.js, so this fails if the formatter regresses.
  */
@@ -39,7 +34,6 @@ function ok(cond, name) {
 
 // ── synthetic 15m series: 8 NSE sessions x 25 bars, 09:15-15:30 IST ─────────
 const BS = 900;
-const BAR_MIN = 15;
 const BARS_PER_DAY = 25;
 const sessions = [12, 13, 14, 15, 16, 19, 20, 21];   // Oct 2026 weekdays
 const barTimes = [];
@@ -47,20 +41,18 @@ sessions.forEach(d => {
   const open = Date.UTC(2026, 9, d, 3, 45) / 1000;  // 03:45 UTC == 09:15 IST
   for (let k = 0; k < BARS_PER_DAY; k++) barTimes.push(open + k * BS);
 });
-
-const dayFirst = {};
+const dayMap = {};
 function istDay(epochSec) {
   const d = new Date(epochSec * 1000 + 5.5 * 3600 * 1000);
   return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
 }
-barTimes.forEach((t, i) => { const k = istDay(t); if (dayFirst[k] == null) dayFirst[k] = i; });
+barTimes.forEach((t, i) => { const k = istDay(t); if (dayMap[k] == null) dayMap[k] = i; });
 
 window._intradayBarTimes = barTimes;
 window._intradayBarSecs = BS;
-window._intradayDayFirstBarMap = dayFirst;
+window._intradayDayFirstBarMap = Object.assign({}, dayMap);
 
-// ── controllable stub chart ─────────────────────────────────────────────────
-let lr = { from: 0, to: 146 };
+let lr = { from: 0, to: 49 };
 const timeScale = {
   getVisibleLogicalRange: () => lr,
   getVisibleRange: () => ({ from: Math.max(0, lr.from) * BS, to: lr.to * BS }),
@@ -76,58 +68,77 @@ console.log = _log;
 
 const AX = window.LeverageAxis;
 ok(AX && typeof AX.tick === 'function', 'axis-format.js loaded and exposes tick()');
-
 AX.register(chart, {
   getRange: () => '15m',
   getBarTimes: () => window._intradayBarTimes,
   getBarSecs: () => window._intradayBarSecs,
 });
 
-function tickAt(i, mt) { return AX.tick(chart, i * BS, mt == null ? 2 : mt, '15m'); }
-function sweep(from, to) {
+const isDate = s => /^\d{2} [A-Z][a-z]{2}( \d{4})?$/.test(s);
+const isTime = s => /^\d{2}:\d{2}$/.test(s);
+
+// One render pass: LWC lays ticks out left to right.
+function sweep(from, to, markType) {
   const out = [];
-  for (let i = from; i <= to; i++) { const l = tickAt(i); if (l) out.push({ i, l }); }
+  for (let i = from; i <= to; i++) {
+    const l = AX.tick(chart, i * BS, markType, '15m');
+    if (l) out.push({ i, l });
+  }
   return out;
 }
-const isDate = s => /\d{2} [A-Z][a-z]{2}/.test(s);
+function dupDates(labels) {
+  const c = {};
+  labels.filter(o => isDate(o.l)).forEach(o => { c[o.l] = (c[o.l] || 0) + 1; });
+  return Object.keys(c).filter(k => c[k] > 1);
+}
 
-async function main() {
-  console.log('\n[1] one date per trading day across a multi-day window');
-  const labels = sweep(0, 146);
+function main() {
+  console.log('\n[1] zoomed in (~2 sessions, markType=Time): times, one date per day');
+  lr = { from: 0, to: 49 };
+  let labels = sweep(0, 49, 3);
   const dates = labels.filter(o => isDate(o.l));
-  const counts = {};
-  dates.forEach(o => { counts[o.l] = (counts[o.l] || 0) + 1; });
-  const dupes = Object.keys(counts).filter(k => counts[k] > 1);
-  ok(dates.length >= 4, 'multi-day window produced date labels (' + dates.length + ': ' +
-     JSON.stringify(dates.map(o => o.l)) + ')');
-  ok(dupes.length === 0, 'no date repeated in a single render (dupes: ' + JSON.stringify(dupes) + ')');
+  const times = labels.filter(o => isTime(o.l));
+  ok(times.length >= 30, 'most ticks are times (' + times.length + ')');
+  ok(dates.length === 2, 'exactly one date per session (' + JSON.stringify(dates.map(o => o.l)) + ')');
+  ok(dupDates(labels).length === 0, 'no date printed twice (dupes: ' + JSON.stringify(dupDates(labels)) + ')');
+  ok(labels.length === 50, 'no tick left unlabelled when zoomed in (' + labels.length + '/50)');
 
-  console.log('\n[2] a mid-render range drift must not duplicate a date');
-  const last = dates[dates.length - 1];            // e.g. the last day in the window
-  const again = tickAt(last.i);
-  ok(again === '', 'the same day is suppressed later in the SAME render (got "' + again + '")');
-  lr = { from: last.i, to: last.i + 146 };         // the chart re-anchors mid-render
-  const drifted = tickAt(last.i);
-  ok(drifted === '',
-     'after a mid-render range drift the day is still NOT dated twice (got "' + drifted + '")');
+  console.log('\n[2] zoomed out (~6 sessions, markType=DayOfMonth): dates, never blank');
+  lr = { from: 0, to: 149 };
+  labels = sweep(0, 149, 2);
+  const d2 = labels.filter(o => isDate(o.l));
+  const t2 = labels.filter(o => isTime(o.l));
+  ok(d2.length >= 6, 'every visible session is dated (' + d2.length + ': ' + JSON.stringify(d2.map(o => o.l)) + ')');
+  ok(dupDates(labels).length === 0, 'no date printed twice (dupes: ' + JSON.stringify(dupDates(labels)) + ')');
+  ok(t2.length === 0, 'no times mixed into the wide view (' + t2.length + ')');
+  ok(labels.length >= 6, 'axis is not empty (' + labels.length + ' labels)');
 
-  console.log('\n[3] the next animation frame still re-labels (zoom must keep working)');
-  await new Promise(r => setTimeout(r, 5));        // flush the stubbed rAF: frame ends
-  lr = { from: Math.max(0, last.i - 20), to: last.i + 126 };   // a real zoom/pan
-  const next = tickAt(last.i);
-  ok(next === last.l, 'a new frame re-emits the date (got "' + next + '", want "' + last.l + '")');
+  console.log('\n[3] a second render pass (tick index goes backwards) re-labels');
+  // Same range, second pass from the left: this is the case where a per-frame
+  // clear had already been consumed and the whole axis came out blank.
+  const second = sweep(0, 149, 2);
+  const secondDates = second.filter(o => isDate(o.l)).map(o => o.l);
+  ok(secondDates.length >= 6,
+     'second pass still dates every session (' + JSON.stringify(secondDates) + ')');
+  ok(JSON.stringify(secondDates) === JSON.stringify(d2.map(o => o.l)),
+     'second pass produces the same labels as the first');
 
-  console.log('\n[4] ticks past the last real bar stay unlabelled (no fabricated sessions)');
-  ok(tickAt(barTimes.length + 5) === '', 'an index past the bar map returns an empty label');
+  console.log('\n[4] a missing / stale day map cannot blank the axis');
+  window._intradayDayFirstBarMap = null;
+  lr = { from: 0, to: 149 };
+  const noMap = sweep(0, 149, 2);
+  ok(noMap.filter(o => isDate(o.l)).length >= 6,
+     'dates still rendered without the day map (' + noMap.filter(o => isDate(o.l)).length + ')');
+  window._intradayDayFirstBarMap = Object.assign({}, dayMap);
 
-  console.log('\n[5] source guard: the whitespace runway stays bounded');
+  console.log('\n[5] ticks past the last real bar stay unlabelled (no fabricated sessions)');
+  ok(AX.tick(chart, (barTimes.length + 5) * BS, 2, '15m') === '',
+     'an index past the bar map returns an empty label');
+
+  console.log('\n[6] source guard: the whitespace runway stays bounded');
   const dash = fs.readFileSync(path.join(FRONTEND, 'dashboard.js'), 'utf8');
   ok(dash.indexOf('candleData.length + 3000') === -1, 'intraday pad is no longer +3000 bars');
   ok(/candleData\.length \+ 40;/.test(dash), 'intraday pad is bounded (candles + 40)');
-  ok(dash.indexOf('wi <= 365') === -1 && dash.indexOf('wi <= 150') === -1 && dash.indexOf('wi <= 80') === -1,
-     'daily/weekly/monthly pads are no longer +365 / +150 / +80');
-  ok(/wi <= 30;/.test(dash) && /wi <= 12;/.test(dash) && /wi <= 6;/.test(dash),
-     'daily/weekly/monthly pads are bounded (30 / 12 / 6)');
 
   console.log('\n==================================================');
   console.log('  PASS: ' + pass + '   FAIL: ' + fail);

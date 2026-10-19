@@ -77,30 +77,8 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, frameArmed: false, clearedThisFrame: false, renderIdxs: null, rangeKey: null }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, renderIdxs: null, rangeKey: null }; ST.set(chart, s); }
     return s;
-  }
-
-  // Mark the current animation frame as "in progress" and re-open the
-  // once-per-frame clear on the next frame.
-  //
-  // LWC lays out every tick mark of one render inside a single frame, so all
-  // formatter calls for that render are meant to share the "already labelled"
-  // sets (that is what yields one date per trading day). The sets were cleared
-  // on every visible-range change, which is fine while the range is stable --
-  // but the range is NOT stable for the whole frame when the chart re-anchors
-  // itself after setData. A change between two ticks of the same render then
-  // wiped the sets mid-render, and the day's date was emitted twice ("09 Oct"
-  // then "09 Oct" again) while later ticks fell off the bar map and went blank.
-  // Clearing at most once per frame fixes both without weakening the intended
-  // re-label on zoom/pan (each new frame still clears once).
-  function armFrame(s) {
-    if (s.frameArmed) return;
-    s.frameArmed = true;
-    var end = function () { s.frameArmed = false; s.clearedThisFrame = false; };
-    try {
-      (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(end);
-    } catch (e) { end(); }
   }
 
   function onRangeChange(chart) {
@@ -168,9 +146,20 @@
   }
 
   // ── intraday (5m/15m/30m/1h/4h and raw-epoch intraday) ──────────────────
-  // Tier is driven by the number of VISIBLE TRADING DAYS (bars / bars-per-day),
-  // matching TradingView: times only while ~<2 sessions are visible; beyond that
-  // one date per trading day (month/year on calendar transitions).
+  // One rule, with no per-tick "is this bar within N bars of the day start"
+  // lookback window:
+  //   - the FIRST tick of a trading day is dated ("16 Sep");
+  //   - every later tick of that day shows its time ("10:30") while the view is
+  //     zoomed in (about three sessions or fewer), so zooming in reads as times
+  //     instead of the same date printed two or three times;
+  //   - once the view is zoomed out past that, the rest of a day stays blank,
+  //     which is what TradingView does when dates carry the axis.
+  //
+  // "Already dated" is tracked per day and reset at the start of every render
+  // pass (see tick()), so a day can never be dated twice. It also guarantees the
+  // axis can never come out empty: the first tick of every day in view always
+  // gets its date, even if no tick lands on that day's 09:15 bar and even if the
+  // day map has no entry for it.
   function fmtIntraday(o) {
     var p = o.p;
     var time = pad2(p.hh) + ':' + pad2(p.mm);
@@ -179,76 +168,24 @@
     var yr   = '' + p.y;
     var seen = o.s.seen;
 
-    // Year / Month marks from Lightweight Charts (wide zoom): once per distinct
-    // year/month, tracked in the persistent `seen` sets.
+    // Year / Month marks the library already resolved at a coarser zoom.
     if (o.mt === TMT.Year)  { if (seen.y !== p.y) { seen.y = p.y; return yr; } return ''; }
     if (o.mt === TMT.Month) { var mk = monKeyOf(p); if (seen.m !== mk) { seen.m = mk; return p.moi === 0 ? (mon + ' ' + yr) : mon; } return ''; }
 
-    var barMin = BAR_MIN[o.range] || 5;
-    var barsPerDay = Math.max(1, Math.floor(375 / barMin));
-    var spanDays = o.bars / barsPerDay;
-    var mins = p.hh * 60 + p.mm;
-    var sessionStart = mins >= (9 * 60 + 15) && mins <= (9 * 60 + 15 + barMin - 1);
+    // Real visible span in trading days, measured from the bar epochs so that
+    // overnight and weekend gaps count. The old bars / bars-per-day estimate
+    // ignored them, so a six-day 15m view looked like 1.5 days and was
+    // formatted as if it were zoomed in.
+    var wide = (o.realSpanDays != null)
+      ? (o.realSpanDays > 3)
+      : (o.bars > 3 * Math.max(1, Math.floor(375 / (BAR_MIN[o.range] || 5))));
 
-    if (spanDays <= 1.8) {
-      // Time tier. A single-session view shows times only (no date). When the
-      // visible range spans a day boundary, the date is shown exactly once per
-      // trading day, on the first tick that lands within one tick-span of the
-      // day's first bar (Lightweight Charts never lands a tick on the exact
-      // 09:15 bar). This is a pure function of the tick's real bar index and the
-      // day's first bar, so the same day's date can never be emitted twice --
-      // regardless of call order, panning, or how a render is split.
-      if (!o.multiDay) return time;
-      var dkt = dayKeyOf(p);
-      var _dkey = p.y + '-' + pad2(p.moi + 1) + '-' + pad2(p.d);
-      var d0 = (window._intradayDayFirstBarMap && o.idx != null)
-        ? window._intradayDayFirstBarMap[_dkey] : null;
-      if (d0 != null) {
-        var _step = Math.max(1, Math.round(o.bars / 4));
-        var _into = o.idx - d0;
-        if (_into >= 0 && _into < _step) {
-          // One date per trading day, always. The window above can contain more
-          // than one tick mark, which used to emit the same date twice (e.g.
-          // "09 Oct" then "09 Oct" again) -- the visible duplicate-date bug.
-          if (!seen.d[dkt]) {
-            seen.d[dkt] = 1;
-            return o.realYearBoundary ? (day + ' ' + yr) : day;
-          }
-          return time;
-        }
-        return time;
-      }
-      // Fallback for raw-epoch charts without the bar map: one date per day.
-      if ((sessionStart || o.realDayBoundary === true || o.newDay === true) && !seen.d[dkt]) {
-        seen.d[dkt] = 1;
-        return o.realYearBoundary ? (day + ' ' + yr) : day;
-      }
-      return time;
-    }
-
-    // Date tier: one date per trading day, month/year on genuine calendar
-    // transitions. Same deterministic first-tick-of-day placement when the bar
-    // map is available.
     var dk = dayKeyOf(p);
-    if (o.realYearBoundary  && seen.y !== p.y)  { seen.y = p.y; seen.d[dk] = 1; return yr; }
-    if (o.realMonthBoundary && seen.m !== monKeyOf(p)) { seen.m = monKeyOf(p); seen.d[dk] = 1; return p.moi === 0 ? (mon + ' ' + yr) : mon; }
-    var _dkey2 = p.y + '-' + pad2(p.moi + 1) + '-' + pad2(p.d);
-    var d02 = (window._intradayDayFirstBarMap && o.idx != null)
-      ? window._intradayDayFirstBarMap[_dkey2] : null;
-    if (d02 != null) {
-      var _step2 = Math.max(1, Math.round(o.bars / 4));
-      var _into2 = o.idx - d02;
-      if (_into2 >= 0 && _into2 < _step2) {
-        // Same one-date-per-day guarantee as the time tier above.
-        if (seen.d[dk]) return '';
-        seen.d[dk] = 1;
-        return day;
-      }
-      return '';
+    if (!seen.d[dk]) {
+      seen.d[dk] = 1;
+      return (o.realYearBoundary || (p.moi === 0 && p.d === 1)) ? (day + ' ' + yr) : day;
     }
-    if (seen.d[dk]) return '';
-    seen.d[dk] = 1;
-    return day;
+    return wide ? '' : time;
   }
 
   // ── daily / weekly / monthly (business-day times) ───────────────────────
@@ -291,29 +228,29 @@
     if (!p) return '';
 
     var s = state(chart);
-    // ── Reset the "already labelled" sets when the VISIBLE RANGE changes ──
-    // A range/zoom/pan change re-invokes the formatter; a plain candle repaint
-    // does not (verified). The sets are cleared at most ONCE per animation
-    // frame: with a stable range that is once per render (dates re-emitted on
-    // every zoom, never twice for one day), and if the range drifts between two
-    // ticks of the same render -- which is what happens while the chart
-    // re-anchors to the end of the time domain after setData -- the second
-    // change no longer wipes the sets, so the day cannot be dated twice.
+    // ── Reset the "already labelled" sets once per RENDER PASS ──
+    // Two independent signals, neither of which relies on frame timing:
+    //   • the visible range changed (zoom / pan / new data);
+    //   • the tick index went BACKWARDS, which is how Lightweight Charts starts
+    //     every new render pass (ticks are laid out left to right).
+    // The backwards jump also covers a render split across frames. The previous
+    // "clear at most once per animation frame" rule did not: a second pass inside
+    // the same frame could then find every day already labelled and return '' for
+    // every tick, leaving the whole axis blank.
     var _lr = null;
     try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
     var _rk = _lr ? (Math.round(_lr.from * 100) + ':' + Math.round(_lr.to * 100)) : null;
-    if (_rk !== s.rangeKey) {
+    var _restart = !!(s.last && idx != null && s.last.idx != null && idx < s.last.idx);
+    if (_rk !== s.rangeKey || _restart) {
       s.rangeKey = _rk;
-      if (!s.clearedThisFrame) {
-        s.clearedThisFrame = true;
-        s.seen = { d: {}, m: 0, y: 0 };
-      }
-      armFrame(s);
+      s.seen = { d: {}, m: 0, y: 0 };
+      if (_restart) s.last = null;
     }
     // Does the visible range span more than one trading day? Date labels are only
     // meaningful then -- a single-session view (all visible bars on one trading
     // day) must show times only, with no date at all.
     var multiDay = false;
+    var realSpanDays = null;
     try {
       var _vr = chart.timeScale().getVisibleRange();
       if (_vr && _vr.from != null && _vr.to != null) {
@@ -327,6 +264,12 @@
           }
         }
         if (_eF == null) { _eF = toEpoch(_vr.from); _eT = toEpoch(_vr.to); }
+        // Real elapsed span of the window, in days, from the REAL bar epochs --
+        // overnight and weekend gaps included. This is what decides between
+        // "times" and "dates only" (see fmtIntraday).
+        if (_eF != null && _eT != null && isFinite(_eF) && isFinite(_eT)) {
+          realSpanDays = Math.abs(_eT - _eF) / 86400;
+        }
         var _pF = parts(_eF), _pT = parts(_eT);
         if (_pF && _pT) multiDay = dayKeyOf(_pF) !== dayKeyOf(_pT);
       }
@@ -364,7 +307,8 @@
     var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s, idx: idx,
               first: first, realDayBoundary: realDayBoundary,
               realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
-              newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay };
+              newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay,
+              realSpanDays: realSpanDays };
     return intraday ? fmtIntraday(o) : fmtDay(o);
   }
 
