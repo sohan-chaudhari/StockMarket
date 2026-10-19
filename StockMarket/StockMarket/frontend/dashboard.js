@@ -915,6 +915,25 @@ function _toIST1DDate(epochSec) {
   return y + '-' + m + '-' + day;
 }
 
+// Collapse any time representation the charting library accepts into ONE
+// comparable string, so the same bar can never be treated as two different
+// times. Lightweight Charts rewrites `time` IN PLACE on the object you hand to
+// series.update(): a "2026-10-19" string comes back as a {year, month, day}
+// BusinessDay object (verified with a Proxy on the live object -- the stack
+// runs through preprocessData/update inside lightweight-charts). Both forms mean
+// the same day, but `===`/`!==` see them as different, so any key comparison
+// that touches `.time` directly is unreliable.
+function _normBarTimeKey(t) {
+  if (t == null) return '';
+  if (typeof t === 'object') {
+    if (t.year !== undefined) {
+      return t.year + '-' + String(t.month).padStart(2, '0') + '-' + String(t.day).padStart(2, '0');
+    }
+    return String(t);
+  }
+  return String(t);
+}
+
 // Return the next Monday-Friday date string (YYYY-MM-DD) after the given date string.
 function _nextBizDay(dateStr) {
   var d = new Date(dateStr + 'T00:00:00Z');
@@ -3680,7 +3699,9 @@ async function initBigChart() {
           bigVolumeSeries.update({ time: fc.time, value: fc.volume, color: fc.close >= fc.open ? 'rgba(8,153,129,0.3)' : 'rgba(242,54,69,0.3)' });
         } catch(e) {}
       }
-      if (bigCandleSeries && fc) { try { bigCandleSeries.update(fc); } catch(e) { /* ignore benign transition update */ } }
+      // CRIT-01: same copy rule as the daily branch -- never hand the library the
+      // app's own object, it rewrites `time` in place.
+      if (bigCandleSeries && fc) { try { bigCandleSeries.update({ time: fc.time, open: fc.open, high: fc.high, low: fc.low, close: fc.close, volume: fc.volume }); } catch(e) { /* ignore benign transition update */ } }
       if (window.IndicatorEngine) window.IndicatorEngine.onCandleUpdate(fc);
       if (pEl2) pEl2.innerText = fmtPrice(live.current);
       if (oEl2) oEl2.innerText = fc.open.toFixed(2);
@@ -3701,14 +3722,31 @@ async function initBigChart() {
         periodStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-01';
       }
       if (!window._formingCandles) window._formingCandles = {};
-      // For daily, weekly, monthly we use chronological date strings YYYY-MM-DD
-      if (!window._formingCandles['d'] || window._formingCandles['d'].time !== periodStr) {
+      // CRIT-01: key the forming candle on an IMMUTABLE PRIMITIVE, never on the
+      // value handed to the charting library. series.update() rewrites `time` IN
+      // PLACE (a "2026-10-19" string becomes a {year,month,day} object on the
+      // caller's own object -- caught with a Proxy on the live object, stack
+      // through lightweight-charts preprocessData/update), so the old
+      // `_formingCandles['d'].time !== periodStr` guard compared an object with a
+      // string and failed on the very NEXT tick. The code then believed the
+      // still-forming candle had just completed and pushed a copy into
+      // _chartDataCache on EVERY tick -- measured on production: 1317 duplicate
+      // copies of one day for NIFTY, stored under two different time
+      // representations. That polluted cache is what later renders as candles in
+      // two positions / duplicated candles (a timeframe switch re-renders it,
+      // e.g. through the memory-preview path).
+      var _periodKey = String(periodStr);
+      if (!window._formingCandles['d'] || window._formingCandles['d'].periodKey !== _periodKey) {
         // FE-05: same fix as the intraday branch above -- persist the
         // just-completed 1D/1W/1M candle before it's replaced.
         var justCompletedD = window._formingCandles['d'];
         if (justCompletedD && _chartDataCache) {
-          var alreadyHaveD = _chartDataCache.length > 0 && _chartDataCache[_chartDataCache.length - 1].time === justCompletedD.time;
-          if (!alreadyHaveD) {
+          // Dedupe on NORMALISED keys: the cached bar may still be a date string
+          // while justCompletedD.time has already been rewritten to a BusinessDay
+          // object, and a raw === would store the same day a second time.
+          var _lastCacheKey = _chartDataCache.length > 0
+            ? _normBarTimeKey(_chartDataCache[_chartDataCache.length - 1].time) : null;
+          if (_lastCacheKey !== _normBarTimeKey(justCompletedD.time)) {
             _chartDataCache.push({ time: justCompletedD.time, open: justCompletedD.open, high: justCompletedD.high, low: justCompletedD.low, close: justCompletedD.close, volume: justCompletedD.volume || 0 });
             window._chartCandles = _chartDataCache;
           }
@@ -3717,7 +3755,7 @@ async function initBigChart() {
         var dOpen = (live.open != null && live.open > 0) ? live.open : (prevFc && prevFc.open > 0 ? prevFc.open : live.current);
         var dHigh = (live.high != null && live.high > 0) ? live.high : (prevFc && prevFc.high > 0 ? prevFc.high : live.current);
         var dLow  = (live.low  != null && live.low  > 0) ? live.low  : (prevFc && prevFc.low > 0 ? prevFc.low : live.current);
-        window._formingCandles['d'] = { time: periodStr, open: dOpen, high: dHigh, low: dLow, close: live.current };
+        window._formingCandles['d'] = { time: periodStr, periodKey: _periodKey, open: dOpen, high: dHigh, low: dLow, close: live.current };
       }
       var fc = window._formingCandles['d'];
       fc.high = Math.max(fc.high, (live.high != null && live.high > 0) ? live.high : live.current);
@@ -3725,7 +3763,10 @@ async function initBigChart() {
       fc.close = live.current;
       if (bigCandleSeries) {
         try {
-          bigCandleSeries.update(fc);
+          // CRIT-01: give the library a COPY, not fc itself -- it normalises
+          // `time` in place, which would corrupt fc.time (and, via the guard
+          // above, the shared candle cache). Mirrors the volume series below.
+          bigCandleSeries.update({ time: fc.time, open: fc.open, high: fc.high, low: fc.low, close: fc.close });
           if (window.IndicatorEngine) window.IndicatorEngine.onCandleUpdate(fc);
         } catch(e) {
           /* ignore benign transition update */
