@@ -435,7 +435,18 @@ class FrontendRepairSignalTests(unittest.TestCase):
         with open(p, encoding="utf-8", errors="ignore") as f:
             js = f.read()
         self.assertIn("backfill_status", js)
-        self.assertIn("_bgPollCount < 2", js, "background polling must stay bounded")
+        # CRIT-02: the follow-up used to give up after 2 polls x 3.5s (~7s) while
+        # the backend was still reporting "backfilling" -- far too short for the
+        # background worker, which is why a chart kept its gap until something
+        # else re-triggered a load (reopening the ticker, or switching timeframe
+        # and back, appeared to be the fix). It now follows a bounded backoff
+        # schedule and stops as soon as the backend stops reporting backfilling:
+        # still bounded, just long enough to actually see the repair land.
+        self.assertIn("_bgPollDelays", js, "the follow-up must use the backed-off schedule")
+        self.assertIn("_bgPollCount < _bgPollDelays.length", js,
+                      "background polling must stay bounded by the schedule length")
+        self.assertNotIn("_bgPollCount < 2", js,
+                         "the old ~7s bound is what left the gap on screen")
         self.assertIn("_renderChartData(refData, range)", js, "must merge, not reset")
 
 

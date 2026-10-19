@@ -3205,6 +3205,17 @@ async function initBigChart() {
         var _bgInitialEarliest = (data.length > 0) ? data[0].time : null;
         var _bgInitialLatest = (data.length > 0) ? data[data.length - 1].time : null;
 
+        // CRIT-02: how long the client follows the backend's OWN `backfilling`
+        // status. The server repairs 5m synchronously when the provider allows it,
+        // but when the provider is rate-limited the work falls to the background
+        // worker, which can take a minute or more. The bound used to be 2 polls x
+        // 3.5s (~7s), so the chart kept showing its gap until something else
+        // re-triggered a load -- which is exactly why reopening the ticker (or
+        // switching timeframe and back) looked like the thing that "fixed" it.
+        // Backed off, still strictly bounded, and it stops the moment the backend
+        // stops reporting backfilling.
+        var _bgPollDelays = [3500, 6000, 10000, 15000, 20000, 25000];
+
         function _pollBackgroundFill() {
           _bgPollCount++;
           setTimeout(function() {
@@ -3239,13 +3250,14 @@ async function initBigChart() {
                     }
                   }
                 }
-                // Bounded second poll (max 2 attempts) if still backfilling and hasn't settled
-                if (refStatus === 'backfilling' && _bgPollCount < 2) {
+                // CRIT-02: keep following while the backend still reports
+                // backfilling, on a bounded backoff (max _bgPollDelays.length polls).
+                if (refStatus === 'backfilling' && _bgPollCount < _bgPollDelays.length) {
                   _pollBackgroundFill();
                 }
               })
               .catch(function() {});
-          }, 3500);
+          }, _bgPollDelays[Math.min(_bgPollCount - 1, _bgPollDelays.length - 1)]);
         }
         _pollBackgroundFill();
       }

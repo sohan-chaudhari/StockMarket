@@ -7026,7 +7026,45 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             market_open = is_market_open_now(now)
             bucket_min = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 5)
 
-            if not records:
+            # 5m is the ONLY intraday source of truth, so the repair scheduled is
+            # always the 5m one -- whatever timeframe is on screen. This check is
+            # hoisted ABOVE the stored-row heuristics because a derived timeframe
+            # can legitimately hold no stored rows of its own (its stored copy is a
+            # retired legacy artifact) while 5m is genuinely missing data; with the
+            # check nested inside `else:` such a ticker queued no repair at all.
+            _src_missing = False
+            if interval != "1m":
+                try:
+                    import backfill_jobs as _bj
+                    _js, _je = _stable_job_range("5m", now)
+                    # Exact check, not a session-scale heuristic: ANY missing 5m
+                    # bucket -- including a scattered 1-5 bucket no-trade hole --
+                    # makes the ticker repairable on demand. It already excludes
+                    # buckets recorded in backfill_absent, so a ticker whose holes
+                    # are all proven absent does not re-queue. One bounded query.
+                    _src_missing = _bj.has_missing(db, clean_ticker, "5m", _js, _je)
+                    if _src_missing and _bj.enqueue(clean_ticker, "5m", _js, _je, reason="chart_open"):
+                        job_queued = True
+                        print(f"[BackfillJob] queued {clean_ticker} 5m ({_js.date()}..{_je.date()})")
+                except Exception:
+                    pass
+
+            if interval in DERIVED_FROM_5M:
+                # Derived timeframes are rebuilt from stored 5m (see the
+                # DERIVED_FROM_5M discard further down), so their own stored rows
+                # are NOT what the user will see and must not drive this decision.
+                # Judging by them raised a false "Entire today session missing" on
+                # every open -- the legacy stored 15m/30m/1h copy simply stops at an
+                # older date -- and each false positive dispatched a
+                # perform_on_demand_backfill that provably cannot help: a derived
+                # interval is never fetched from a provider nor persisted (see
+                # perform_on_demand_backfill: "Derived timeframes end here"), and for
+                # an index it even ran a yfinance download that was then discarded.
+                # Judge the SOURCE (5m) instead, so fill_needed and therefore the
+                # reported backfill_status describe the data the user actually gets.
+                fill_needed = _src_missing
+                fill_start = None
+            elif not records:
                 # Bounded to this timeframe's own window (not a blanket 60 days):
                 # 1m=7d, 5m=65d, 15m=45d, 30m=90d, 1h=120d (see _intraday_cutoff).
                 fill_start = _intraday_cutoff(interval)
@@ -7109,30 +7147,10 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                 if fill_needed:
                     print(f"[GapFill] Sync fill needed for {clean_ticker} {interval}: gap from {fill_start}")
 
-                # Independent of the fill decision above: if this ticker's intraday
-                # data stops days ago, ask the background sweep to fetch it (paced,
-                # off the request path). Once stored, the next visitor gets the
-                # candles straight from the DB with no provider call at all.
-                # 5m is the ONLY intraday source of truth. Whatever intraday
-                # timeframe is on screen, the repair scheduled is the 5m one --
-                # 15m/30m/1h/4h are then derived from stored 5m on the fly, so
-                # there is never a per-timeframe provider call. 1m is read-only
-                # legacy (live-tick built) and is not repaired at all.
-                if interval != "1m":
-                    try:
-                        import backfill_jobs as _bj
-                        _js, _je = _stable_job_range("5m", now)
-                        # Exact check, not a session-scale heuristic: ANY missing 5m
-                        # bucket -- including a scattered 1-5 bucket no-trade hole --
-                        # makes the ticker repairable on demand. It already excludes
-                        # buckets recorded in backfill_absent, so a ticker whose holes
-                        # are all proven absent does not re-queue. One bounded query.
-                        if _bj.has_missing(db, clean_ticker, "5m", _js, _je):
-                            if _bj.enqueue(clean_ticker, "5m", _js, _je, reason="chart_open"):
-                                job_queued = True
-                                print(f"[BackfillJob] queued {clean_ticker} 5m ({_js.date()}..{_je.date()})")
-                    except Exception:
-                        pass
+                # The 5m source check + enqueue for this ticker now runs ABOVE,
+                # before the stored-row heuristics, so a derived timeframe whose own
+                # stored rows are absent still queues its 5m repair. Deliberately not
+                # repeated here.
 
             # History-depth check (independent of market hours): the main query
             # above is capped at `limit`, so its last element is NOT the true
@@ -7141,7 +7159,10 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             # ticker whose oldest stored candle is newer than its supported
             # window is missing deep history, which the tip/internal checks
             # cannot see while the market is closed (no new ticks reveal it).
-            if not fill_needed:
+            # Skipped for derived timeframes for the same reason as above: it
+            # measures q_base, which for them is the retired stored 15m/30m/1h copy
+            # rather than the 5m source the response is actually built from.
+            if not fill_needed and interval not in DERIVED_FROM_5M:
                 depth_floor = _intraday_cutoff(interval) + timedelta(days=_INTRADAY_DEPTH_GRACE_DAYS)
                 oldest_row = q_base.order_by(model.timestamp.asc()).limit(1).first()
                 if oldest_row is not None and oldest_row.timestamp > depth_floor:
@@ -7150,7 +7171,12 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: history depth "
                           f"(oldest stored={oldest_row.timestamp}, floor={depth_floor})")
 
-            if fill_needed:
+            # Derived timeframes never reach a provider (the sync repair above and
+            # the enqueued 5m job are what actually fill the source), so only the
+            # dispatch that can do real work is worth doing. fill_needed is still
+            # set for them -- it is what the response reports as backfill_status, so
+            # the client keeps following until the ticker's 5m job settles.
+            if fill_needed and interval not in DERIVED_FROM_5M:
                 _bf_key = f"{clean_ticker}:{interval}"
                 if _backfill_cooldown_active(_bf_key):
                     # A recent attempt for this ticker/interval is still cooling
