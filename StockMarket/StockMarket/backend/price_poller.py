@@ -21,7 +21,7 @@ from typing import List
 
 MAX_WORKERS = 8        # matches API_CONCURRENCY — extra threads above this only idle on the semaphore
 API_CONCURRENCY = 8
-CYCLE_INTERVAL = 2.0
+CYCLE_INTERVAL = 8.0    # was 2.0 -- see the account-quota note below
 CYCLE_MAX_SECONDS = 30
 MAX_CONSECUTIVE_FAILURES = 5
 BACKOFF_MULTIPLIER = 2.0
@@ -35,6 +35,13 @@ CRITICAL_POLL_INTERVAL = 0.5  # seconds between each poll round (was 1.0 - halve
 # HISTORICAL_API_KEY is configured, which historical_service.py:248 calls out as the
 # two "fighting"). Every REST quote we do not need is quota taken away from backfill,
 # so both pollers must skip a ticker the WebSocket is already streaming.
+#
+# AND what little REST polling remains must be paced. Measured: 61 non-WS tickers
+# x every 2s ~= 1,800 quote calls/min kept the account permanently rate limited
+# (10 pauses in 20 min, each stopping ALL historical calls for 90s), which is why a
+# ticker a user had just opened could not be backfilled and the gap only closed
+# later. CYCLE_INTERVAL is now 8s (~460/min), leaving room for backfill while the
+# tickers the WS streams stay instant.
 WS_TICK_FRESH_SEC = 10.0
 
 def is_market_open_now() -> bool:

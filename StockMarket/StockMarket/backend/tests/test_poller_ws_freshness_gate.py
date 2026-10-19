@@ -115,6 +115,16 @@ class PricePollerGateTests(unittest.TestCase):
 
 
 class SharedPolicyTests(unittest.TestCase):
+    def test_bulk_poller_pacing_stays_high_enough_to_leave_quota_for_backfill(self):
+        """A future 'make prices faster' edit must not silently re-saturate the
+        account and starve backfill again (measured at 2s: ~1,800 quote calls/min and
+        a permanent rate limit)."""
+        self.assertGreaterEqual(pp.CYCLE_INTERVAL, 5.0, "bulk REST polling must stay paced")
+        # the critical poller is fine at 0.5s ONLY because its WS gate skips covered
+        # indices entirely -- assert that gate is still there
+        import inspect
+        self.assertIn("WS_TICK_FRESH_SEC", inspect.getsource(pp.CriticalIndexPoller._poll_ticker))
+
     def test_both_pollers_use_the_same_threshold_constant(self):
         import inspect
         self.assertIn("WS_TICK_FRESH_SEC", inspect.getsource(pp.PricePoller._poll_one))
