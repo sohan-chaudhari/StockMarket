@@ -165,8 +165,10 @@ class JobStoreGuaranteeTests(unittest.TestCase):
 
     def test_enqueue_is_idempotent(self):
         self.assertIn("uix_backfill_jobs_open", self.src)
-        i = self.src.find("def enqueue(")
-        self.assertIn("ON CONFLICT", self.src[i:i + 1200])
+        # Assert on the FUNCTION source, not a fixed character window: the window
+        # made this test fail purely because enqueue's docstring grew.
+        block = inspect.getsource(bj.enqueue)
+        self.assertIn("ON CONFLICT", block)
 
     def test_retry_is_bounded_and_jittered(self):
         vals = [bj._backoff_seconds(1) for _ in range(8)]

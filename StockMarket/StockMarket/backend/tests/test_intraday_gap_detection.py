@@ -151,17 +151,16 @@ class StableJobRangeTests(unittest.TestCase):
 class DuplicateJobTests(unittest.TestCase):
     def setUp(self):
         self.src = inspect.getsource(bj)
+        # The enqueue assertions must not depend on how far into the function a fixed
+        # character window reaches (that made them fail when the docstring grew).
+        self.enq = inspect.getsource(bj.enqueue)
 
     def test_conflict_target_matches_the_partial_unique_index(self):
-        i = self.src.find("def enqueue(")
-        block = self.src[i:i + 1400]
-        self.assertIn("ON CONFLICT (ticker, exchange, interval, range_start, range_end)", block)
+        self.assertIn("ON CONFLICT (ticker, exchange, interval, range_start, range_end)", self.enq)
         self.assertIn("uix_backfill_jobs_open", self.src)
 
     def test_enqueue_is_idempotent_and_returns_the_existing_row(self):
-        i = self.src.find("def enqueue(")
-        block = self.src[i:i + 1400]
-        self.assertIn("DO UPDATE SET updated_at = NOW()", block)
+        self.assertIn("DO UPDATE SET updated_at = NOW()", self.enq)
 
     def test_missing_ranges_excludes_recorded_absent_buckets(self):
         day = datetime.date(2026, 10, 6)

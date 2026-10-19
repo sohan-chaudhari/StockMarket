@@ -318,7 +318,22 @@ def missing_ranges(db, ticker, interval, range_start, range_end, now=None):
 # Job store
 # ─────────────────────────────────────────────────────────────────────────────
 def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="gap"):
-    """Idempotent: an identical open job is reused rather than duplicated."""
+    """Idempotent: an identical open job is reused rather than duplicated.
+
+    A `chart_open` job is PROMOTED to the front of the queue, because the user is
+    looking at that ticker right now while everything behind it is background sweep
+    work nobody is waiting on. `claim()` orders by `next_attempt_at` (NULLs fall back
+    to created_at), so stamping the promoted job an hour into the past puts it ahead
+    of the whole backlog without touching the claim query, the worker's pacing or the
+    provider limiter.
+
+    Measured on production before this: 136 eligible jobs at one job per 20s in
+    market hours = ~45 minutes of waiting, which is why a ticker a user had just
+    opened visibly backfilled "a few minutes later" (or only after switching
+    timeframe and back) instead of on open. The promotion is applied on CONFLICT too:
+    a ticker whose job is already queued/retry_wait/partially_complete for the same
+    range is exactly the case that needs it.
+    """
     ensure_table()
     t = (ticker or "").strip().upper().replace(".NS", "").replace(".BO", "")
     if not t or interval not in MAX_SPAN_DAYS:
@@ -328,10 +343,15 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
         row = db.execute(text("""
             INSERT INTO backfill_jobs (ticker, exchange, interval, range_start, range_end,
                                        status, next_attempt_at, last_error)
-            VALUES (:t, :x, :i, :s, :e, 'queued', NOW(), :r)
+            VALUES (:t, :x, :i, :s, :e, 'queued',
+                    CASE WHEN :r = 'chart_open' THEN NOW() - INTERVAL '1 hour' ELSE NOW() END,
+                    :r)
             ON CONFLICT (ticker, exchange, interval, range_start, range_end)
               WHERE status IN ('queued','running','retry_wait','partially_complete')
-            DO UPDATE SET updated_at = NOW()
+            DO UPDATE SET updated_at = NOW(),
+                          next_attempt_at = CASE
+                              WHEN :r = 'chart_open' THEN NOW() - INTERVAL '1 hour'
+                              ELSE backfill_jobs.next_attempt_at END
             RETURNING id, status
         """), {"t": t, "x": exchange, "i": interval, "s": range_start, "e": range_end,
                "r": reason}).fetchone()
