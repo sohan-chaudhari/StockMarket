@@ -53,6 +53,16 @@ _rate_limit_until = 0.0
 _RATE_LIMIT_KEYWORDS = (
     'access rate', 'rate limit', 'too many requests',
     'exceeding access rate', 'throttl',
+    # The service's OWN cooldown message ("Historical API rate-limited (shared
+    # cooldown, 59s left)", raised at _get_stream line ~414) did not match any
+    # keyword above: 'rate limit' has a space, the message says 'rate-limited'
+    # with a hyphen. So callers that correctly refuse to retry a throttle --
+    # intraday_prefill's `if _is_rate_limited(exc): break` -- never fired for it
+    # and retried 0s/5s/15s/30s INTO the active cooldown, re-hitting it each time
+    # and keeping the account throttled. Measured live: "[IntradayPrefill] NIFTY
+    # attempt 3 retryable: ... shared cooldown, 50s left", while the USER's repair
+    # was refused with "Access denied because of exceeding access rate".
+    'rate-limited', 'shared cooldown',
 )
 
 
