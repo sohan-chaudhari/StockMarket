@@ -1,5 +1,5 @@
 /*
- * axis-format.js â€” shared TradingView-style X-axis tick formatter for LEVERAGE.
+ * axis-format.js -- shared TradingView-style X-axis tick formatter for LEVERAGE.
  *
  * Frontend-only, pure/stateless with respect to chart data: it never mutates
  * candles, never calls the network, and never touches the intraday
@@ -145,7 +145,7 @@
     try { var w = chart.timeScale().width(); return w > 0 ? w : 0; } catch (e) { return 0; }
   }
 
-  // â”€â”€ intraday (5m/15m/30m/1h/4h and raw-epoch intraday) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ------ intraday (5m/15m/30m/1h/4h and raw-epoch intraday) ------------------------------------------------------
   // One rule, with no per-tick "is this bar within N bars of the day start"
   // lookback window:
   //   - the FIRST tick of a trading day is dated ("16 Sep");
@@ -176,7 +176,7 @@
     // the bars actually on screen, so neither the whitespace pad nor weekend gaps
     // distort it): up to three sessions reads as times, beyond that as dates.
     var wide = (o.tradingDays != null)
-      ? (o.tradingDays > 3)
+      ? (o.tradingDays > 5)
       : (o.bars > 3 * Math.max(1, Math.floor(375 / (BAR_MIN[o.range] || 5))));
 
     var dk = dayKeyOf(p);
@@ -187,7 +187,7 @@
     return wide ? '' : time;
   }
 
-  // â”€â”€ daily / weekly / monthly (business-day times) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ------ daily / weekly / monthly (business-day times) ---------------------------------------------------------------------
   function fmtDay(o) {
     var p = o.p;
     var mon = MON[p.moi];
@@ -227,23 +227,30 @@
     if (!p) return '';
 
     var s = state(chart);
-    // â”€â”€ Reset the "already labelled" sets once per RENDER PASS â”€â”€
-    // Two independent signals, neither of which relies on frame timing:
-    //   â€¢ the visible range changed (zoom / pan / new data);
-    //   â€¢ the tick index went BACKWARDS, which is how Lightweight Charts starts
-    //     every new render pass (ticks are laid out left to right).
-    // The backwards jump also covers a render split across frames. The previous
-    // "clear at most once per animation frame" rule did not: a second pass inside
-    // the same frame could then find every day already labelled and return '' for
-    // every tick, leaving the whole axis blank.
+    // -- Reset the "already labelled" sets once per RENDER PASS --
+    // Measured call sequence from lightweight-charts: ticks are requested in
+    // ascending index order with no repeats (e.g. 672, 684, 696, 708, 720 in a
+    // 2.5-session view). A pass is therefore one ordered sweep, and it always
+    // begins at the LEFT EDGE of the view. Clearing anywhere else is what caused
+    // the duplicate dates: while the user zooms, the visible range changes between
+    // two ticks of the same pass, so the old range-key comparison wiped the sets
+    // mid-pass and the day was dated a second time ("15 Oct" ... "15 Oct").
+    // Order-independent and mid-pass safe:
+    //   - this tick sits in the left-edge band of the view -> a pass is starting;
+    //   - the previous call was a while ago (>= 250 ms) -> a new paint.
     var _lr = null;
     try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
-    var _rk = _lr ? (Math.round(_lr.from * 100) + ':' + Math.round(_lr.to * 100)) : null;
-    var _restart = !!(s.last && idx != null && s.last.idx != null && idx < s.last.idx);
-    if (_rk !== s.rangeKey || _restart) {
-      s.rangeKey = _rk;
+    var _now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+    var _passStart = false;
+    if (_lr && idx != null && _lr.from != null && _lr.to != null) {
+      // Ticks sit a few bars inside the edge and are about span/5 apart, so this
+      // band catches the first tick of a pass and nothing else.
+      var _band = Math.max(2, Math.ceil((_lr.to - _lr.from) / 20));
+      _passStart = idx <= Math.ceil(_lr.from) + _band;
+    }
+    var _idle = !s.lastCall || (_now - s.lastCall > 250);
+    if (_passStart || _idle) {
       s.seen = { d: {}, m: 0, y: 0 };
-      if (_restart) s.last = null;
     }
     // Does the visible range span more than one trading day? Date labels are only
     // meaningful then -- a single-session view (all visible bars on one trading
