@@ -10,9 +10,10 @@ import asyncio
 import threading
 import time
 import unittest
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from angelone_service import AngelOneService
+from angelone_service import AngelOneService, _ist_date_now
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
 
 
@@ -119,6 +120,11 @@ class TestEnsureConnectionDoesNotBlockEventLoop(unittest.TestCase):
         self.svc.smart_api = MagicMock()
         self.svc.jwt_token = "jwt"
         self.svc._last_login_time = time.time()  # fresh, well under 12h
+        # A session logged in TODAY is genuinely fresh. AngelOne expires the REST
+        # JWT at midnight IST, so the *issue date* is what makes a token stale --
+        # not the elapsed hours. Leaving this unset would (correctly) be treated
+        # as stale by the day-rollover check below.
+        self.svc._last_login_ist_date = _ist_date_now()
 
         with patch("angelone_service.asyncio.to_thread", new=AsyncMock()) as mock_to_thread:
             result = asyncio.run(self.svc.ensure_connection())
@@ -126,6 +132,67 @@ class TestEnsureConnectionDoesNotBlockEventLoop(unittest.TestCase):
         mock_to_thread.assert_not_called()
         self.svc.login.assert_not_called()
         self.assertTrue(result)
+
+
+class TestMidnightTokenRollover(unittest.TestCase):
+    """AngelOne's REST JWT expires at MIDNIGHT IST, not 24h after issue.
+
+    Regression (measured on production 2026-10-19): the refresh rule was "re-login
+    if the last login was >12h ago". A login at 23:58 -- e.g. a late-night deploy
+    -- therefore did not refresh until ~11:58 the NEXT day, so from 00:00 every
+    REST call failed with "Invalid Token": ~800/hour for 10 straight hours, all 60
+    backfill attempts in a 30-min window parked in retry_wait, while the WS feed
+    stayed healthy (it uses feed_token, not the REST JWT -- which is why prices
+    looked fine while backfill was dead).
+    """
+
+    def setUp(self):
+        self.svc = AngelOneService()
+        self.svc.login = MagicMock(return_value=True)
+        self.svc.is_logged_in = True
+        self.svc.smart_api = MagicMock()
+        self.svc.jwt_token = "jwt"
+        self.svc._last_login_time = time.time()  # well under the 12h backstop
+
+    def test_token_issued_on_an_earlier_ist_day_triggers_relogin(self):
+        self.svc._last_login_ist_date = _ist_date_now() - timedelta(days=1)
+        with patch("angelone_service.asyncio.to_thread", new=AsyncMock(return_value=True)) as mock_to_thread:
+            result = asyncio.run(self.svc.ensure_connection())
+        mock_to_thread.assert_called_once_with(self.svc.login)
+        self.assertTrue(result)
+
+    def test_token_issued_today_does_not_trigger_relogin(self):
+        self.svc._last_login_ist_date = _ist_date_now()
+        with patch("angelone_service.asyncio.to_thread", new=AsyncMock()) as mock_to_thread:
+            result = asyncio.run(self.svc.ensure_connection())
+        mock_to_thread.assert_not_called()
+        self.assertTrue(result)
+
+    def test_the_late_night_deploy_scenario_is_refreshed(self):
+        """The exact production trigger: logged in at 23:58, so 'hours since
+        login' is ~0 yet the token is already dead and every REST call 401s."""
+        self.svc._last_login_time = time.time() - 120          # 2 minutes ago
+        self.svc._last_login_ist_date = _ist_date_now() - timedelta(days=1)  # yesterday
+        with patch("angelone_service.asyncio.to_thread", new=AsyncMock(return_value=True)) as mock_to_thread:
+            asyncio.run(self.svc.ensure_connection())
+        mock_to_thread.assert_called_once_with(self.svc.login)
+
+    def test_unknown_issue_date_is_treated_as_stale(self):
+        self.svc._last_login_ist_date = None
+        with patch("angelone_service.asyncio.to_thread", new=AsyncMock(return_value=True)) as mock_to_thread:
+            asyncio.run(self.svc.ensure_connection())
+        mock_to_thread.assert_called_once_with(self.svc.login)
+
+    def test_login_records_the_ist_issue_date(self):
+        svc = AngelOneService()
+        svc.api_key, svc.client_id, svc.password = "k", "c", "p"
+        svc.totp_token = "JBSWY3DPEHPK3PXP"  # valid base32 so pyotp.TOTP works
+        with patch("angelone_service.SmartConnect") as smart_connect, \
+                patch.object(svc, "_init_websocket"):
+            smart_connect.return_value.generateSession.return_value = {
+                "status": True, "data": {"jwtToken": "jwt", "feedToken": "feed"}}
+            self.assertTrue(svc.login())
+        self.assertEqual(svc._last_login_ist_date, _ist_date_now())
 
 
 if __name__ == "__main__":

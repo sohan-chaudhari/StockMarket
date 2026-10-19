@@ -11,7 +11,7 @@ from typing import Optional, Dict
 from SmartApi import SmartConnect
 import pyotp
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 from dotenv import load_dotenv
 import pathlib
@@ -30,6 +30,16 @@ load_dotenv(dotenv_path=env_path)
 # evaluated), unlike an f-string print() which always pays the formatting
 # cost and always writes to stdout regardless of level.
 logger = logging.getLogger(__name__)
+
+
+def _ist_date_now():
+    """Today's date in IST (UTC+5:30).
+
+    AngelOne's REST JWT is not a 24-hour token: it dies at MIDNIGHT IST. So the
+    thing that makes a stored token stale is the calendar day it was issued on,
+    not how many hours ago it was fetched. See ensure_connection().
+    """
+    return (datetime.utcnow() + timedelta(hours=5, minutes=30)).date()
 
 
 from SmartApi.smartWebSocketV2 import SmartWebSocketV2
@@ -142,6 +152,10 @@ class AngelOneService:
         self.on_tick_callback = None # Callback for unthrottled broadcasts
         self.ws_thread = None
         self._last_login_time = 0.0
+        # IST calendar date of the last successful login. AngelOne expires the
+        # REST JWT at midnight IST, so this -- not _last_login_time -- decides
+        # whether a stored token is still usable.
+        self._last_login_ist_date = None
         self._ws_reconnecting = False  # guard: prevents overlapping reconnect calls
         
         print("[AngelOne] Service initialized (credentials loaded from environment)")
@@ -182,6 +196,7 @@ class AngelOneService:
             
             self.is_logged_in = True
             self._last_login_time = time.time()
+            self._last_login_ist_date = _ist_date_now()
             print(f"[OK] [AngelOne] Login successful! Session: {self.jwt_token[:20]}...")
             
             # Initialize WebSocket immediately on login
@@ -280,14 +295,36 @@ class AngelOneService:
 
     async def ensure_connection(self):
         """Checks REST session status and re-logs in if needed.
-        Proactively re-logs in if session is older than 12 hours to avoid token expiry."""
+
+        AngelOne's REST JWT is NOT a 24-hour token -- it expires at MIDNIGHT IST.
+        A stored token is therefore stale if it was issued on an earlier IST
+        calendar day, whatever the elapsed-hours timer says.
+
+        The old rule refreshed only 12h after the last login, which left a real
+        hole: a login at 23:58 (e.g. a late-night deploy) did not refresh until
+        ~11:58 the NEXT day -- i.e. most of the trading session. Measured on
+        production 2026-10-19: ~800 "[HISTORICAL] Invalid Token" per hour from
+        00:00 to 09:45, every backfill job stuck in retry_wait (60/60 attempts
+        in 30 min), while the WS feed stayed healthy -- it uses feed_token, not
+        the REST JWT, which is why prices looked fine while backfill was dead.
+        The elapsed-hours check is kept as a backstop for a 24h-ish token.
+        """
         if not self.is_logged_in or not self.smart_api or not self.jwt_token:
             print("[AngelOne] Session invalid or tokens missing. Attempting re-login...")
             # RT-08: login() does blocking network I/O -- run off the event
             # loop so it doesn't stall every concurrent request/broadcast.
             return await asyncio.to_thread(self.login)
 
-        # Proactive re-login: AngelOne tokens typically expire after 24h
+        # The token this session carries was issued on a previous IST day, so
+        # AngelOne has already expired it -- refresh before the first request
+        # that would otherwise fail with "Invalid Token".
+        _today = _ist_date_now()
+        if self._last_login_ist_date != _today:
+            print(f"[AngelOne] REST token is from {self._last_login_ist_date} "
+                  f"(today is {_today}); it expires at midnight IST -- re-logging...")
+            return await asyncio.to_thread(self.login)
+
+        # Proactive re-login backstop.
         if time.time() - self._last_login_time > 43200:  # 12 hours
             print("[AngelOne] Session approaching expiry, re-logging...")
             return await asyncio.to_thread(self.login)
