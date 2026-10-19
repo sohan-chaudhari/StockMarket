@@ -1,5 +1,5 @@
 /*
- * axis-format.js — shared TradingView-style X-axis tick formatter for LEVERAGE.
+ * axis-format.js â€” shared TradingView-style X-axis tick formatter for LEVERAGE.
  *
  * Frontend-only, pure/stateless with respect to chart data: it never mutates
  * candles, never calls the network, and never touches the intraday
@@ -145,7 +145,7 @@
     try { var w = chart.timeScale().width(); return w > 0 ? w : 0; } catch (e) { return 0; }
   }
 
-  // ── intraday (5m/15m/30m/1h/4h and raw-epoch intraday) ──────────────────
+  // â”€â”€ intraday (5m/15m/30m/1h/4h and raw-epoch intraday) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // One rule, with no per-tick "is this bar within N bars of the day start"
   // lookback window:
   //   - the FIRST tick of a trading day is dated ("16 Sep");
@@ -172,12 +172,11 @@
     if (o.mt === TMT.Year)  { if (seen.y !== p.y) { seen.y = p.y; return yr; } return ''; }
     if (o.mt === TMT.Month) { var mk = monKeyOf(p); if (seen.m !== mk) { seen.m = mk; return p.moi === 0 ? (mon + ' ' + yr) : mon; } return ''; }
 
-    // Real visible span in trading days, measured from the bar epochs so that
-    // overnight and weekend gaps count. The old bars / bars-per-day estimate
-    // ignored them, so a six-day 15m view looked like 1.5 days and was
-    // formatted as if it were zoomed in.
-    var wide = (o.realSpanDays != null)
-      ? (o.realSpanDays > 3)
+    // Zoom level, in TRADING days of real data in view (computed in tick() from
+    // the bars actually on screen, so neither the whitespace pad nor weekend gaps
+    // distort it): up to three sessions reads as times, beyond that as dates.
+    var wide = (o.tradingDays != null)
+      ? (o.tradingDays > 3)
       : (o.bars > 3 * Math.max(1, Math.floor(375 / (BAR_MIN[o.range] || 5))));
 
     var dk = dayKeyOf(p);
@@ -188,7 +187,7 @@
     return wide ? '' : time;
   }
 
-  // ── daily / weekly / monthly (business-day times) ───────────────────────
+  // â”€â”€ daily / weekly / monthly (business-day times) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function fmtDay(o) {
     var p = o.p;
     var mon = MON[p.moi];
@@ -228,10 +227,10 @@
     if (!p) return '';
 
     var s = state(chart);
-    // ── Reset the "already labelled" sets once per RENDER PASS ──
+    // â”€â”€ Reset the "already labelled" sets once per RENDER PASS â”€â”€
     // Two independent signals, neither of which relies on frame timing:
-    //   • the visible range changed (zoom / pan / new data);
-    //   • the tick index went BACKWARDS, which is how Lightweight Charts starts
+    //   â€¢ the visible range changed (zoom / pan / new data);
+    //   â€¢ the tick index went BACKWARDS, which is how Lightweight Charts starts
     //     every new render pass (ticks are laid out left to right).
     // The backwards jump also covers a render split across frames. The previous
     // "clear at most once per animation frame" rule did not: a second pass inside
@@ -250,7 +249,7 @@
     // meaningful then -- a single-session view (all visible bars on one trading
     // day) must show times only, with no date at all.
     var multiDay = false;
-    var realSpanDays = null;
+    var tradingDays = null;
     try {
       var _vr = chart.timeScale().getVisibleRange();
       if (_vr && _vr.from != null && _vr.to != null) {
@@ -264,11 +263,15 @@
           }
         }
         if (_eF == null) { _eF = toEpoch(_vr.from); _eT = toEpoch(_vr.to); }
-        // Real elapsed span of the window, in days, from the REAL bar epochs --
-        // overnight and weekend gaps included. This is what decides between
-        // "times" and "dates only" (see fmtIntraday).
-        if (_eF != null && _eT != null && isFinite(_eF) && isFinite(_eT)) {
-          realSpanDays = Math.abs(_eT - _eF) / 86400;
+        // TRADING days in view: real bars in the window / bars per session. This
+        // (not elapsed calendar days) decides between times and dates. An elapsed
+        // measure is wrong because a two-session Friday+Monday view spans four
+        // calendar days, so a zoomed-in view was classified as zoomed out and
+        // lost its times.
+        if (_bt && _bs && _iF != null && _iT != null && _iT >= _iF) {
+          tradingDays = (_iT - _iF + 1) / Math.max(1, Math.floor(375 / (BAR_MIN[range] || 5)));
+        } else if (_eF != null && _eT != null && isFinite(_eF) && isFinite(_eT)) {
+          tradingDays = Math.abs(_eT - _eF) / 86400;
         }
         var _pF = parts(_eF), _pT = parts(_eT);
         if (_pF && _pT) multiDay = dayKeyOf(_pF) !== dayKeyOf(_pT);
@@ -308,7 +311,7 @@
               first: first, realDayBoundary: realDayBoundary,
               realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
               newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay,
-              realSpanDays: realSpanDays };
+              tradingDays: tradingDays };
     return intraday ? fmtIntraday(o) : fmtDay(o);
   }
 

@@ -103,6 +103,20 @@ function main() {
   ok(dupDates(labels).length === 0, 'no date printed twice (dupes: ' + JSON.stringify(dupDates(labels)) + ')');
   ok(labels.length === 50, 'no tick left unlabelled when zoomed in (' + labels.length + '/50)');
 
+  console.log('\n[1b] a 2-session view ACROSS A WEEKEND (Fri+Mon) still reads as times');
+  // Fri 16 Oct + Mon 19 Oct = 2 trading days but 3.3 calendar days. Measuring the
+  // zoom in calendar days wrongly classified this as "zoomed out" and dropped the
+  // times, which is why the axis looked wrong when zoomed in on a Monday.
+  lr = { from: 100, to: 149 };
+  const wk = sweep(100, 149, 3);
+  const wkDates = wk.filter(o => isDate(o.l));
+  const wkTimes = wk.filter(o => isTime(o.l));
+  const calSpan = (barTimes[149] - barTimes[100]) / 86400;
+  ok(calSpan > 3, 'window really spans more than 3 calendar days (' + calSpan.toFixed(2) + ')');
+  ok(wkTimes.length >= 30, 'still renders times (' + wkTimes.length + ')');
+  ok(wkDates.length === 2, 'one date per session (' + JSON.stringify(wkDates.map(o => o.l)) + ')');
+  ok(dupDates(wk).length === 0, 'no date printed twice');
+
   console.log('\n[2] zoomed out (~6 sessions, markType=DayOfMonth): dates, never blank');
   lr = { from: 0, to: 149 };
   labels = sweep(0, 149, 2);
