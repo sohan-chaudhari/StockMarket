@@ -97,7 +97,7 @@ function dupDates(a) {
   return Object.keys(c).filter(k => c[k] > 1);
 }
 
-function main() {
+async function main() {
   console.log('\n[1] zoomed in (~2 sessions): times, one date per session');
   lr = { from: 0, to: 49 };
   let p = renderPass(0, 49, 3);
@@ -139,25 +139,36 @@ function main() {
   ok(!isDate(afterDrift),
      'same session is not dated again after a mid-pass range change (got "' + afterDrift + '")');
 
-  console.log('\n[5] a fresh pass after a zoom re-labels (zoom-in must keep dates)');
+  console.log('\n[5] a repaint after an idle gap must NOT re-date the session (the bug)');
+  // A crosshair move or a delayed paint re-asks for labels with the same range,
+  // sometimes only for the trailing tick. An idle-timeout reset made that tick look
+  // like the first tick of the day, so the session got dated at both ends.
+  lr = { from: 100, to: 149 };
+  const full = renderPass(100, 149, 2);
+  ok(full.filter(x => isDate(x.l)).length === 2, 'full pass dated both sessions');
+  await new Promise(r => setTimeout(r, 400));         // idle gap
+  const tail = AX.tick(chart, 149 * BS, 2, '15m');    // only the trailing tick again
+  ok(!isDate(tail), 'trailing tick shows a time, not the date (got "' + tail + '")');
+
+  console.log('\n[6] a fresh pass after a zoom re-labels (zoom-in must keep dates)');
   lr = { from: 40, to: 189 };
   p = renderPass(40, 189, 2);
   L = labelsOf(p);
   ok(L.filter(isDate).length >= 3, 'dates rendered after the zoom (' + JSON.stringify(L.filter(isDate)) + ')');
   ok(dupDates(p).length === 0, 'no date twice');
 
-  console.log('\n[6] a missing / stale day map cannot blank the axis');
+  console.log('\n[7] a missing / stale day map cannot blank the axis');
   window._intradayDayFirstBarMap = null;
   lr = { from: 0, to: 149 };
   p = renderPass(0, 149, 2);
   ok(labelsOf(p).filter(isDate).length >= 5, 'dates still rendered without the day map');
   window._intradayDayFirstBarMap = Object.assign({}, dayMap);
 
-  console.log('\n[7] ticks past the last real bar stay unlabelled');
+  console.log('\n[8] ticks past the last real bar stay unlabelled');
   ok(AX.tick(chart, (barTimes.length + 5) * BS, 2, '15m') === '',
      'an index past the bar map returns an empty label');
 
-  console.log('\n[8] source guard: the whitespace runway stays bounded');
+  console.log('\n[9] source guard: the whitespace runway stays bounded');
   const dash = fs.readFileSync(path.join(FRONTEND, 'dashboard.js'), 'utf8');
   ok(dash.indexOf('candleData.length + 3000') === -1, 'intraday pad is no longer +3000 bars');
   ok(/candleData\.length \+ 40;/.test(dash), 'intraday pad is bounded (candles + 40)');

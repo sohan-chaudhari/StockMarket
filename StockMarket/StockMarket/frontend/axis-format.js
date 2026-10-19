@@ -240,16 +240,22 @@
     //   - the previous call was a while ago (>= 250 ms) -> a new paint.
     var _lr = null;
     try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
-    var _now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
     var _passStart = false;
     if (_lr && idx != null && _lr.from != null && _lr.to != null) {
-      // Ticks sit a few bars inside the edge and are about span/5 apart, so this
-      // band catches the first tick of a pass and nothing else.
-      var _band = Math.max(2, Math.ceil((_lr.to - _lr.from) / 20));
+      // Measured first-tick offset is 5-7% of the span and tick spacing about span/4.5 (e.g. 672, 684, 696, 708, 720 in a
+      // 61-bar view), so a span/10 band catches the first tick of a pass and never
+      // the second (at ~span/4).
+      var _band = Math.max(2, Math.ceil((_lr.to - _lr.from) / 10));
       _passStart = idx <= Math.ceil(_lr.from) + _band;
     }
-    var _idle = !s.lastCall || (_now - s.lastCall > 250);
-    if (_passStart || _idle) {
+    // The left edge is the ONLY reset signal, for two reasons:
+    //  - the visible range is not stable enough to key on: the live forming candle
+    //    nudges it on every tick, which would clear the sets between repaints and
+    //    date a session again at the right-hand end ("16 Oct" ... "16 Oct");
+    //  - a timeout reset has the same effect on a delayed or crosshair-driven
+    //    repaint, which re-asks for labels with the same range.
+    // Every pass begins at the left edge, so this fires exactly once per pass.
+    if (_passStart) {
       s.seen = { d: {}, m: 0, y: 0 };
     }
     // Does the visible range span more than one trading day? Date labels are only
