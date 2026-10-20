@@ -170,13 +170,31 @@ class CoordinateMapper {
 
         var x = null, y = null;
 
-        // --- X: use LightweightCharts native logicalToCoordinate if available ---
-        // This is pixel-perfect because it uses the chart's own internal math.
+        // --- X: LightweightCharts logicalToCoordinate, INTERPOLATED ---
+        // logicalToCoordinate() only resolves WHOLE logicals; asking it for a
+        // fractional one returns null, which then fell through to a stale viewport
+        // formula and put the point at x = 0. Interpolate between the two nearest
+        // whole bars instead — the exact inverse of what pixelToCoord() does — so an
+        // anchor survives the round trip and a handle can glide.
         var chart = window.bigChart || window.chart;
         if (chart && logical !== null && logical !== undefined) {
             var ts = chart.timeScale();
             if (typeof ts.logicalToCoordinate === 'function') {
-                x = ts.logicalToCoordinate(logical);
+                var iBase = Math.floor(logical);
+                var frac = logical - iBase;
+                var xA = ts.logicalToCoordinate(iBase);
+                if (xA !== null && xA !== undefined && !isNaN(xA)) {
+                    if (frac < 1e-9) {
+                        x = xA;
+                    } else {
+                        var xB = ts.logicalToCoordinate(iBase + 1);
+                        if (xB !== null && xB !== undefined && !isNaN(xB) && (xB - xA) !== 0) {
+                            x = xA + frac * (xB - xA);
+                        } else {
+                            x = xA;
+                        }
+                    }
+                }
             }
         }
         // Fallback to cached viewport formula
