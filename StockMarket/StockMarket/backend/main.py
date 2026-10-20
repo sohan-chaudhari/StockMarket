@@ -1043,6 +1043,12 @@ _event_loop_lag_last_warn = float("-inf")  # ensures the first-ever lag warning 
 _event_loop_lag_history: "deque" = deque(maxlen=7200)
 
 
+# IndexDailyBackfill / DailyFrom5m are idempotent backfills, not latency paths.
+# They ran every ~5 minutes (max(300, ...)) and were the dominant continuous disk
+# reader on the 1 GB box (pidstat: ~300-345 kB/s from this worker, while the API
+# was idle), which saturated I/O (wa 64-89 %, PSI io ~89 %) and stalled the single
+# event loop. 30 minutes is ample for a backfill and cuts that loop's I/O by ~83 %.
+_INDEX_DAILY_BACKFILL_INTERVAL_S = 1800
 _last_stack_dump_ts = 0.0
 
 async def _event_loop_lag_probe():
@@ -8906,7 +8912,7 @@ async def _index_daily_backfill_loop():
         nxt = now_ist.replace(hour=18, minute=35, second=0, microsecond=0)
         if now_ist >= nxt:
             nxt += timedelta(days=1)
-        await asyncio.sleep(max(300, (nxt - now_ist).total_seconds()))
+        await asyncio.sleep(max(_INDEX_DAILY_BACKFILL_INTERVAL_S, (nxt - now_ist).total_seconds()))
 
 
 @app.on_event("startup")
