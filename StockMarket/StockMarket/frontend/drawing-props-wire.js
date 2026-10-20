@@ -106,7 +106,7 @@
      ------------------------------------------------------------------ */
   /* width dropdown: 1px / 2px / 3px / 4px, like the reference */
   function openWidthMenu(anchor) {
-    if (menuKind === 'width') { closeMenu(); return; }   /* same button toggles */
+    if (menuKind === 'width' && menu && menu.isConnected) { closeMenu(); return; }
     closeMenu();
     var items = [1, 2, 3, 4].map(function (px) {
       return {
@@ -131,7 +131,7 @@
   /* line-style dropdown: Line / Dashed line / Dotted line */
   var STYLE_LABELS = { solid: 'Line', dashed: 'Dashed line', dotted: 'Dotted line' };
   function openStyleMenu(anchor) {
-    if (menuKind === 'style') { closeMenu(); return; }    /* same button toggles */
+    if (menuKind === 'style' && menu && menu.isConnected) { closeMenu(); return; }
     closeMenu();
     var items = LINE_STYLE_ORDER.map(function (id) {
       var dash = id === 'dashed' ? ' stroke-dasharray="4 3"' : id === 'dotted' ? ' stroke-dasharray="1.5 3"' : '';
@@ -204,7 +204,7 @@
   }
 
   function openMenu(anchor) {
-    if (menuKind === 'more') { closeMenu(); return; }       /* same button toggles */
+    if (menuKind === 'more' && menu && menu.isConnected) { closeMenu(); return; }
     closeMenu();
     var I = window.DrawingProps.ICON;
     var sel = window.toolManager && window.toolManager.selectedDrawing;
