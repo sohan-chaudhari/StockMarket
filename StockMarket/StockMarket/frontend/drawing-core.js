@@ -3436,7 +3436,7 @@ class DrawingEngine {
             PathDrawing: 'path',
             BrushDrawing: 'brush',
             HighlighterDrawing: 'highlighter',
-            TextDrawing: 'text',
+            TextDrawing: 'text', Table: 'table',
             PriceLabel: 'price_label',
             ArrowMarker: 'arrow_marker',
             FibRetracement: 'fib_retracement',

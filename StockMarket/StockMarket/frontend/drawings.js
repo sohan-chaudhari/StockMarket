@@ -11717,6 +11717,135 @@ try {
     class StickerCheck extends BaseRichDrawing { getObjectDef() { return OBJECT_DEFS.sticker_check; } }
     class StickerWarning extends BaseRichDrawing { getObjectDef() { return OBJECT_DEFS.sticker_warning; } }
 
+    /* Table — a text grid. This was the only text tool TradingView has that we had
+       no equivalent for. The content is plain text: one line per row, "|" between
+       columns, first line is the header. Double-click edits it with the engine's
+       inline text editor (the same path the Text tool uses). */
+    class Table extends TwoPointDrawing {
+        constructor(startPos, chartState, options) {
+            super(startPos, chartState, options);
+            this.text = 'Symbol|Value\nRSI|54.2\nTrend|Up';
+            this._userEdited = false;
+        }
+
+        _rows() {
+            var t = (this.text && String(this.text).length) ? String(this.text) : 'A|B';
+            return t.split('\n').map(function (line) { return line.split('|'); });
+        }
+
+        _rect(pixels) {
+            if (!pixels || pixels.length < 2 || !pixels[0] || !pixels[1]) return null;
+            return {
+                x0: Math.min(pixels[0].x, pixels[1].x),
+                y0: Math.min(pixels[0].y, pixels[1].y),
+                x1: Math.max(pixels[0].x, pixels[1].x),
+                y1: Math.max(pixels[0].y, pixels[1].y)
+            };
+        }
+
+        isValid() { return this.coords.length >= 2; }
+
+        update(pos, chartState) {
+            if (!chartState) return;
+            var c = chartState.pixelToCoord(pos.x, pos.y);
+            if (c && c.logical != null && c.price != null) {
+                if (this.coords.length < 2) this.coords.push({ logical: c.logical, price: c.price, time: c.time });
+                else this.coords[1] = { logical: c.logical, price: c.price, time: c.time };
+            }
+            this.currentPos = pos;
+        }
+
+        getFillShape(pixels) {
+            var r = this._rect(pixels);
+            if (!r) return null;
+            return [
+                { x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 },
+                { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }
+            ];
+        }
+
+        getEdgeSegments(pixels) {
+            var s = this.getFillShape(pixels);
+            if (!s) return [];
+            return [
+                { p1: s[0], p2: s[1] }, { p1: s[1], p2: s[2] },
+                { p1: s[2], p2: s[3] }, { p1: s[3], p2: s[0] }
+            ];
+        }
+
+        getAnchorPoints(pixels) { return this.getFillShape(pixels) || []; }
+        getMidpoints(pixels) { return []; }
+
+        draw(ctx, chartState, isSelected) {
+            var pixels = this.getPixels(chartState);
+            var r = this._rect(pixels);
+            if (!r) return;
+            var rows = this._rows();
+            var nRows = Math.max(1, rows.length);
+            var nCols = 1;
+            for (var k = 0; k < rows.length; k++) { if (rows[k].length > nCols) nCols = rows[k].length; }
+            var rowH = (r.y1 - r.y0) / nRows;
+            var colW = (r.x1 - r.x0) / nCols;
+            var colour = this.style.color || '#2962ff';
+
+            ctx.save();
+            if (this.style.fillColor) {
+                ctx.fillStyle = this.style.fillColor;
+                ctx.globalAlpha = this.style.fillOpacity != null ? this.style.fillOpacity : 1;
+            } else {
+                /* subtle default body so the grid reads as a table, not just lines */
+                ctx.fillStyle = 'rgba(41, 98, 255, 0.08)';
+                ctx.globalAlpha = 1;
+            }
+            ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+
+            ctx.globalAlpha = this.style.opacity != null ? this.style.opacity : 1;
+            ctx.strokeStyle = colour;
+            ctx.lineWidth = this.style.width || 1;
+            ctx.setLineDash(Array.isArray(this.style.lineDash) ? this.style.lineDash : []);
+            ctx.strokeRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+            ctx.beginPath();
+            for (var ri = 1; ri < nRows; ri++) {
+                ctx.moveTo(r.x0, r.y0 + ri * rowH);
+                ctx.lineTo(r.x1, r.y0 + ri * rowH);
+            }
+            for (var ci = 1; ci < nCols; ci++) {
+                ctx.moveTo(r.x0 + ci * colW, r.y0);
+                ctx.lineTo(r.x0 + ci * colW, r.y1);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            var fontSize = this.style.fontSize || 12;
+            var pad = 6;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = this.style.textColor || colour;
+            var maxChars = Math.max(1, Math.floor((colW - pad * 2) / (fontSize * 0.62)));
+            for (var ry = 0; ry < rows.length; ry++) {
+                var cy = r.y0 + ry * rowH + rowH / 2;
+                if (cy > r.y1) break;
+                ctx.font = (ry === 0 ? 'bold ' : '') + fontSize + 'px -apple-system, Roboto, sans-serif';
+                for (var cx2 = 0; cx2 < rows[ry].length; cx2++) {
+                    var cell = String(rows[ry][cx2] || '');
+                    if (!cell) continue;
+                    if (cell.length > maxChars) cell = cell.slice(0, maxChars);
+                    ctx.fillText(cell, r.x0 + cx2 * colW + pad, cy);
+                }
+            }
+            ctx.restore();
+        }
+
+        onDoubleClick(pixelPos, chartState) {
+            var engine = window._drawingEngine;
+            if (!engine || !engine.textEditor) return;
+            var id = this.model ? this.model.id : null;
+            if (!id) return;
+            this._userEdited = true;
+            engine.textEditor.edit(id, this, pixelPos);
+        }
+    }
+
     class Rectangle extends TwoPointDrawing {
         renderShape(ctx, p1, p2) {
             ctx.beginPath();
@@ -14389,6 +14518,7 @@ try {
         callout: { class: Callout, type: 'drawing', name: 'Callout', key: 'callout', group: 'text', points: 2 },
         price_label: { class: PriceLabel, type: 'drawing', name: 'Price Label', key: 'price_label', group: 'text', points: 1 },
         arrow_marker: { class: ArrowMarker, type: 'drawing', name: 'Arrow Marker', key: 'arrow_marker', group: 'text', points: 2 },
+        table: { class: Table, type: 'drawing', name: 'Table', key: 'table', group: 'text', points: 2 },
 
         // Fibonacci & Gann (11 Fib tools + Gann)
         fib_retracement: { class: FibRetracement, type: 'drawing', name: 'Fib Retracement', key: 'fib_retracement', group: 'fib', points: 2 },

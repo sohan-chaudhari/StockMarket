@@ -66,6 +66,7 @@
     note: `<svg viewBox="0 0 28 28"><path d="M4 4H20V16H8L4 20V4Z" stroke="currentColor" fill="none" stroke-width="1.5"/><circle cx="12" cy="10" r="1" fill="currentColor"/></svg>`,
     callout: `<svg viewBox="0 0 28 28"><path d="M4 6H20V18H10L4 24V6Z" stroke="currentColor" fill="none" stroke-width="1.5"/><text x="7" y="14" font-size="9" font-family="Arial" fill="currentColor">Hi</text></svg>`,
     price_label: `<svg viewBox="0 0 28 28"><path d="M4 8H18L22 14L18 20H4V8Z" stroke="currentColor" fill="none" stroke-width="1.5"/><text x="6" y="16" font-size="8" font-family="Arial" fill="currentColor">₹</text></svg>`,
+    table: `<svg viewBox="0 0 28 28"><rect x="4" y="6" width="20" height="16" stroke="currentColor" fill="none" stroke-width="1.5"/><path d="M4 12H24M4 17H24M14 6V22" stroke="currentColor" stroke-width="1.2"/></svg>`,
     arrow_marker: `<svg viewBox="0 0 28 28"><path d="M14 24V4 M10 8L14 4L18 8" stroke="currentColor" stroke-width="1.5"/></svg>`,
 
     // Patterns
@@ -247,7 +248,8 @@
         { id: 'note', name: 'Note', icon: ICONS.note, shortcut: '' },
         { id: 'callout', name: 'Callout', icon: ICONS.callout, shortcut: '' },
         { id: 'price_label', name: 'Price Label', icon: ICONS.price_label, shortcut: '' },
-        { id: 'arrow_marker', name: 'Arrow Marker', icon: ICONS.arrow_marker, shortcut: '' }
+        { id: 'arrow_marker', name: 'Arrow Marker', icon: ICONS.arrow_marker, shortcut: '' },
+        { id: 'table', name: 'Table', icon: ICONS.table, shortcut: '' }
       ]
     },
     {
