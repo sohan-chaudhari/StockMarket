@@ -7072,7 +7072,18 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         return JSONResponse(status_code=400, content={"error": f"Unsupported interval: {interval}"})
         
     model = models.Candle
-    q_base = db.query(model).filter(model.ticker.in_(db_tickers), model.timeframe == interval)
+    # PERF: with ONE ticker spelling use equality, not IN (...).
+    # ix_candles_ticker_tf_ts = (ticker, timeframe, timestamp DESC); an IN-list has
+    # no equality on the leading column, so the planner walks ix_candles_tf_ts across
+    # every ticker and filters afterwards -- that pushed this page past the 15 s
+    # statement_timeout and returned HTTP 500 to the minichart. Same rows; the IN is
+    # kept only for the rare multi-spelling case.
+    _tk = list(db_tickers)
+    q_base = db.query(model).filter(model.timeframe == interval)
+    if len(_tk) == 1:
+        q_base = q_base.filter(model.ticker == _tk[0])
+    else:
+        q_base = q_base.filter(model.ticker.in_(_tk))
 
     now_epoch = _ts_to_epoch(database.get_ist_now())
     is_latest_request = (before is None or not isinstance(before, (int, float))) or before >= (now_epoch - 300)
