@@ -164,6 +164,11 @@
 
       const tickerEl = document.getElementById('tradeModalTicker');
       if (tickerEl) tickerEl.textContent = ticker;
+      try {
+        var _exEl = document.getElementById('tradeModalExchange');
+        var _ex = (window.leverageExchangeFor ? window.leverageExchangeFor(ticker) : null) || '';
+        if (_exEl) _exEl.textContent = _ex ? ('\u00B7 ' + _ex) : '';
+      } catch (e) {}
       const entryPriceEl = document.getElementById('tradeEntryPrice');
       if (entryPriceEl && price > 0) entryPriceEl.value = price.toFixed(2);
       const qtyEl = document.getElementById('tradeQuantity');
@@ -173,7 +178,7 @@
       const slEl = document.getElementById('tradeStopLoss');
       if (slEl) slEl.value = '';
       const msgEl = document.getElementById('tradeMessage');
-      if (msgEl) msgEl.innerHTML = '';
+      if (msgEl) msgEl.innerHTML = '<div style="padding:6px 9px;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.28);border-radius:6px;font-size:0.72rem;color:#fbbf24;line-height:1.35;">Simulated - paper trading only. No real order is placed.</div>';
 
       // Fetch fresh balance from API if not in session or is 0
       if (!user.virtual_balance) {
@@ -255,7 +260,22 @@
       if (overlay) overlay.classList.remove('visible');
     }
 
-    window.showTradeModal = showTradeModal;
+    // Exchange comes from the existing instrument record (window.ALL_STOCKS).
+      // Returns null when unknown, so the UI never guesses an exchange.
+      window.leverageExchangeFor = function (sym) {
+        try {
+          var s = String(sym || '').toUpperCase().trim();
+          if (!s) return null;
+          var list = window.ALL_STOCKS || [];
+          for (var i = 0; i < list.length; i++) {
+            var r = list[i] || {};
+            var k = String(r.symbol || r.ticker || r.code || '').toUpperCase();
+            if (k && k === s) return String(r.exchange || '').toUpperCase() || null;
+          }
+        } catch (e) {}
+        return null;
+      };
+window.showTradeModal = showTradeModal;
     window.hideTradeModal = hideTradeModal;
 
     window.toggleTradeModal = function(defaultType) {
@@ -373,8 +393,8 @@
           // Hide trade modal and show success animation
           hideTradeModal();
           const isAmo = data.is_amo === true;
-          const title = isAmo ? 'AMO Order Queued (09:15 AM Market Open)' : 'Order Executed Successfully!';
-          const detail = `${payload.position_type} | ${payload.quantity} Share${payload.quantity > 1 ? 's' : ''}`;
+          const title = isAmo ? 'Simulated Order Queued - Paper Trading (09:15 AM)' : 'Simulated Order Placed - Paper Trading';
+          const detail = `${payload.position_type} | ${payload.quantity} Share${payload.quantity > 1 ? 's' : ''} | Simulated - paper trading only. No real order is placed.`;
           showOrderSuccessModal(payload.ticker, detail, title);
 
           // RESET Manual closing flag so the panel opens

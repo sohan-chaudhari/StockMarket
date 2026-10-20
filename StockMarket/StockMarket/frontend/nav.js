@@ -735,5 +735,33 @@
     inp.select();
   });
 
+
+  /* Minimal, dependency-free local error capture (UX-701).
+     Console-only: this is local diagnostics, NOT remote production telemetry.
+     Deduplicated per message and capped so a render loop cannot flood the console.
+     Never logs tokens, request bodies or other values - only the error itself. */
+  (function () {
+    if (window.__levErrCapture) return;
+    window.__levErrCapture = { seen: {}, count: 0, max: 25 };
+    function report(kind, message, where) {
+      try {
+        var s = window.__levErrCapture;
+        if (s.count >= s.max) return;
+        var key = kind + "|" + String(message || "").slice(0, 160) + "|" + String(where || "").slice(0, 120);
+        if (s.seen[key]) return;
+        s.seen[key] = 1; s.count++;
+        console.warn("[LEVERAGE] " + kind + ": " + String(message || "").slice(0, 240), where || "");
+      } catch (e) {}
+    }
+    window.addEventListener("error", function (ev) {
+      if (!ev) return;
+      var where = ev.filename ? (String(ev.filename).split("/").pop() + ":" + ev.lineno) : "";
+      report("uncaught error", ev.message, where);
+    });
+    window.addEventListener("unhandledrejection", function (ev) {
+      var r = ev && ev.reason;
+      report("unhandled rejection", (r && (r.message || r)) || "unknown", "");
+    });
+  })();
 })();
 

@@ -1716,7 +1716,7 @@ function _updateURLParam(key, value) {
     history.replaceState(null, '', url);
   } catch(e) {}
 }
-var VALID_RANGES = ['1m','5m','15m','30m','1h','1D','1W','1M','3M','6M','1Y','ALL'];
+var VALID_RANGES = ['5m','15m','30m','1h','1D','1W','1M','3M','6M','1Y','ALL'];
 
 // F&O weekly expiry day-of-week for major NSE/BSE indices (0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri)
 var _FNO_EXPIRY_DAY = {
@@ -1771,6 +1771,73 @@ function _nextExpiryDate(ticker) {
 
 // Renders expiry badges on the index strip cards (home page).
 // Shows "Expiry Today" (red), "Expiry Tomorrow" (amber), or the next date (subtle).
+/**
+ * Requested-instrument identity for chart payloads (UX-210).
+ * Documented index spellings resolve to the same instrument; anything else must
+ * match exactly. Returns true when the payload cannot be verified (identity
+ * absent) so legacy payloads keep working - a documented limitation.
+ */
+function _leverageNormSym(s) {
+  return String(s || '').toUpperCase().trim()
+    .replace(/\.(NS|BO)$/, '')
+    .replace(/[^A-Z0-9&_-]/g, '');
+}
+var _LEV_SYM_ALIASES = {
+  NIFTY50: 'NIFTY', BANKNIFTY: 'BANKNIFTY', NIFTYBANK: 'BANKNIFTY',
+  FINNIFTY: 'FINNIFTY', NIFTYFIN: 'FINNIFTY', NIFTYFINSERVICE: 'FINNIFTY', NIFTY_FIN_SERVICE: 'FINNIFTY',
+  SENSEX: 'SENSEX', BSESN: 'SENSEX',
+  MIDCAP: 'MIDCAP', MIDCPNIFTY: 'MIDCAP', NSEMDCP50: 'MIDCAP',
+  SMALLCAP: 'SMALLCAP', NIFTYSMLCAP100: 'SMALLCAP', CNXSC: 'SMALLCAP'
+};
+function _leverageCanonSym(s) {
+  var n = _leverageNormSym(s);
+  return _LEV_SYM_ALIASES[n] || n;
+}
+window._leveragePayloadTickerOk = function (payload) {
+  try {
+    if (!payload) return true;
+    var want = _leverageCanonSym(window.currentTicker ||
+      (new URLSearchParams(window.location.search).get('ticker') || ''));
+    var got = _leverageCanonSym(payload.ticker || payload.symbol);
+    if (!want || !got) return true;   // unverifiable -> allow (documented)
+    return got === want;
+  } catch (e) { return true; }
+};
+
+/**
+ * Honest history-completeness badge (UX-212). Intraday only: the earliest real
+ * epoch is tracked there; the daily path exposes no comparable value, so the
+ * badge hides instead of guessing. Makes no requests.
+ */
+function _updateHistoryBadge(host) {
+  try {
+    if (!host) return;
+    try {
+      if (window.getComputedStyle && window.getComputedStyle(host).position === 'static') {
+        host.style.position = 'relative';
+      }
+    } catch (e) {}
+    var el = document.getElementById('historyFromBadge');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'historyFromBadge';
+      el.setAttribute('role', 'note');
+      el.style.cssText = 'position:absolute;left:8px;bottom:6px;z-index:5;font-size:11px;line-height:1.3;color:#a1a1aa;background:rgba(10,10,11,0.72);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:2px 8px;pointer-events:none;font-family:inherit;';
+      host.appendChild(el);
+    }
+    var range = window.activeRange || '';
+    var intraday = ['1m','3m','5m','10m','15m','30m','1h','2h','4h'].indexOf(range) !== -1;
+    var earliest = intraday ? window._intradayEarliestEpoch : null;
+    if (!earliest || !isFinite(earliest)) { el.style.display = 'none'; return; }
+    var d = new Date(earliest * 1000 + 5.5 * 3600 * 1000);
+    var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var label = d.getUTCDate() + ' ' + MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
+    var more = window._hasMoreHistoricalData !== false;
+    el.textContent = 'History from ' + label + (more ? ' - scroll left to load earlier data' : '');
+    el.style.display = 'block';
+  } catch (e) {}
+}
+
 function _initExpiryBadges() {
   var _DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var _MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -2687,7 +2754,15 @@ async function initBigChart() {
           _isLoadingMore = false;
           return;
         }
-        // history-before returns a plain array; paginated endpoints return {data, has_more}
+        if (window._leveragePayloadTickerOk && !window._leveragePayloadTickerOk(resp)) {
+            // Belongs to a different instrument than the selected one: discard.
+            // Never render another stock's candles; no retry (that would spend a
+            // provider call for data we did not ask for).
+            _isLoadingMore = false;
+            try { console.warn('[Chart] discarded history page for a different ticker'); } catch (e) {}
+            return;
+          }
+// history-before returns a plain array; paginated endpoints return {data, has_more}
         if (Array.isArray(resp)) {
           resp = { data: resp, has_more: null };
         }
@@ -2982,6 +3057,7 @@ async function initBigChart() {
     }
 
     _setupLazyLoad();
+    try { _updateHistoryBadge(chartParent); } catch (e) {}
 
     window._formingCandles = {};
     window._lastFormingRange = range;
@@ -3123,6 +3199,15 @@ async function initBigChart() {
     // backfill re-poll, and clearing there let the live writer steal a hovered
     // bar's OHLC every time those ran.
     if (window._loadedRange !== range) window._crosshairBarActive = false;
+    // UX-213: on a genuine range switch the legend still holds the OLD range's
+    // values until new data lands. Clear it (same condition as the crosshair
+    // reset above) so a switch cannot display stale OHLC under the new label.
+    if (isRangeSwitch) {
+      ['ohlc-open', 'ohlc-high', 'ohlc-low', 'ohlc-close'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) { el.innerText = '--'; el.style.color = ''; }
+      });
+    }
     hideChartError();
 
     // Show loading state when switching timeframes or loading fresh chart
@@ -3192,6 +3277,15 @@ async function initBigChart() {
         return;
       }
       var jsonResp = await res.json();
+      // UX-210: discard a payload that names a different instrument. Only
+      // possible when the response echoes identity; the chart endpoints currently
+      // do not, so this is a defensive no-op there. No retry: another request
+      // would spend a provider call for data we did not ask for.
+      if (window._leveragePayloadTickerOk && !window._leveragePayloadTickerOk(jsonResp)) {
+        try { console.warn('[Chart] discarded load for a different ticker'); } catch (e) {}
+        hideLoader(loader2);
+        return;
+      }
       var data = (jsonResp && jsonResp.data) ? jsonResp.data : jsonResp;
       var backfillStatus = (jsonResp && jsonResp.backfill_status) ? jsonResp.backfill_status : null;
 
