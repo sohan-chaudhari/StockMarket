@@ -303,7 +303,23 @@
         let verificationPollingInterval = null;
 
         // --- View Switching ---
-        function showPage(pageId) {
+        // Cross-tab verification: the email link may be opened in a NEW tab, which
+// verifies the account. Without this, the original tab waited on the code
+// screen forever. Only a fresh payload for THIS tab's account is honoured.
+function _onVerifiedElsewhere(ev) {
+  try {
+    if (ev && ev.key !== 'mfv1:auth:verified') return;
+    var payload = JSON.parse((ev && ev.newValue) || 'null');
+    if (!payload || !payload.email) return;
+    if (Date.now() - Number(payload.at || 0) > 5 * 60 * 1000) return;      // stale
+    var mine = String(window._pendingVerifyEmail || '').toLowerCase();
+    if (!mine || mine !== String(payload.email).toLowerCase()) return;     // not my account
+    showPage('verifiedPage');
+  } catch (e) {}
+}
+window.addEventListener('storage', _onVerifiedElsewhere);
+
+function showPage(pageId) {
             document.querySelectorAll('.card').forEach(el => el.classList.add('hidden'));
             document.getElementById(pageId).classList.remove('hidden');
             // Clear validation error text (but don't remove the elements)
@@ -364,6 +380,7 @@
 
         // --- Verification Status Polling (Cross-device sync) ---
         async function startVerificationPolling(email) {
+  window._pendingVerifyEmail = String(email || '').toLowerCase();
             if (verificationPollingInterval) return;
             console.log(`[AUTH] Starting verification polling for: ${email}`);
 
@@ -373,6 +390,15 @@
                     if (response.ok) {
                         const data = await response.json();
                         if (data.message === 'verified') {
+        // Tell every other open tab. localStorage fires 'storage' in all tabs
+        // EXCEPT the writer -- which is exactly right, because this tab loads
+        // the signed-in screen itself. The email is the identity, so an
+        // unrelated verification cannot hijack another tab's screen.
+        try {
+          localStorage.setItem('mfv1:auth:verified', JSON.stringify({
+            email: String(email || '').toLowerCase(), at: Date.now()
+          }));
+        } catch (e) {}
                             console.log('[AUTH] Verification detected via polling!');
                             clearInterval(verificationPollingInterval);
                             showPage('verifiedPage');
