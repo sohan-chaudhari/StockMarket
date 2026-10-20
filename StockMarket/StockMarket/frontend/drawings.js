@@ -11790,30 +11790,53 @@ try {
             }
             if (logical == null) return;
 
+            /* Canonical time must survive a resize. The old code assigned bare
+               `{ logical, price }`, which silently DROPPED coord.time — the
+               Phase A invariant every other coord-mutation site preserves — and
+               left it stale on the midpoint paths. */
+            var cm = window.coordinateMapper;
+            var self = this;
+            var timeFor = function (l) {
+                try {
+                    if (cm && typeof cm.logicalToTime === 'function') {
+                        var r = cm.logicalToTime(l);
+                        if (r !== null && r !== undefined && !isNaN(r)) return r;
+                    }
+                } catch (e) {}
+                return null;
+            };
+            var setPoint = function (i, l, p) {
+                var prev = self.coords[i] || {};
+                var t = timeFor(l);
+                self.coords[i] = { logical: l, price: p, time: (t !== null ? t : prev.time) };
+            };
+
             // Midpoint drags resize a single axis; anchor drags resize both axes.
             if (draggedHandle.hitType === 'midpoint') {
                 if (idx === 0) {                 // top edge — move top, keep bottom
-                    this.coords[0].price = price;
+                    setPoint(0, this.coords[0].logical, price);
                 } else if (idx === 1) {          // bottom edge — move bottom, keep top
-                    this.coords[1].price = price;
+                    setPoint(1, this.coords[1].logical, price);
                 } else if (idx === 2) {          // left edge — move left, keep right
-                    this.coords[0].logical = logical;
+                    setPoint(0, logical, this.coords[0].price);
                 } else if (idx === 3) {          // right edge — move right, keep left
-                    this.coords[1].logical = logical;
+                    setPoint(1, logical, this.coords[1].price);
                 }
             } else {
                 // Anchor indices mapping based on getAnchorPoints:
                 // 0: p1, 1: {p1.x, p2.y}, 2: p2, 3: {p2.x, p1.y}
                 if (idx === 0) { // Top/Left (p1)
-                    this.coords[0] = { logical: logical, price: price };
+                    setPoint(0, logical, price);
                 } else if (idx === 1) { // Bottom/Left
-                    this.coords[0].logical = logical;
-                    this.coords[1].price = price;
+                    var p1p = this.coords[0].price;
+                    setPoint(0, logical, p1p);
+                    setPoint(1, this.coords[1].logical, price);
                 } else if (idx === 2) { // Bottom/Right (p2)
-                    this.coords[1] = { logical: logical, price: price };
+                    setPoint(1, logical, price);
                 } else if (idx === 3) { // Top/Right
-                    this.coords[1].logical = logical;
-                    this.coords[0].price = price;
+                    var p2l = this.coords[1].logical;
+                    setPoint(1, p2l, price);
+                    setPoint(0, this.coords[0].logical, price);
                 }
             }
             if (typeof this._invalidateCache === 'function') this._invalidateCache();

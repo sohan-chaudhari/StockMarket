@@ -902,12 +902,14 @@ function getSnappedAnchor(cursorX, cursorY, chartState, options) {
     // Convert cursor pixels to logical coordinate and price
     var logical = null;
     var price = null;
+    var coordTime = null;
 
     if (chartState.pixelToCoord) {
         var coord = chartState.pixelToCoord(cursorX, cursorY);
         if (coord) {
             logical = coord.logical !== undefined ? coord.logical : coord.time;
             price = coord.price;
+            coordTime = (coord.time !== undefined && coord.time !== null) ? coord.time : null;
         }
     }
     if (logical == null) {
@@ -987,7 +989,18 @@ function getSnappedAnchor(cursorX, cursorY, chartState, options) {
     } else {
         finalPrice = _cursorPriceUsable ? price : bestPrice;
     }
-    var finalLogical = idx; // Logical Snap: Always enabled (nearest candle logical index)
+    /* Logical (X-axis) snapping used to be UNCONDITIONAL — literally
+       "always enabled". So the time axis snapped to the nearest candle even with
+       the magnet switched off. Bar spacing is only a few pixels, which meant
+       dragging a rectangle's corner 3px at a time moved its WIDTH in
+       candle-sized jumps while its HEIGHT tracked the pointer smoothly — exactly
+       the "I can't resize it smoothly" report. Logical snapping now follows the
+       same switch as price snapping, so with the magnet off the pointer is
+       tracked 1:1 on both axes. */
+    var logicalSnapEnabled = (options.logicalSnapEnabled !== undefined)
+        ? !!options.logicalSnapEnabled
+        : (snappingMode !== 'disabled');
+    var finalLogical = logicalSnapEnabled ? idx : logical;
 
     // PHASE A (BUG-001): every anchor MUST carry the canonical market time.
     // BaseDrawing.constructor and commitPoint build their coords straight from
@@ -997,7 +1010,10 @@ function getSnappedAnchor(cursorX, cursorY, chartState, options) {
     // anchoring everywhere else. Prefer the snapped candle's own timestamp,
     // which is exact by construction.
     var finalTime = null;
-    if (candle && candle.time !== undefined && candle.time !== null) {
+    if (!logicalSnapEnabled && coordTime !== null) {
+        /* unsnapped: keep the pointer's OWN time, not the nearest candle's */
+        finalTime = coordTime;
+    } else if (candle && candle.time !== undefined && candle.time !== null) {
         // Use coordinateMapper._barTimeSec if available so date-string times (1D mode) work.
         finalTime = (window.coordinateMapper && typeof window.coordinateMapper._barTimeSec === 'function')
             ? window.coordinateMapper._barTimeSec(candle.time)
