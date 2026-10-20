@@ -150,6 +150,19 @@ class CoordinateMapper {
             logical = (resolved !== null && resolved !== undefined && !isNaN(resolved))
                 ? resolved
                 : (coord.logical !== undefined ? coord.logical : null);
+            /* Keep the SUB-BAR offset the anchor was placed at. timeToLogical()
+               resolves to a whole bar, so without this a point sitting between
+               two candles was painted back onto that bar's centre on every frame
+               — which is what made a resize snap instead of glide. The offset is
+               only trusted while the stored logical still agrees with the
+               resolved bar; after a timeframe switch it does not, and the bar
+               centre is then the correct answer. */
+            if (typeof coord.logical === 'number' && !isNaN(coord.logical) &&
+                typeof logical === 'number' &&
+                Math.abs(logical - Math.round(logical)) < 1e-9 &&
+                Math.abs(Math.round(coord.logical) - logical) <= 1) {
+                logical = logical + (coord.logical - Math.round(coord.logical));
+            }
         } else {
             logical = coord.logical !== undefined ? coord.logical : coord.time;
         }
@@ -187,12 +200,31 @@ class CoordinateMapper {
     pixelToCoord(x, y) {
         var logical = null, price = null;
 
-        // --- X: use LightweightCharts native coordinateToLogical if available ---
+        // --- X: LightweightCharts coordinateToLogical, made CONTINUOUS ---
         var chart = window.bigChart || window.chart;
         if (chart) {
             var ts = chart.timeScale();
             if (typeof ts.coordinateToLogical === 'function') {
-                logical = ts.coordinateToLogical(x);
+                var base = ts.coordinateToLogical(x);
+                if (base !== null && base !== undefined && !isNaN(base)) {
+                    /* coordinateToLogical() is INTEGER-QUANTISED in this build, so
+                       an anchor could only ever sit on a bar centre. A rectangle
+                       dragged a few pixels at a time therefore resized in whole-bar
+                       jumps (measured: 6px of width per 6px of pointer travel on a
+                       daily chart) while its height tracked the pointer smoothly.
+                       logicalToCoordinate() IS continuous, so recover the sub-bar
+                       offset from the two nearest bar coordinates. */
+                    var bx = null, bxNext = null;
+                    if (typeof ts.logicalToCoordinate === 'function') {
+                        bx = ts.logicalToCoordinate(base);
+                        bxNext = ts.logicalToCoordinate(base + 1);
+                    }
+                    if (bx !== null && bx !== undefined && bxNext !== null &&
+                        bxNext !== undefined && (bxNext - bx) !== 0) {
+                        base = base + (x - bx) / (bxNext - bx);
+                    }
+                    logical = base;
+                }
             }
         }
         // Fallback to cached viewport formula
