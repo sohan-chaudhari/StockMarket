@@ -2609,6 +2609,25 @@ try {
 
     // --- Drawing Classes ---
 
+    /* Assign a coord WITHOUT losing the canonical time.
+       Several updateHandle() implementations wrote a bare { logical, price },
+       which silently dropped coord.time - the Phase A invariant every other
+       coord-mutation site preserves - so a resized object forgot its market time
+       and could repaint onto a bar centre. Keeps the previous time when the new
+       logical cannot be resolved to one. */
+    function setCoordKeepingTime(coords, i, logical, price) {
+        var cm = window.coordinateMapper;
+        var prev = coords[i] || {};
+        var t = null;
+        try {
+            if (cm && typeof cm.logicalToTime === 'function') {
+                var r = cm.logicalToTime(logical);
+                if (r !== null && r !== undefined && !isNaN(r)) t = r;
+            }
+        } catch (e) {}
+        coords[i] = { logical: logical, price: price, time: (t !== null ? t : prev.time) };
+    }
+
     class BaseDrawing {
         constructor(startPos, chartState, options = {}) {
             this.coords = []; // Store Chart Coordinates (logical/price)
@@ -9561,14 +9580,14 @@ try {
             // Anchor indices mapping based on getAnchorPoints:
             // 0: p1, 1: {p1.x, p2.y}, 2: p2, 3: {p2.x, p1.y}
             if (idx === 0) { // Top/Left (p1)
-                this.coords[0] = { logical: logical, price: price };
+                setCoordKeepingTime(this.coords, 0, logical, price);
             } else if (idx === 1) { // Bottom/Left
-                this.coords[0].logical = logical;
+                setCoordKeepingTime(this.coords, 0, logical, this.coords[0].price);
                 this.coords[1].price = price;
             } else if (idx === 2) { // Bottom/Right (p2)
-                this.coords[1] = { logical: logical, price: price };
+                setCoordKeepingTime(this.coords, 1, logical, price);
             } else if (idx === 3) { // Top/Right
-                this.coords[1].logical = logical;
+                setCoordKeepingTime(this.coords, 1, logical, this.coords[1].price);
                 this.coords[0].price = price;
             }
             this._invalidateCache();
@@ -9658,14 +9677,14 @@ try {
             // Anchor indices mapping based on getAnchorPoints:
             // 0: TL, 1: TR, 2: BR, 3: BL
             if (idx === 0) { // Top/Left (p1)
-                this.coords[0] = { logical: logical, price: price };
+                setCoordKeepingTime(this.coords, 0, logical, price);
             } else if (idx === 1) { // Top/Right
-                this.coords[1].logical = logical;
+                setCoordKeepingTime(this.coords, 1, logical, this.coords[1].price);
                 this.coords[0].price = price;
             } else if (idx === 2) { // Bottom/Right (p2)
-                this.coords[1] = { logical: logical, price: price };
+                setCoordKeepingTime(this.coords, 1, logical, price);
             } else if (idx === 3) { // Bottom/Left
-                this.coords[0].logical = logical;
+                setCoordKeepingTime(this.coords, 0, logical, this.coords[0].price);
                 this.coords[1].price = price;
             }
             if (typeof this._invalidateCache === 'function') this._invalidateCache();
@@ -11892,12 +11911,12 @@ try {
                 // Dragging center: translate both coords to preserve the radius
                 var dl = logical - this.coords[0].logical;
                 var dp = price - this.coords[0].price;
-                this.coords[0] = { logical: logical, price: price };
+                setCoordKeepingTime(this.coords, 0, logical, price);
                 if (this.coords[1]) {
                     this.coords[1] = { logical: this.coords[1].logical + dl, price: this.coords[1].price + dp };
                 }
             } else {
-                this.coords[1] = { logical: logical, price: price };
+                setCoordKeepingTime(this.coords, 1, logical, price);
             }
             if (typeof this._invalidateCache === 'function') this._invalidateCache();
         }
@@ -12451,20 +12470,20 @@ try {
                 } else if (idx === 1) {          // bottom edge
                     this.coords[1].price = price;
                 } else if (idx === 2) {          // left edge
-                    this.coords[0].logical = logical;
+                    setCoordKeepingTime(this.coords, 0, logical, this.coords[0].price);
                 } else if (idx === 3) {          // right edge
-                    this.coords[1].logical = logical;
+                    setCoordKeepingTime(this.coords, 1, logical, this.coords[1].price);
                 }
             } else {
                 if (idx === 0) {
-                    this.coords[0] = { logical: logical, price: price };
+                    setCoordKeepingTime(this.coords, 0, logical, price);
                 } else if (idx === 1) {
-                    this.coords[0].logical = logical;
+                    setCoordKeepingTime(this.coords, 0, logical, this.coords[0].price);
                     this.coords[1].price = price;
                 } else if (idx === 2) {
-                    this.coords[1] = { logical: logical, price: price };
+                    setCoordKeepingTime(this.coords, 1, logical, price);
                 } else if (idx === 3) {
-                    this.coords[1].logical = logical;
+                    setCoordKeepingTime(this.coords, 1, logical, this.coords[1].price);
                     this.coords[0].price = price;
                 }
             }

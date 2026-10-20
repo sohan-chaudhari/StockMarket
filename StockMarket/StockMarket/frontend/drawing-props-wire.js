@@ -1135,6 +1135,42 @@
       }
     } catch (e) {}
 
+    /* Double-click a selected drawing to edit its attached label IN PLACE, the way
+       every other charting tool behaves. The engine already provides an inline
+       text editor (the Text tool uses it via TextDrawing.onDoubleClick); a
+       trendline simply had no handler of its own. If the drawing has no label
+       yet, the settings card opens on its Text tab with the field focused. */
+    var ccEl = document.getElementById('chart-container');
+    if (ccEl) {
+      ccEl.addEventListener('dblclick', function (ev) {
+        try {
+          var tm2 = window.toolManager, eng2 = tm2 && tm2.engine;
+          var sel2 = tm2 && tm2.selectedDrawing;
+          if (!eng2 || !sel2) return;
+          /* text-native drawings already handle their own double-click */
+          var cname2 = (sel2.constructor && sel2.constructor.name) || '';
+          if (TEXT_NATIVE[cname2]) return;
+
+          var td2 = attachedText();
+          var cs2 = tm2.getChartState ? tm2.getChartState() : null;
+          if (td2 && cs2 && eng2.textEditor && typeof eng2.textEditor.edit === 'function') {
+            var ps2 = td2.getPixels ? td2.getPixels(cs2) : null;
+            var px2 = ps2 && ps2.length ? ps2[0] : null;
+            if (px2) {
+              ev.stopPropagation();
+              td2._userEdited = true;
+              eng2.textEditor.edit(td2.model ? td2.model.id : td2.id, td2, px2);
+              return;
+            }
+          }
+          ev.stopPropagation();
+          showCard('text');
+          var ta2 = card && card.querySelector('textarea');
+          if (ta2) setTimeout(function () { try { ta2.focus(); ta2.select(); } catch (e) {} }, 60);
+        } catch (e) {}
+      }, false);
+    }
+
     /* Any open popover closes on the next pointerdown OUTSIDE it. The bar, the
        pads and the card all stop propagation themselves, so a bubble-phase
        listener here only ever sees genuine outside clicks. Without this, an open
