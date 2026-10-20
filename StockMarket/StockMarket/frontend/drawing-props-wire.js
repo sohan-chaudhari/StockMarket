@@ -887,10 +887,18 @@
     if (!bar || bar.style.display === 'none') return;
     var tm = window.toolManager, eng = tm && tm.engine;
     var sel = tm && tm.selectedDrawing;
+    if (!sel) { hideAll(); return; }
+    /* Compare by ID, not identity: toolManager.selectedDrawing can be the
+       renderer OR its model depending on the code path, and an identity check
+       would then conclude the drawing was deleted and hide the bar on a perfectly
+       valid selection. */
+    var selId = sel.model ? sel.model.id : sel.id;
     var alive = false;
-    if (sel && eng && eng.drawings) {
+    if (selId && eng && eng.drawings) {
       for (var i = 0; i < eng.drawings.length; i++) {
-        if (eng.drawings[i] === sel) { alive = true; break; }
+        var d = eng.drawings[i];
+        var id = d.model ? d.model.id : d.id;
+        if (id === selId) { alive = true; break; }
       }
     }
     /* Gone or deselected — the bar has nothing left to act on. A HIDDEN drawing
