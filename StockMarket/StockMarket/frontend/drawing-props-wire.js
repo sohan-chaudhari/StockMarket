@@ -307,6 +307,38 @@
       bar.addEventListener(ev, function (e) { e.stopPropagation(); });
     });
     host.appendChild(tagGuarded(bar));
+
+    /* ⊞ Duplicate. The engine already supports it (duplicateDrawing) and the icon
+       already exists — the bar simply never exposed it. Injected as a real bar
+       button, so no change to drawing-props.js is needed. */
+    try {
+      var delBtn = bar.querySelector('button[title="Delete drawing"]');
+      if (delBtn && delBtn.parentNode) {
+        var dup = document.createElement('button');
+        dup.type = 'button';
+        dup.className = 'dp-bar__btn';
+        dup.title = 'Duplicate';
+        dup.setAttribute('aria-label', 'Duplicate');
+        dup.innerHTML = (window.DrawingProps.ICON && window.DrawingProps.ICON.duplicate) ||
+          '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" ' +
+          'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+          '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+        ['pointerdown', 'mousedown', 'click'].forEach(function (ev) {
+          dup.addEventListener(ev, function (e) { e.stopPropagation(); });
+        });
+        dup.addEventListener('click', function () {
+          try {
+            var d = currentDrawing();
+            var eng = window.toolManager && window.toolManager.engine;
+            /* the duplicate inherits the label too, so give it its own copy the
+               next time the text is opened rather than sharing one */
+            if (d && eng && typeof eng.duplicateDrawing === 'function') eng.duplicateDrawing(d.id);
+          } catch (e) {}
+        });
+        delBtn.parentNode.insertBefore(dup, delBtn);
+      }
+    } catch (e) {}
+
     return bar;
   }
 
@@ -551,6 +583,71 @@
     } catch (e) {}
   }
 
+  /* Recompute the label's anchor + angle from its parent drawing AT DRAW TIME.
+     Doing it here instead of from a pointermove/render hook makes the follow
+     exactly frame-synced: the label's coords are refreshed immediately before it
+     is painted, so it can never trail the line by even one frame. */
+  function syncLabelToParent(td, cs) {
+    var parent = td && td._dpParent;
+    if (!parent || !cs || typeof cs.pixelToCoord !== 'function') return;
+    var ps = parent.getPixels ? parent.getPixels(cs) : null;
+    if (!ps || !ps.length) return;
+
+    var px = null;
+    var mid = parent.getMidpoints ? parent.getMidpoints(ps) : null;
+    if (mid && mid.length && mid[0]) px = mid[0];
+    if (!px) {
+      px = { x: (ps[0].x + ps[ps.length - 1].x) / 2, y: (ps[0].y + ps[ps.length - 1].y) / 2 };
+    }
+    var c = cs.pixelToCoord(px.x, px.y);
+    if (!c || c.logical == null || c.price == null) return;
+
+    var rot = 0;
+    if (ps.length >= 2) {
+      var dx = ps[ps.length - 1].x - ps[0].x;
+      var dy = ps[ps.length - 1].y - ps[0].y;
+      if (dx || dy) {
+        rot = Math.atan2(dy, dx) * 180 / Math.PI;
+        while (rot > 90) rot -= 180;
+        while (rot < -90) rot += 180;
+        rot = Math.round(rot * 10) / 10;
+      }
+    }
+
+    var cur = td.coords && td.coords[0];
+    var same = cur && Math.abs(cur.logical - c.logical) < 0.0001 &&
+               Math.abs(cur.price - c.price) < 0.0001 &&
+               td.rotation === rot;
+    if (same) return;                        /* no churn on a static frame */
+
+    td.coords = [{ logical: c.logical, price: c.price, time: c.time }];
+    td.rotation = rot;
+    if (typeof td._invalidateCache === 'function') td._invalidateCache();
+  }
+
+  /* Deleting the drawing must take its attached label with it. Labels are named
+     "dp-label:<parentId>", so the parent id is all we need — this works even if
+     the in-memory link has been lost (e.g. after a reload). */
+  function deleteAttachedLabelFor(parentId) {
+    var eng = window.toolManager && window.toolManager.engine;
+    if (!eng || !parentId || !eng.drawings) return;
+    var wantName = 'dp-label:' + parentId;
+    var victimId = null;
+    for (var i = 0; i < eng.drawings.length; i++) {
+      var d = eng.drawings[i];
+      var nm = d.model ? d.model.name : null;
+      if (nm === wantName) {
+        victimId = d.model ? d.model.id : d.id;
+        break;
+      }
+    }
+    /* recursion guard: deleting a LABEL emits drawing:delete again, but a label
+       has no dp-label:<itself>, so the cascade stops immediately */
+    if (victimId && typeof eng.deleteDrawing === 'function') {
+      try { eng.deleteDrawing(victimId); } catch (e) {}
+    }
+  }
+
   /* Attach a REAL TextDrawing at the selected drawing's midpoint.
      The engine's own TextDrawing paints `this.text` (see TextDrawing.draw in
      drawings.js) and the engine exposes the class on
@@ -620,6 +717,27 @@
     }
     if (opts && opts.bold) td.style.bold = true;
     if (opts && opts.italic) td.style.italic = true;
+
+    /* ---- the label BELONGS to the drawing ---- */
+    td._dpParent = sel;
+
+    /* Hard guarantee that a label contributes NO axis badges of its own. (The
+       price/date boxes on the axes come from the LINE's two endpoints — measured
+       — but this makes it impossible for any code path to add one from here.) */
+    td.drawAxisLabels = function () {};
+    td._drawAxisLabel = function () {};
+    td.getPriceLabel = function () { return null; };
+    td.getTimeLabel = function () { return null; };
+
+    /* Frame-synced follow: refresh the anchor and angle from the parent
+       immediately before the label is painted, so it can never trail the line. */
+    (function (proto) {
+      var origDraw = proto.draw;
+      td.draw = function (ctx, csArg, isSel) {
+        try { syncLabelToParent(this, csArg); } catch (e) {}
+        return origDraw.call(this, ctx, csArg, isSel);
+      };
+    })(Object.getPrototypeOf(td));
 
     try {
       var res = eng.finalizeDrawing(td);
@@ -932,8 +1050,11 @@
     engine.eventBus.on('drawing:deselect', function () {
       try { hideAll(); } catch (e) {}
     });
-    engine.eventBus.on('drawing:delete', function () {
+    engine.eventBus.on('drawing:delete', function (ev) {
       try { hideAll(); } catch (e) {}
+      /* a drawing must take its attached label with it — otherwise deleting the
+         line left an orphaned piece of text floating on the chart */
+      try { if (ev && ev.id) deleteAttachedLabelFor(ev.id); } catch (e) {}
     });
     engine.eventBus.on('drawing:create', function () {
       try { hideAll(); } catch (e) {}
@@ -946,9 +1067,22 @@
     /* Hide ONLY on the engine's own deselect event. An earlier version also
        hid on document pointerdown when toolManager.selectedDrawing looked empty,
        which fired mid-drag while moving a drawing and made the bar vanish. */
+    /* Escape closes the TOPMOST popover first and only then deselects. The old
+       version called hideAll() straight away, which also dropped the selection —
+       so closing a menu cost you the drawing too. */
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') hideAll();
-    });
+      if (e.key !== 'Escape') return;
+      var cardOpen = !!(card && card.classList.contains('is-open'));
+      var palOpen = !!(palette && palette.style.display !== 'none');
+      if (menu || palOpen || cardOpen) {
+        closeMenu();
+        if (palette) palette.style.display = 'none';
+        hideCard();
+        e.stopPropagation();          /* do not also deselect the drawing */
+        return;
+      }
+      hideAll();
+    }, true);
 
     /* ONE rAF-throttled pass for every scroll and resize. Previously every
        scroll event ran alignBar() synchronously (two forced layouts each), which
