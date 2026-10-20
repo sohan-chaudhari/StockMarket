@@ -1805,37 +1805,22 @@ window._leveragePayloadTickerOk = function (payload) {
 };
 
 /**
- * Honest history-completeness badge (UX-212). Intraday only: the earliest real
- * epoch is tracked there; the daily path exposes no comparable value, so the
- * badge hides instead of guessing. Makes no requests.
+ * History-completeness badge — REMOVED at the user's request.
+ *
+ * The "History from 8 Oct 2026 - scroll left to load earlier data" pill was
+ * absolutely positioned at left:8px / bottom:6px of the chart, which put it
+ * straight on top of the X-axis time labels and made them unreadable.
+ *
+ * Kept as a no-op (rather than deleting the function and its call site) because
+ * the element is created lazily and an old copy may still exist in a page that
+ * was loaded before this change — so this also removes any leftover node.
  */
 function _updateHistoryBadge(host) {
   try {
-    if (!host) return;
-    try {
-      if (window.getComputedStyle && window.getComputedStyle(host).position === 'static') {
-        host.style.position = 'relative';
-      }
-    } catch (e) {}
-    var el = document.getElementById('historyFromBadge');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'historyFromBadge';
-      el.setAttribute('role', 'note');
-      el.style.cssText = 'position:absolute;left:8px;bottom:6px;z-index:5;font-size:11px;line-height:1.3;color:#a1a1aa;background:rgba(10,10,11,0.72);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:2px 8px;pointer-events:none;font-family:inherit;';
-      host.appendChild(el);
-    }
-    var range = window.activeRange || '';
-    var intraday = ['1m','3m','5m','10m','15m','30m','1h','2h','4h'].indexOf(range) !== -1;
-    var earliest = intraday ? window._intradayEarliestEpoch : null;
-    if (!earliest || !isFinite(earliest)) { el.style.display = 'none'; return; }
-    var d = new Date(earliest * 1000 + 5.5 * 3600 * 1000);
-    var MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    var label = d.getUTCDate() + ' ' + MON[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
-    var more = window._hasMoreHistoricalData !== false;
-    el.textContent = 'History from ' + label + (more ? ' - scroll left to load earlier data' : '');
-    el.style.display = 'block';
+    var old = document.getElementById('historyFromBadge');
+    if (old && old.parentNode) old.parentNode.removeChild(old);
   } catch (e) {}
+  return;
 }
 
 function _initExpiryBadges() {
