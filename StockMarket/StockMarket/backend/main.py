@@ -194,6 +194,7 @@ import random
 import secrets
 import time
 import threading
+import angel_sub_worker
 import concurrent.futures
 from collections import OrderedDict, deque
 
@@ -253,7 +254,7 @@ class ViewedTickerManager:
         if len(self._subscribed) < self._max:
             self._subscribed.add(ticker)
             self.stats["subscribe_calls"] += 1
-            threading.Thread(target=self._angel.subscribe_tickers, args=([ticker],), daemon=True).start()
+            angel_sub_worker.shared.submit(self._angel.subscribe_tickers, [ticker])
             return
         # Cap reached — try to evict a safe candidate
         # Safe = in pending_unsub (no active viewers) AND debounce expired (>5min) AND zero execution refs
@@ -268,10 +269,10 @@ class ViewedTickerManager:
             self._subscribed.discard(to_evict)
             self.stats["evictions"] += 1
             print(f"[ViewedTicker] EVICTED {to_evict} (LRU) for {ticker}")
-            threading.Thread(target=self._angel.unsubscribe_tickers, args=([to_evict],), daemon=True).start()
+            angel_sub_worker.shared.submit(self._angel.unsubscribe_tickers, [to_evict])
             self._subscribed.add(ticker)
             self.stats["subscribe_calls"] += 1
-            threading.Thread(target=self._angel.subscribe_tickers, args=([ticker],), daemon=True).start()
+            angel_sub_worker.shared.submit(self._angel.subscribe_tickers, [ticker])
         else:
             self.stats["rejections"] += 1
             print(f"[ViewedTicker] REJECTED subscription to {ticker}: cap {self._max} reached, "
@@ -323,7 +324,7 @@ class ViewedTickerManager:
                     self._pending_unsub[t] = time.time()
 
         if to_subscribe:
-            threading.Thread(target=self._angel.subscribe_tickers, args=(to_subscribe,), daemon=True).start()
+            angel_sub_worker.shared.submit(self._angel.subscribe_tickers, to_subscribe)
 
     def get_execution_ref_count(self, ticker: str) -> int:
         with self._lock:
@@ -368,7 +369,7 @@ class ViewedTickerManager:
 
         if to_repair:
             print(f"[SubscriptionAudit] Repaired {len(to_repair)} missing subscriptions: {to_repair}")
-            threading.Thread(target=self._angel.subscribe_tickers, args=(to_repair,), daemon=True).start()
+            angel_sub_worker.shared.submit(self._angel.subscribe_tickers, to_repair)
 
     def _process_pending(self):
         while True:
@@ -387,7 +388,7 @@ class ViewedTickerManager:
             if to_unsub:
                 self.stats["unsubscribe_calls"] += len(to_unsub)
                 print(f"[ViewedTicker] Unsubscribing {len(to_unsub)} tickers: {to_unsub}")
-                threading.Thread(target=self._angel.unsubscribe_tickers, args=(to_unsub,), daemon=True).start()
+                angel_sub_worker.shared.submit(self._angel.unsubscribe_tickers, to_unsub)
 
 viewed_ticker_mgr = None  # initialized in startup
 
