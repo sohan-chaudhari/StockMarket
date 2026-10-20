@@ -771,6 +771,13 @@
     card.style.width = '';
     card.style.transform = '';
     card.classList.add('is-open');
+    /* Title from the CURRENT drawing. It used to be set only when the card already
+       existed (from showForSelection), so the very first open always said
+       "Drawing" no matter what was selected. */
+    try {
+      var dNow = currentDrawing();
+      if (dNow) card.setTitle(prettifyType(dNow.type));
+    } catch (e) {}
     /* Populate the Text tab from THIS drawing. Without this the box kept whatever
        was typed for the previously selected drawing, so pressing Ok stamped that
        text onto whatever was selected next — a silent way to corrupt a drawing. */
