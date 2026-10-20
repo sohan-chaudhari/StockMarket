@@ -1042,6 +1042,8 @@ _event_loop_lag_last_warn = float("-inf")  # ensures the first-ever lag warning 
 _event_loop_lag_history: "deque" = deque(maxlen=7200)
 
 
+_last_stack_dump_ts = 0.0
+
 async def _event_loop_lag_probe():
     loop = asyncio.get_event_loop()
     next_expected = loop.time() + _EVENT_LOOP_PROBE_INTERVAL
@@ -1059,6 +1061,18 @@ async def _event_loop_lag_probe():
             # period doesn't spam the log every single probe tick.
             if now - _event_loop_lag_last_warn > 60:
                 print(f"[Monitor] Event loop lag {lag_ms:.0f}ms exceeds 500ms threshold")
+                # INCIDENT-DIAGNOSTIC: a synchronous block never appears in asyncio task
+                # stacks, so dump every thread's native stack instead. Bounded: at most one
+                # dump per 60 s, single 1 s timer, repeats disabled. Diagnostics only.
+                try:
+                    global _last_stack_dump_ts
+                    _now_dump = time.time()
+                    if lag_ms >= 2000 and (_now_dump - _last_stack_dump_ts) >= 60:
+                        _last_stack_dump_ts = _now_dump
+                        import faulthandler
+                        faulthandler.dump_traceback_later(1, repeat=False)
+                except Exception:
+                    pass
                 _event_loop_lag_last_warn = now
         next_expected = now + _EVENT_LOOP_PROBE_INTERVAL
 
@@ -5325,7 +5339,11 @@ async def dashboard_websocket(websocket: WebSocket):
         await websocket.close(code=1013)
         return
     # Send connected message so frontend subscribes
-    await websocket.send_json({"type": "connected", "client_id": client_id})
+    try:
+        await websocket.send_json({"type": "connected", "client_id": client_id})
+    except WebSocketDisconnect:
+        # Ordinary client drop during the handshake. Expected, not an error.
+        return
     _msg_window_start = time.time()
     _msg_count = 0
     try:
