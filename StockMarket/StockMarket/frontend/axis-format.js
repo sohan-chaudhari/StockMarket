@@ -313,8 +313,14 @@
       if (x - lastX < MIN_GAP) continue;
       var label = pad2(p1.d) + ' ' + MON[p1.moi];
       if (p1.moi === 0 && p1.d === 1) label += ' ' + p1.y;
-      ctx.fillText(label, x, h / 2);
-      lastX = x;
+      // Keep the text fully inside the strip (the library shifts edge labels too).
+      var half = 0;
+      try { half = ctx.measureText(label).width / 2; } catch (e) { half = 0; }
+      var drawX = x;
+      if (drawX - half < 0) drawX = half;
+      if (drawX + half > w) drawX = w - half;
+      ctx.fillText(label, drawX, h / 2);
+      lastX = Math.max(lastX, drawX + half);
     }
   }
 
