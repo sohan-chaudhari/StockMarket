@@ -769,9 +769,54 @@ def run_job(job):
     return "retry_wait", {"remaining": len(still_missing), "error": last_err}
 
 
+STALE_LEASE_MINUTES = int(os.getenv("BACKFILL_STALE_LEASE_MINUTES", "10"))
+
+
+def reap_stale(max_age_min=None):
+    """Return jobs that have been stuck in `running` to the retry queue.
+
+    A claim sets `running`; if the process dies or a fetch hangs, nothing ever moves
+    that row again and a single stuck job (observed: BAFNAPH, `running` for 40
+    minutes) blocks every other repair for that (ticker, interval) because enqueue
+    refuses while a job is running. Reaping is a bounded UPDATE: one row per stuck
+    job, moved to retry_wait with the normal short backoff -- never a bulk rewrite of
+    finished work.
+    """
+    age = int(max_age_min if max_age_min is not None else STALE_LEASE_MINUTES)
+    db = database.SessionLocal()
+    try:
+        res = db.execute(text("""
+            UPDATE backfill_jobs
+               SET status = 'retry_wait',
+                   lease_expires_at = NULL,
+                   next_attempt_at = NOW() + INTERVAL '120 seconds',
+                   failure_kind = 'stale_lease',
+                   last_error = 'reclaimed: stuck in running past the lease window',
+                   updated_at = NOW()
+             WHERE status = 'running'
+               AND (last_attempt_at IS NULL
+                    OR last_attempt_at < NOW() - make_interval(mins => :age))
+        """), {"age": age})
+        db.commit()
+        n = res.rowcount or 0
+        if n:
+            print(f"[BackfillJob] reclaimed {n} stale running job(s) older than {age} min")
+        return n
+    except Exception as e:
+        db.rollback()
+        print(f"[BackfillJob] reap_stale failed: {e}")
+        return 0
+    finally:
+        db.close()
+
+
 def run_batch(limit=3, worker_id=None):
     """Claim and execute a bounded batch. Returns a small result summary."""
     worker_id = worker_id or f"w{os.getpid()}"
+    try:
+        reap_stale()
+    except Exception:
+        pass
     out = []
     for job in claim(worker_id, limit=limit):
         try:
