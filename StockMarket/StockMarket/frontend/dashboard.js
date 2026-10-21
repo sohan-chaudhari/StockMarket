@@ -294,13 +294,10 @@ function seedUIFromCache() {
     var raw = localStorage.getItem('llp');
     var ts  = parseInt(localStorage.getItem('llp_ts') || '0', 10);
 
-    /* NEVER paint cached prices while the market is OPEN.
-       The cache exists only to avoid a "--" flash. During trading its values are
-       up to five minutes old, so opening the page showed a WRONG index price for
-       a couple of seconds until the socket delivered the real one. When the
-       market is closed the cached values ARE the last close, so they cannot be
-       wrong and may be kept for the whole day. */
-    if (_isMarketOpenNowIST()) return;
+    /* Always paint the last known price: a previous price is what a user expects
+       after a refresh, and a blank "--" is worse. What must never happen is a
+       price from an OLD session, so the same-day check below stays, and
+       fetchIndexPrices() now advances the cache timestamp only with real data. */
     if (!raw || (Date.now() - ts > 12 * 3600 * 1000)) return;
     if (new Date(ts).toDateString() !== new Date().toDateString()) return; // Never seed cross-day stale prices
     var prices = JSON.parse(raw);
@@ -3431,9 +3428,7 @@ async function initBigChart() {
   try {
     var cachedRaw = localStorage.getItem('llp');
     var cachedTs  = parseInt(localStorage.getItem('llp_ts') || '0', 10);
-    /* Same rule as seedUIFromCache(): cached prices may only be shown when the
-       market is closed, otherwise a stale price is painted for a few seconds. */
-    if (cachedRaw && !_isMarketOpenNowIST() && (Date.now() - cachedTs < 12 * 3600 * 1000)) {
+    if (cachedRaw && (Date.now() - cachedTs < 12 * 3600 * 1000)) {
       var cachedPrices = JSON.parse(cachedRaw);
       var cleanTicker = ticker.replace(/\.(NS|BO)$/i, '');
       var cachedLive = cachedPrices[ticker] || cachedPrices[cleanTicker];
@@ -4356,9 +4351,7 @@ async function fetchWatchlist() {
   try {
     var cached = JSON.parse(localStorage.getItem('llp') || 'null');
     var cachedTs = parseInt(localStorage.getItem('llp_ts') || '0', 10);
-    /* Same rule as the index strip: cached prices may only be painted when the
-       market is closed, otherwise a stale price is shown for a few seconds. */
-    if (cached && !_isMarketOpenNowIST() && (Date.now() - cachedTs < 12 * 3600 * 1000) && (new Date(cachedTs).toDateString() === new Date().toDateString())) {
+    if (cached && (Date.now() - cachedTs < 12 * 3600 * 1000) && (new Date(cachedTs).toDateString() === new Date().toDateString())) {
       Object.keys(cached).forEach(function(tkr) {
         var pEl2 = document.getElementById('wl-price-' + tkr);
         var chEl = document.getElementById('wl-change-' + tkr);
