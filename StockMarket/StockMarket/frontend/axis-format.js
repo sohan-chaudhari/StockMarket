@@ -136,6 +136,12 @@
         if (has) {
           if (param.logical != null) lg = param.logical;
           else if (px != null) { try { lg = chart.timeScale().coordinateToLogical(px); } catch (e) {} }
+          // Last resort: the mark's own time is index*barSecs in this chart.
+          if (lg == null && param.time != null) {
+            var bsecs = 0;
+            try { var f2 = CFG.get(chart); bsecs = (f2 && f2.getBarSecs) ? f2.getBarSecs() : 0; } catch (e) {}
+            if (bsecs > 0) lg = Math.round(Number(param.time) / bsecs);
+          }
         }
         rc.chX = has ? px : null;
         rc.chLog = has ? lg : null;

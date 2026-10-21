@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drawing Props — local preview (not deployed)</title>
+<link rel="stylesheet" href="drawing-props.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #131722; color: #d1d4dc;
+               font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+  .hint { padding: 10px 14px; background: #1e222d; border-bottom: 1px solid #2f3543;
+          font-size: 13px; line-height: 1.5; }
+  .hint b { color: #fff; }
+  .hint code { background: #2a2e39; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+              padding: 10px 14px; background: #1a1e28; border-bottom: 1px solid #2f3543; }
+  .controls button { background: #2a2e39; color: #d1d4dc; border: 1px solid #363a45;
+                     border-radius: 6px; padding: 7px 14px; font: inherit; font-size: 13px; cursor: pointer; }
+  .controls button:hover { border-color: #6b7280; }
+  .controls button.on { background: #2962ff; border-color: #2962ff; color: #fff; }
+  .controls .state { font-size: 13px; color: #868993; margin-left: auto; }
+  .controls .state b { color: #d1d4dc; }
+
+  .stage { position: relative; height: calc(100vh - 118px); overflow: hidden;
+           background:
+             repeating-linear-gradient(to bottom, transparent 0 59px, rgba(255,255,255,0.035) 59px 60px),
+             repeating-linear-gradient(to right, transparent 0 79px, rgba(255,255,255,0.035) 79px 80px),
+             #131722; }
+  .candles { position: absolute; inset: 40px 60px 60px 20px; opacity: .85; }
+  .candles span { position: absolute; width: 8px; border-radius: 1px; }
+
+  /* this stands in for #ohlc-floating-legend on stock.html */
+  .ohlc-demo { position: absolute; top: 12px; left: 16px; z-index: 60; pointer-events: none;
+               display: flex; gap: 15px; font-family: 'Roboto Mono', monospace;
+               font-size: 13px; color: #b2b5be; white-space: nowrap; }
+  .ohlc-demo b { color: #d1d4dc; }
+
+  .price-axis-demo { position: absolute; top: 0; right: 0; bottom: 0; width: 58px;
+                     border-left: 1px solid rgba(255,255,255,0.06); }
+  .price-axis-demo i { position: absolute; right: 8px; font-style: normal; font-size: 12px;
+                       color: #787b86; font-family: 'Roboto Mono', monospace; }
+  .drawing-demo { position: absolute; left: 150px; top: 130px; width: 320px; height: 190px;
+                  transform: rotate(18deg); cursor: pointer; }
+  .drawing-demo .line { position: absolute; inset: 0; border-top: 2px solid #ff8a9b; }
+  .drawing-demo .h { position: absolute; width: 18px; height: 18px; border: 3px solid #2962ff;
+                     border-radius: 50%; background: #131722; display: none; }
+  .drawing-demo .h1 { left: -9px; top: -10px; }
+  .drawing-demo .h2 { right: -9px; bottom: -10px; }
+  .drawing-demo.is-selected .h { display: block; }
+</style>
+</head>
+<body>
+
+<div class="hint">
+  <b>Local preview — nothing is deployed.</b> Files loaded from disk.
+  <br>
+  <b>What to watch:</b> click the line → the bar appears <b>exactly on the OHLC</b> and the OHLC is replaced by it.
+  Click empty space → the bar goes and <b>the OHLC comes back exactly as before</b>.
+  <br>
+  <b>Mobile check:</b> <code>F12</code> → <code>Ctrl+Shift+M</code> → pick a phone, or narrow the window under
+  <code>768px</code>. The bar stays in the <b>same spot</b>; only the card re-docks as a bottom sheet.
+</div>
+
+<div class="controls">
+  <button id="btn-sel" class="on">Simulate: drawing selected</button>
+  <button id="btn-deselect">Simulate: deselect</button>
+  <span class="state">bar: <b id="s-bar">shown</b> &nbsp;·&nbsp; OHLC: <b id="s-ohlc">hidden</b></span>
+</div>
+
+<div class="stage" id="stage">
+  <div class="ohlc-demo" id="ohlc">
+    <span><b>O:</b> 16,033.00</span><span><b>H:</b> 16,120.55</span>
+    <span><b>L:</b> 15,988.10</span><span><b>C:</b> 16,033.00</span>
+    <span><b>Vol:</b> 6.695K</span>
+  </div>
+
+  <div class="price-axis-demo">
+    <i style="top:60px">17200</i><i style="top:160px">17000</i><i style="top:260px">16768</i>
+    <i style="top:360px">16600</i><i style="top:460px">16400</i>
+  </div>
+
+  <div class="candles" id="candles"></div>
+
+  <div class="drawing-demo is-selected" id="drawing">
+    <div class="line"></div>
+    <div class="h h1"></div>
+    <div class="h h2"></div>
+  </div>
+</div>
+
+<script src="drawing-props.js"></script>
+<script>
+(function () {
+  var stage   = document.getElementById('stage');
+  var ohlc    = document.getElementById('ohlc');
+  var drawing = document.getElementById('drawing');
+  var sBar    = document.getElementById('s-bar');
+  var sOhlc   = document.getElementById('s-ohlc');
+
+  /* candles */
+  var c = document.getElementById('candles');
+  for (var i = 0; i < 46; i++) {
+    var up = Math.random() > 0.5;
+    var s = document.createElement('span');
+    s.style.left = (i * 16) + 'px';
+    s.style.top = (120 + Math.random() * 150) + 'px';
+    s.style.height = (14 + Math.random() * 46) + 'px';
+    s.style.background = up ? '#26a69a' : '#ef5350';
+    c.appendChild(s);
+  }
+
+  /* ---- card (hidden until asked for) ---- */
+  var card = DrawingProps.createCard({
+    title: 'Trendline',
+    onOk: function (v) { console.log('ok', v); hideCard(); },
+    onCancel: function () { hideCard(); }
+  });
+  card.setValues({ lineColor: '#ff8a9b', p1: { price: 957.05, bar: 238 }, p2: { price: 960.65, bar: 268 } });
+  card.style.display = 'none';
+  card.style.right = '70px';
+  card.style.top = '70px';
+  card.style.left = 'auto';
+  stage.appendChild(card);
+  function hideCard() { card.style.display = 'none'; }
+  function showCard(tab) { card.style.display = 'flex'; card.selectTab(tab || 'style'); }
+
+  /* ---- bar ---- */
+  var bar = DrawingProps.createBar({
+    onEdit:  function () { showCard('style'); },
+    onText:  function () { showCard('text'); },   /* Text -> card already on the Text tab */
+    onColor: function (anchor) { placePalette(anchor); },
+    onDelete: function () { console.log('delete'); deselect(); },
+    onMore:  function () { showCard('style'); }
+  });
+  bar.setWidth(2);
+  bar.setColor('#ff8a9b');
+  stage.appendChild(bar);
+
+  /* ---- palette ---- */
+  var palette = DrawingProps.createPalette({
+    color: '#ff8a9b',
+    opacity: 1,
+    onPick: function (col) { bar.setColor(col); card.setLineColor(col); },
+    onOpacity: function (o) { bar.style.opacity = String(0.4 + 0.6 * o); }
+  });
+  palette.style.display = 'none';
+  stage.appendChild(palette);
+  function placePalette(anchor) {
+    var r = anchor.getBoundingClientRect(), s = stage.getBoundingClientRect();
+    palette.style.display = 'block';
+    palette.style.left = Math.max(8, Math.min(r.left - s.left, s.width - 312)) + 'px';
+    palette.style.top = (r.bottom - s.top + 8) + 'px';
+  }
+
+  /* ---- THE PLACEMENT RULE ----
+     The bar takes the OHLC legend's own rectangle and the legend is hidden, so
+     the OHLC is *replaced* by the bar rather than covered unevenly. Same spot at
+     every viewport width, which is what keeps mobile and desktop consistent. */
+  function alignBarToOhlc() {
+    var r = ohlc.getBoundingClientRect(), s = stage.getBoundingClientRect();
+    bar.style.left = Math.round(r.left - s.left) + 'px';
+    bar.style.top  = Math.round(r.top  - s.top)  + 'px';
+  }
+
+  function select() {
+    drawing.classList.add('is-selected');
+    bar.style.display = 'flex';
+    alignBarToOhlc();
+    ohlc.classList.add('dp-hide-ohlc');        /* the OHLC goes away          */
+    sBar.textContent = 'shown'; sOhlc.textContent = 'hidden';
+  }
+  function deselect() {
+    drawing.classList.remove('is-selected');
+    bar.style.display = 'none';
+    palette.style.display = 'none';
+    hideCard();
+    ohlc.classList.remove('dp-hide-ohlc');     /* the OHLC comes straight back */
+    sBar.textContent = 'hidden'; sOhlc.textContent = 'visible';
+  }
+
+  document.getElementById('btn-sel').addEventListener('click', function () {
+    this.classList.add('on'); select();
+  });
+  document.getElementById('btn-deselect').addEventListener('click', function () {
+    document.getElementById('btn-sel').classList.remove('on'); deselect();
+  });
+
+  /* clicking the line selects it; clicking empty space deselects — the same
+     gesture the real chart uses */
+  drawing.addEventListener('click', function (e) { e.stopPropagation(); select(); });
+  /* Clicks inside the bar / palette / card must NOT deselect — that is the bug
+     where choosing a tab closed the card. Same guard as the real wiring. */
+  stage.addEventListener('click', function (e) {
+    if (e.target && e.target.closest && e.target.closest('.dp-bar, .dp-palette, .dp-card')) return;
+    deselect();
+  });
+
+  window.addEventListener('resize', function () { if (bar.style.display !== 'none') alignBarToOhlc(); });
+
+  select();   /* start in the selected state so the bar is visible immediately */
+})();
+</script>
+</body>
+</html>
