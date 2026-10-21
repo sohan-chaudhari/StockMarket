@@ -125,6 +125,23 @@
     ensureOverlay(chart);
     try { chart.timeScale().subscribeVisibleLogicalRangeChange(function () { drawOverlay(chart); }); } catch (e) {}
     try { if (typeof chart.subscribeSizeChange === 'function') chart.subscribeSizeChange(function () { drawOverlay(chart); }); } catch (e) {}
+    // Crosshair: we draw the pointer's own date+time chip, so track where it is.
+    try {
+      chart.subscribeCrosshairMove(function (param) {
+        var rc = OVERLAY.get(chart);
+        if (!rc) return;
+        var has = !!(param && param.point && param.time !== undefined && param.time !== null);
+        var px = (param && param.point && isFinite(param.point.x)) ? param.point.x : null;
+        var lg = null;
+        if (has) {
+          if (param.logical != null) lg = param.logical;
+          else if (px != null) { try { lg = chart.timeScale().coordinateToLogical(px); } catch (e) {} }
+        }
+        rc.chX = has ? px : null;
+        rc.chLog = has ? lg : null;
+        drawOverlay(chart);
+      });
+    } catch (e) {}
     var rec0 = OVERLAY.get(chart);
     if (rec0 && !rec0.timer) rec0.timer = setInterval(function () { drawOverlay(chart); }, 1200);
     setTimeout(function () { drawOverlay(chart); }, 0);
@@ -248,9 +265,20 @@
     var cv = document.createElement('canvas');
     cv.style.cssText = 'position:absolute;left:0;bottom:0;pointer-events:none;z-index:5;';
     host.appendChild(cv);
-    rec = { canvas: cv, ctx: cv.getContext('2d'), sig: '', timer: null };
+    rec = { canvas: cv, ctx: cv.getContext('2d'), sig: '', timer: null,
+            chX: null, chLog: null, axisLabelsOn: true };
     OVERLAY.set(chart, rec);
     return rec;
+  }
+
+  // The library draws its own time-axis crosshair label UNDER this canvas, so the
+  // two would collide as the pointer moves. While we own the strip we switch the
+  // built-in one off and draw our own chip (date + time); every other range keeps
+  // the built-in label.
+  function setAxisLabelVisible(chart, rec, visible) {
+    if (rec.axisLabelsOn === visible) return;
+    rec.axisLabelsOn = visible;
+    try { chart.applyOptions({ crosshair: { vertLine: { labelVisible: visible } } }); } catch (e) {}
   }
 
   function overlayReady(chart) {
@@ -267,24 +295,36 @@
     try { w = chart.timeScale().width(); h = chart.timeScale().height(); } catch (e) {}
     if (!(w > 0) || !(h > 0)) return;
 
+    // We paint every intraday label ourselves, so the library's time-axis
+    // crosshair label must be off while an intraday range is displayed.
+    setAxisLabelVisible(chart, rec, !isIntradayRange(cfg.getRange()));
+
     // Not an intraday range, or no bar sequence: keep the strip empty.
     if (!isIntradayRange(cfg.getRange()) || !bt || !bt.length) {
-      if (rec.sig !== 'off') { rec.sig = 'off'; rec.canvas.width = 1; rec.canvas.height = 1; }
+      if (rec.sig !== 'off') { rec.sig = 'off'; rec.cw = 0; rec.chh = 0; rec.canvas.width = 1; rec.canvas.height = 1; }
       return;
     }
     var lr = null;
     try { lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
     if (!lr || lr.from == null || lr.to == null) return;
 
-    var sig = Math.round(lr.from) + ':' + Math.round(lr.to) + ':' + w + ':' + h + ':' + bt.length;
+    var sig = Math.round(lr.from) + ':' + Math.round(lr.to) + ':' + w + ':' + h + ':' + bt.length +
+              ':' + (rec.chX == null ? 'n' : Math.round(rec.chX));
     if (sig === rec.sig) return;
     rec.sig = sig;
 
     var dpr = window.devicePixelRatio || 1;
-    rec.canvas.width = Math.round(w * dpr);
-    rec.canvas.height = Math.round(h * dpr);
-    rec.canvas.style.width = w + 'px';
-    rec.canvas.style.height = h + 'px';
+    var cw = Math.round(w * dpr), chh = Math.round(h * dpr);
+    // Resize only when the strip actually changes size: reallocating the canvas on
+    // every pointer move would thrash during crosshair tracking.
+    if (rec.cw !== cw || rec.chh !== chh) {
+      rec.cw = cw;
+      rec.chh = chh;
+      rec.canvas.width = cw;
+      rec.canvas.height = chh;
+      rec.canvas.style.width = w + 'px';
+      rec.canvas.style.height = h + 'px';
+    }
     var ctx = rec.ctx;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
@@ -337,6 +377,30 @@
       return ((b.date ? 1 : 0) - (a.date ? 1 : 0)) || (a.idx - b.idx);
     });
 
+    // -- Crosshair chip: the pointer's own date AND time ------------------------
+    // The built-in label is disabled above, so this is the only thing under the
+    // pointer -- it can never collide with the labels below because they are
+    // placed around it.
+    var chip = null;
+    if (rec.chX != null && rec.chX >= 0 && rec.chX <= w) {
+      var cIdx = (rec.chLog != null) ? Math.round(rec.chLog) : null;
+      var cText = null;
+      if (cIdx != null && cIdx >= 0 && cIdx < bt.length) {
+        var pc = parts(bt[cIdx]);
+        if (pc) cText = pad2(pc.d) + ' ' + MON[pc.moi] + '  ' + pad2(pc.hh) + ':' + pad2(pc.mm);
+      }
+      if (cText) {
+        var chwd = 0;
+        try { chwd = ctx.measureText(cText).width / 2; } catch (e) { chwd = 44; }
+        var pad = 8;
+        var bw = chwd * 2 + pad * 2;
+        var bx = rec.chX - bw / 2;
+        if (bx < 0) bx = 0;
+        if (bx + bw > w) bx = w - bw;
+        chip = { x: bx, w: bw, cx: bx + bw / 2, hw: bw / 2, text: cText };
+      }
+    }
+
     var placed = [];
     var draws = [];
     for (var q = 0; q < todo.length; q++) {
@@ -351,14 +415,32 @@
       if (dx + hw > w - 1) dx = w - 1 - hw;
       if (dx + hw < 0 || dx - hw > w) continue;
       var clash = false;
-      for (var k = 0; k < placed.length; k++) {
-        if (Math.abs(dx - placed[k].x) < placed[k].hw + hw + 10) { clash = true; break; }
+      if (chip && Math.abs(dx - chip.cx) < chip.hw + hw + 6) clash = true;
+      for (var k = 0; !clash && k < placed.length; k++) {
+        if (Math.abs(dx - placed[k].x) < placed[k].hw + hw + 10) clash = true;
       }
       if (clash) continue;
       placed.push({ x: dx, hw: hw });
       draws.push({ x: dx, text: item.text });
     }
+    var baseColour = layout.textColor || '#d1d4dc';
+    ctx.fillStyle = baseColour;
     for (var z = 0; z < draws.length; z++) ctx.fillText(draws[z].text, draws[z].x, h / 2);
+
+    if (chip) {
+      var xr = (opts.crosshair && opts.crosshair.vertLine) || {};
+      var bg = xr.labelBackgroundColor || '#363c4e';
+      var fg = xr.labelTextColor || '#ffffff';
+      var ry = 2, rh = Math.max(10, h - 4);
+      ctx.fillStyle = bg;
+      try {
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(chip.x, ry, chip.w, rh, 3); ctx.fill(); }
+        else ctx.fillRect(chip.x, ry, chip.w, rh);
+      } catch (e) { ctx.fillRect(chip.x, ry, chip.w, rh); }
+      ctx.fillStyle = fg;
+      ctx.fillText(chip.text, chip.cx, h / 2);
+      ctx.fillStyle = baseColour;
+    }
   }
 
   function tick(chart, time, markType, rangeOverride) {
