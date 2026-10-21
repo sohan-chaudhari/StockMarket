@@ -275,10 +275,20 @@
   // two would collide as the pointer moves. While we own the strip we switch the
   // built-in one off and draw our own chip (date + time); every other range keeps
   // the built-in label.
+  //
+  // The state is read back from the live chart every time instead of being
+  // remembered: the app re-applies its own crosshair options whenever the range
+  // changes, which silently turned the built-in label back on and produced two
+  // overlapping chips.
   function setAxisLabelVisible(chart, rec, visible) {
-    if (rec.axisLabelsOn === visible) return;
-    rec.axisLabelsOn = visible;
+    var cur = null;
+    try {
+      var c = (chart.options() || {}).crosshair || {};
+      cur = c.vertLine ? c.vertLine.labelVisible : null;
+    } catch (e) { cur = null; }
+    if (cur === visible) return;
     try { chart.applyOptions({ crosshair: { vertLine: { labelVisible: visible } } }); } catch (e) {}
+    rec.axisLabelsOn = visible;
   }
 
   function overlayReady(chart) {
