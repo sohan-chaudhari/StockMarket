@@ -707,19 +707,21 @@
        drawing with no text at all (that was a real way for text to vanish). */
     var previousTextId = sel._dpTextId || null;
 
-    /* anchor pixel = the drawing's midpoint, falling back to its own pixels */
+    /* anchor pixel = the drawing's midpoint, falling back to its own pixels.
+       NOTE: getMidpoints() takes PIXELS, not the chart state. Passing the chart
+       state made Rectangle.getMidpoints() throw (it reads pixels[0].x after a
+       length check that a plain object slips past), so attaching text to any
+       shape silently failed. */
     var px = null;
     try {
-      var mid = sel.getMidpoints ? sel.getMidpoints(cs) : null;
+      var ps0 = sel.getPixels ? sel.getPixels(cs) : null;
+      var mid = (sel.getMidpoints && ps0) ? sel.getMidpoints(ps0) : null;
       if (mid && mid.length && mid[0]) px = { x: mid[0].x, y: mid[0].y };
-      if (!px) {
-        var ps = sel.getPixels ? sel.getPixels(cs) : null;
-        if (ps && ps.length) {
-          px = {
-            x: (ps[0].x + ps[ps.length - 1].x) / 2,
-            y: (ps[0].y + ps[ps.length - 1].y) / 2
-          };
-        }
+      if (!px && ps0 && ps0.length) {
+        px = {
+          x: (ps0[0].x + ps0[ps0.length - 1].x) / 2,
+          y: (ps0[0].y + ps0[ps0.length - 1].y) / 2
+        };
       }
     } catch (e) {}
     if (!px) return false;
