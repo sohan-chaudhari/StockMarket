@@ -340,6 +340,24 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
         return None
     db = database.SessionLocal()
     try:
+        # DEBOUNCE: if a job for this (ticker, interval) already FINISHED within the
+        # window, the same fetch has just been run. Re-queueing it immediately is what
+        # produced eight identical MASTEK enqueues in 90 seconds -- and, behind them,
+        # the provider churn that made chart requests take 4-5 s. A genuinely stale
+        # gap simply re-enqueues once the window expires.
+        try:
+            _recent = db.execute(text("""
+                SELECT id FROM backfill_jobs
+                 WHERE ticker = :t AND exchange = :x AND interval = :i
+                   AND status IN ('complete','complete_with_gaps','permanently_failed')
+                   AND updated_at > NOW() - make_interval(mins => :m)
+                 ORDER BY updated_at DESC LIMIT 1
+            """), {"t": t, "x": exchange, "i": interval,
+                     "m": RECENT_ENQUEUE_SUPPRESS_MINUTES}).fetchone()
+            if _recent:
+                return _recent[0]
+        except Exception:
+            pass
         row = db.execute(text("""
             INSERT INTO backfill_jobs (ticker, exchange, interval, range_start, range_end,
                                        status, next_attempt_at, last_error)
@@ -770,6 +788,7 @@ def run_job(job):
 
 
 STALE_LEASE_MINUTES = int(os.getenv("BACKFILL_STALE_LEASE_MINUTES", "10"))
+RECENT_ENQUEUE_SUPPRESS_MINUTES = int(os.getenv("BACKFILL_RECENT_ENQUEUE_MINUTES", "10"))
 
 
 def reap_stale(max_age_min=None):
