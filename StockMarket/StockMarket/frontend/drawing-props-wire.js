@@ -593,17 +593,51 @@
     var ps = parent.getPixels ? parent.getPixels(cs) : null;
     if (!ps || !ps.length) return;
 
+    /* CENTRE OF WHAT IS ACTUALLY DRAWN, not of the control points.
+       For an infinite tool (ray, extended line, horizontal/vertical line) the two
+       control points are nowhere near the middle of the line you see — the line
+       runs to the edge of the chart, so a label placed at the control-point
+       midpoint sits off to one side. getEdgeSegments() returns the geometry that is
+       really painted and is already clipped to the canvas, so the centre of its
+       bounding box is the centre of what the user sees at the current zoom/pan. */
     var px = null;
-    var mid = parent.getMidpoints ? parent.getMidpoints(ps) : null;
-    if (mid && mid.length && mid[0]) px = mid[0];
+    var segs = null;
+    try { segs = parent.getEdgeSegments ? parent.getEdgeSegments(ps) : null; } catch (e) { segs = null; }
+    if (segs && segs.length) {
+      var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, seen = 0;
+      for (var si = 0; si < segs.length; si++) {
+        var sg = segs[si];
+        if (!sg) continue;
+        if (sg.p1) {
+          minX = Math.min(minX, sg.p1.x); maxX = Math.max(maxX, sg.p1.x);
+          minY = Math.min(minY, sg.p1.y); maxY = Math.max(maxY, sg.p1.y); seen++;
+        }
+        if (sg.p2) {
+          minX = Math.min(minX, sg.p2.x); maxX = Math.max(maxX, sg.p2.x);
+          minY = Math.min(minY, sg.p2.y); maxY = Math.max(maxY, sg.p2.y); seen++;
+        }
+      }
+      if (seen >= 2 && isFinite(minX) && isFinite(maxX) && isFinite(minY) && isFinite(maxY)) {
+        px = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      }
+    }
     if (!px) {
-      px = { x: (ps[0].x + ps[ps.length - 1].x) / 2, y: (ps[0].y + ps[ps.length - 1].y) / 2 };
+      var mid = parent.getMidpoints ? parent.getMidpoints(ps) : null;
+      if (mid && mid.length && mid[0]) px = mid[0];
+      if (!px) {
+        px = { x: (ps[0].x + ps[ps.length - 1].x) / 2, y: (ps[0].y + ps[ps.length - 1].y) / 2 };
+      }
     }
     var c = cs.pixelToCoord(px.x, px.y);
     if (!c || c.logical == null || c.price == null) return;
 
+    /* Rotate ONLY line-like tools along the line. Shapes (rectangle, ellipse,
+       fib, position boxes …) have a fill shape and keep their text horizontal —
+       rotating a rectangle's label along its diagonal looked wrong. */
     var rot = 0;
-    if (ps.length >= 2) {
+    var hasFill = false;
+    try { hasFill = !!(parent.getFillShape && parent.getFillShape(ps)); } catch (e) { hasFill = false; }
+    if (!hasFill && ps.length >= 2) {
       var dx = ps[ps.length - 1].x - ps[0].x;
       var dy = ps[ps.length - 1].y - ps[0].y;
       if (dx || dy) {
