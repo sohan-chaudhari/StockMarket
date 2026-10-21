@@ -77,7 +77,7 @@
 
   function state(chart) {
     var s = ST.get(chart);
-    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, renderIdxs: null, rangeKey: null, labels: null, labelKey: null }; ST.set(chart, s); }
+    if (!s) { s = { last: null, seen: { d: {}, m: 0, y: 0 }, lastCall: 0, renderIdxs: null, rangeKey: null, labels: null, labelKey: null, passIdx: null, barSecs: null, bt0: null }; ST.set(chart, s); }
     return s;
   }
 
@@ -125,7 +125,7 @@
   function reset(chart) {
     if (!chart) return;
     var s = ST.get(chart);
-    if (s) { s.last = null; s.seen = { d: {}, m: 0, y: 0 }; s.renderIdxs = null; s.labels = null; s.labelKey = null; }
+    if (s) { s.last = null; s.seen = { d: {}, m: 0, y: 0 }; s.renderIdxs = null; s.labels = null; s.labelKey = null; s.passIdx = null; s.barSecs = null; s.bt0 = null; }
   }
 
   function barsOf(chart) {
@@ -206,6 +206,7 @@
     var intraday = isIntradayRange(range);
 
     var idx = null, epoch = null, prevP = null;
+    var _barSecs = null, _bt0 = null;   // identity of the bar sequence in use
 
     if (intraday) {
       var bt = cfg.getBarTimes();
@@ -216,6 +217,10 @@
         if (!(idx >= 0 && idx < bt.length)) return '';
         epoch = bt[idx];
         if (idx > 0) prevP = parts(bt[idx - 1]);
+        // Changing these means the bar sequence was replaced (timeframe switch,
+        // range reload), so every memoised label is meaningless.
+        _barSecs = bs;
+        _bt0 = bt[0];
       } else {
         epoch = cfg.resolveEpoch(time);       // raw-epoch intraday (mini, market)
       }
@@ -238,27 +243,35 @@
     // Order-independent and mid-pass safe:
     //   - this tick sits in the left-edge band of the view -> a pass is starting;
     //   - the previous call was a while ago (>= 250 ms) -> a new paint.
-    var _lr = null;
-    try { _lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
-    // -- Deterministic labels: one decision per (bar index, visible window) --
-    // The library repaints the axis many times for a single view: one full pass,
-    // then partial passes (a crosshair move, a delayed paint, the live forming
-    // candle nudging the range). Each of those re-asks tickMarkFormatter, so any
-    // rule that "clears the dated set between passes" let the trailing tick of an
-    // already-dated session print its date again -- a session dated at both ends,
-    // which is the bug this replaces.
-    // The label is therefore memoised per bar index for the current window. A tick
-    // returns the same string whichever pass asks for it, so a repeated date is
-    // structurally impossible. The memo is dropped only when the window itself
-    // changes (zoom / pan / new data), where a fresh single date per session is
-    // exactly what is wanted.
-    var _winKey = (_lr && _lr.from != null && _lr.to != null)
-      ? (Math.round(_lr.from) + ':' + Math.round(_lr.to)) : 'x';
-    if (s.labelKey !== _winKey) {
-      s.labelKey = _winKey;
+    // -- Reset the "already labelled" sets once per PAINT, never per tick --
+    // The visible range must NEVER drive this reset. During a zoom or a pan (and
+    // whenever the live forming candle nudges the right edge) the range changes
+    // BETWEEN two ticks of the same paint. Resetting there wiped `seen` before
+    // every call, so every tick looked like the first tick of its day and the
+    // same date was printed over and over -- measured on the shipped code: one
+    // paint, window drifting by a single bar, printed "16 Oct" three times and
+    // "21 Oct" five times. That is the duplicate-date bug.
+    //
+    // A paint starts when:
+    //   - it is the first call ever,
+    //   - the sweep restarts to the LEFT (lightweight-charts asks for ticks in
+    //     ascending index order, so a lower index means a new paint began),
+    //   - the formatter has been idle for a frame or more, or
+    //   - the bar sequence itself was replaced (timeframe switch / reload).
+    var _now = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+    var _prevIdx = (s.passIdx != null) ? s.passIdx : null;
+    var _newPass = (s.labelKey == null)
+      || (s.lastCall && (_now - s.lastCall) >= 250)
+      || (_prevIdx != null && idx != null && idx < _prevIdx)
+      || (s.barSecs != null && _barSecs != null && (s.barSecs !== _barSecs || s.bt0 !== _bt0));
+    if (_newPass) {
+      s.labelKey = 'painted';
+      s.barSecs = _barSecs;
+      s.bt0 = _bt0;
       s.labels = {};
       s.seen = { d: {}, m: 0, y: 0 };
     }
+    if (idx != null) s.passIdx = idx;
     if (idx != null && s.labels && s.labels[idx] !== undefined) return s.labels[idx];
     // Does the visible range span more than one trading day? Date labels are only
     // meaningful then -- a single-session view (all visible bars on one trading
