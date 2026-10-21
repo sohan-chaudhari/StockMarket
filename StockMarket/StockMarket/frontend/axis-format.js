@@ -120,12 +120,22 @@
     CFG.set(chart, c);
     state(chart);
     try { chart.timeScale().subscribeVisibleLogicalRangeChange(onRangeChange(chart)); } catch (e) {}
+
+    // Session-date overlay (the strip's dates are painted by us, not the library).
+    ensureOverlay(chart);
+    try { chart.timeScale().subscribeVisibleLogicalRangeChange(function () { drawOverlay(chart); }); } catch (e) {}
+    try { if (typeof chart.subscribeSizeChange === 'function') chart.subscribeSizeChange(function () { drawOverlay(chart); }); } catch (e) {}
+    var rec0 = OVERLAY.get(chart);
+    if (rec0 && !rec0.timer) rec0.timer = setInterval(function () { drawOverlay(chart); }, 1200);
+    setTimeout(function () { drawOverlay(chart); }, 0);
   }
 
   function reset(chart) {
     if (!chart) return;
     var s = ST.get(chart);
     if (s) { s.last = null; s.seen = { d: {}, m: 0, y: 0 }; s.renderIdxs = null; s.labels = null; s.labelKey = null; s.passIdx = null; s.barSecs = null; s.bt0 = null; }
+    var rec = OVERLAY.get(chart);
+    if (rec) { rec.sig = ''; drawOverlay(chart); }
   }
 
   function barsOf(chart) {
@@ -160,31 +170,37 @@
   // axis can never come out empty: the first tick of every day in view always
   // gets its date, even if no tick lands on that day's 09:15 bar and even if the
   // day map has no entry for it.
+  // ------ intraday (5m/15m/30m/1h/4h and raw-epoch intraday) --------------------
+  // TIMES ONLY. Session DATES are painted by the overlay (drawOverlay) instead.
+  //
+  // Why this is not negotiable: lightweight-charts v4.1.3 memoises every tick
+  // label in a 50-entry LRU keyed by the mark's OWN time (`class pn`, cacheKey =
+  // the bar's time). A mark that has been formatted once is never formatted
+  // again. So a label that depends on the zoom level -- or on which marks were
+  // asked for before it -- is frozen the first time it is computed and can never
+  // self-correct. Every "date the first tick of the day" scheme therefore leaves
+  // duplicated dates on screen permanently, which is exactly the reported bug.
+  //
+  // A TIME label is always correct for its own bar no matter when it was
+  // computed, so memoising this function is safe.
   function fmtIntraday(o) {
     var p = o.p;
-    var time = pad2(p.hh) + ':' + pad2(p.mm);
-    var day  = pad2(p.d) + ' ' + MON[p.moi];
-    var mon  = MON[p.moi];
-    var yr   = '' + p.y;
-    var seen = o.s.seen;
+    // Year/Month marks are resolved from the SYNTHETIC (index-based) timeline,
+    // so they do not correspond to real months. The overlay owns that job.
+    if (o.mt === TMT.Year || o.mt === TMT.Month) return '';
 
-    // Year / Month marks the library already resolved at a coarser zoom.
-    if (o.mt === TMT.Year)  { if (seen.y !== p.y) { seen.y = p.y; return yr; } return ''; }
-    if (o.mt === TMT.Month) { var mk = monKeyOf(p); if (seen.m !== mk) { seen.m = mk; return p.moi === 0 ? (mon + ' ' + yr) : mon; } return ''; }
-
-    // Zoom level, in TRADING days of real data in view (computed in tick() from
-    // the bars actually on screen, so neither the whitespace pad nor weekend gaps
-    // distort it): up to three sessions reads as times, beyond that as dates.
-    var wide = (o.tradingDays != null)
-      ? (o.tradingDays > 5)
-      : (o.bars > 3 * Math.max(1, Math.floor(375 / (BAR_MIN[o.range] || 5))));
-
-    var dk = dayKeyOf(p);
-    if (!seen.d[dk]) {
-      seen.d[dk] = 1;
-      return (o.realYearBoundary || (p.moi === 0 && p.d === 1)) ? (day + ' ' + yr) : day;
+    if (!o.overlay) {
+      // Fallback when the overlay cannot attach: still show a date, but only on
+      // the day's OWN first bar. That is a pure function of the bar, so it can
+      // never produce a duplicate.
+      if (o.dayOffset === 0) {
+        var dstr = pad2(p.d) + ' ' + MON[p.moi];
+        return (p.moi === 0 && p.d === 1) ? (dstr + ' ' + p.y) : dstr;
+      }
+    } else if (o.dayOffset != null && o.dateGutterBars != null && o.dayOffset < o.dateGutterBars) {
+      return '';   // leave room for the session date the overlay draws here
     }
-    return wide ? '' : time;
+    return o.wide ? '' : (pad2(p.hh) + ':' + pad2(p.mm));
   }
 
   // ------ daily / weekly / monthly (business-day times) ---------------------------------------------------------------------
@@ -199,6 +215,109 @@
     return mon;                                      // zoomed out: month
   }
 
+  // ------ session-date overlay -------------------------------------------------
+  // A small canvas laid over the time-scale strip. It paints exactly ONE date per
+  // trading session, at that session's first bar, thinning by real pixel distance
+  // -- the way TradingView does it. Because it is our own canvas, redrawn from the
+  // bar sequence and the visible range, it is immune to the library's per-mark
+  // label cache and can never duplicate a date.
+  var OVERLAY = new WeakMap();
+
+  function dayStartOf(bt, idx) {
+    var p0 = parts(bt[idx]);
+    if (!p0) return idx;
+    var k0 = dayKeyOf(p0), i = idx, guard = 0;
+    while (i > 0 && guard++ < 3000) {
+      var pp = parts(bt[i - 1]);
+      if (!pp || dayKeyOf(pp) !== k0) break;
+      i--;
+    }
+    return i;
+  }
+
+  function ensureOverlay(chart) {
+    var rec = OVERLAY.get(chart);
+    if (rec && rec.canvas && rec.canvas.isConnected) return rec;
+    var host = null;
+    try { host = chart.chartElement(); } catch (e) {}
+    if (!host) return null;
+    try { if (getComputedStyle(host).position === 'static') host.style.position = 'relative'; } catch (e) {}
+    var cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;left:0;bottom:0;pointer-events:none;z-index:5;';
+    host.appendChild(cv);
+    rec = { canvas: cv, ctx: cv.getContext('2d'), sig: '', timer: null };
+    OVERLAY.set(chart, rec);
+    return rec;
+  }
+
+  function overlayReady(chart) {
+    var rec = OVERLAY.get(chart);
+    return !!(rec && rec.canvas && rec.canvas.isConnected);
+  }
+
+  function drawOverlay(chart) {
+    var rec = ensureOverlay(chart);
+    if (!rec || !rec.ctx) return;
+    var cfg = CFG.get(chart) || defaultConfig();
+    var bt = cfg.getBarTimes ? cfg.getBarTimes() : null;
+    var w = 0, h = 0;
+    try { w = chart.timeScale().width(); h = chart.timeScale().height(); } catch (e) {}
+    if (!(w > 0) || !(h > 0)) return;
+
+    // Not an intraday range, or no bar sequence: keep the strip empty.
+    if (!isIntradayRange(cfg.getRange()) || !bt || !bt.length) {
+      if (rec.sig !== 'off') { rec.sig = 'off'; rec.canvas.width = 1; rec.canvas.height = 1; }
+      return;
+    }
+    var lr = null;
+    try { lr = chart.timeScale().getVisibleLogicalRange(); } catch (e) {}
+    if (!lr || lr.from == null || lr.to == null) return;
+
+    var sig = Math.round(lr.from) + ':' + Math.round(lr.to) + ':' + w + ':' + h + ':' + bt.length;
+    if (sig === rec.sig) return;
+    rec.sig = sig;
+
+    var dpr = window.devicePixelRatio || 1;
+    rec.canvas.width = Math.round(w * dpr);
+    rec.canvas.height = Math.round(h * dpr);
+    rec.canvas.style.width = w + 'px';
+    rec.canvas.style.height = h + 'px';
+    var ctx = rec.ctx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var opts = {};
+    try { opts = chart.options() || {}; } catch (e) {}
+    var layout = opts.layout || {};
+    var fs = layout.fontSize || 12;
+    ctx.font = (layout.fontStyle ? layout.fontStyle + ' ' : '') + fs + 'px ' +
+               (layout.fontFamily || '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = layout.textColor || '#d1d4dc';
+
+    var iFrom = Math.max(0, Math.ceil(lr.from));
+    var iTo = Math.min(bt.length - 1, Math.floor(lr.to));
+    var MIN_GAP = 64;          // px between two date labels
+    var lastX = -1e9;
+    var prevDay = iFrom > 0 ? parts(bt[iFrom - 1]) : null;
+    for (var i = iFrom; i <= iTo; i++) {
+      var p1 = parts(bt[i]);
+      if (!p1) { prevDay = null; continue; }
+      var isStart = !prevDay || dayKeyOf(p1) !== dayKeyOf(prevDay);
+      prevDay = p1;
+      if (!isStart) continue;                 // only a trading session's first bar
+      var x = null;
+      try { x = chart.timeScale().logicalToCoordinate(i); } catch (e) {}
+      if (x == null || !isFinite(x) || x < 0 || x > w) continue;
+      if (x - lastX < MIN_GAP) continue;
+      var label = pad2(p1.d) + ' ' + MON[p1.moi];
+      if (p1.moi === 0 && p1.d === 1) label += ' ' + p1.y;
+      ctx.fillText(label, x, h / 2);
+      lastX = x;
+    }
+  }
+
   function tick(chart, time, markType, rangeOverride) {
     if (!chart || !chart.timeScale) return '';
     var cfg = CFG.get(chart) || defaultConfig();
@@ -206,7 +325,7 @@
     var intraday = isIntradayRange(range);
 
     var idx = null, epoch = null, prevP = null;
-    var _barSecs = null, _bt0 = null;   // identity of the bar sequence in use
+    var _barSecs = null, _bt0 = null, _bt = null;   // identity of the bar sequence in use
 
     if (intraday) {
       var bt = cfg.getBarTimes();
@@ -221,6 +340,7 @@
         // range reload), so every memoised label is meaningless.
         _barSecs = bs;
         _bt0 = bt[0];
+        _bt = bt;
       } else {
         epoch = cfg.resolveEpoch(time);       // raw-epoch intraday (mini, market)
       }
@@ -335,11 +455,24 @@
     // formatter in or how a render is split across frames.
     s.lastCall = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 
+    var wide = (tradingDays != null)
+      ? (tradingDays > 5)
+      : (bars > 3 * Math.max(1, Math.floor(375 / (BAR_MIN[range] || 5))));
+    // Where this mark sits inside its trading session, and how many bars ~52px of
+    // the strip covers (so the overlay's date has clear space).
+    var dayOffset = null, dateGutterBars = null;
+    if (intraday && idx != null && _bt) {
+      dayOffset = idx - dayStartOf(_bt, idx);
+      var _pxPerBar = (width > 0 && bars > 0) ? (width / bars) : 0;
+      if (_pxPerBar > 0) dateGutterBars = Math.max(1, Math.ceil(52 / _pxPerBar));
+    }
+
     var o = { p: p, mt: markType, bars: bars, width: width, range: range, s: s, idx: idx,
               first: first, realDayBoundary: realDayBoundary,
               realMonthBoundary: realMonthBoundary, realYearBoundary: realYearBoundary,
               newDay: newDay, newMon: newMon, newYr: newYr, multiDay: multiDay,
-              tradingDays: tradingDays };
+              tradingDays: tradingDays, wide: wide, dayOffset: dayOffset,
+              dateGutterBars: dateGutterBars, overlay: intraday ? overlayReady(chart) : false };
     var _out = intraday ? fmtIntraday(o) : fmtDay(o);
     if (idx != null && s.labels) s.labels[idx] = _out;
     return _out;
