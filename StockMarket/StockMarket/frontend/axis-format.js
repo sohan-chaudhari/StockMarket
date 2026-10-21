@@ -189,16 +189,19 @@
     // so they do not correspond to real months. The overlay owns that job.
     if (o.mt === TMT.Year || o.mt === TMT.Month) return '';
 
-    if (!o.overlay) {
-      // Fallback when the overlay cannot attach: still show a date, but only on
-      // the day's OWN first bar. That is a pure function of the bar, so it can
-      // never produce a duplicate.
-      if (o.dayOffset === 0) {
-        var dstr = pad2(p.d) + ' ' + MON[p.moi];
-        return (p.moi === 0 && p.d === 1) ? (dstr + ' ' + p.y) : dstr;
-      }
-    } else if (o.dayOffset != null && o.dateGutterBars != null && o.dayOffset < o.dateGutterBars) {
-      return '';   // leave room for the session date the overlay draws here
+    // While the overlay is active it draws EVERY intraday label (times and dates)
+    // in one layout pass, so the library must draw none -- otherwise a time and a
+    // session date are painted on top of each other ("152150ct"). Suppression has
+    // to be total: whether a given mark is suppressed cannot depend on the zoom,
+    // because the decision is frozen in the library's label cache.
+    if (o.overlay) return '';
+
+    // Fallback when the overlay cannot attach: still show a date, but only on the
+    // day's OWN first bar. That is a pure function of the bar, so it can never
+    // produce a duplicate.
+    if (o.dayOffset === 0) {
+      var dstr = pad2(p.d) + ' ' + MON[p.moi];
+      return (p.moi === 0 && p.d === 1) ? (dstr + ' ' + p.y) : dstr;
     }
     return o.wide ? '' : (pad2(p.hh) + ':' + pad2(p.mm));
   }
@@ -298,30 +301,64 @@
 
     var iFrom = Math.max(0, Math.ceil(lr.from));
     var iTo = Math.min(bt.length - 1, Math.floor(lr.to));
-    var MIN_GAP = 64;          // px between two date labels
-    var lastX = -1e9;
+    var pxPerBar = (iTo > iFrom) ? (w / (iTo - iFrom)) : 0;
+
+    // -- One label per session, then times in the remaining gaps ---------------
+    // The overlay owns the whole strip for intraday, so a date and a time can
+    // never be painted over each other. Dates are placed first (they must never
+    // be dropped), then times fill only the free space between them.
+    var todo = [];
     var prevDay = iFrom > 0 ? parts(bt[iFrom - 1]) : null;
+    var sessions = 0;
     for (var i = iFrom; i <= iTo; i++) {
       var p1 = parts(bt[i]);
       if (!p1) { prevDay = null; continue; }
       var isStart = !prevDay || dayKeyOf(p1) !== dayKeyOf(prevDay);
       prevDay = p1;
-      if (!isStart) continue;                 // only a trading session's first bar
-      var x = null;
-      try { x = chart.timeScale().logicalToCoordinate(i); } catch (e) {}
-      if (x == null || !isFinite(x) || x < 0 || x > w) continue;
-      if (x - lastX < MIN_GAP) continue;
-      var label = pad2(p1.d) + ' ' + MON[p1.moi];
-      if (p1.moi === 0 && p1.d === 1) label += ' ' + p1.y;
-      // Keep the text fully inside the strip (the library shifts edge labels too).
-      var half = 0;
-      try { half = ctx.measureText(label).width / 2; } catch (e) { half = 0; }
-      var drawX = x;
-      if (drawX - half < 0) drawX = half;
-      if (drawX + half > w) drawX = w - half;
-      ctx.fillText(label, drawX, h / 2);
-      lastX = Math.max(lastX, drawX + half);
+      if (!isStart) continue;
+      sessions++;
+      var lbl = pad2(p1.d) + ' ' + MON[p1.moi];
+      if (p1.moi === 0 && p1.d === 1) lbl += ' ' + p1.y;
+      todo.push({ idx: i, text: lbl, date: true });
     }
+
+    // Times only while the view is genuinely intraday-ish; aligned to a fixed bar
+    // grid (idx % step) so labels do not jump around while panning.
+    var step = (pxPerBar > 0) ? Math.max(1, Math.round(64 / pxPerBar)) : 0;
+    if (sessions <= 6 && step > 0) {
+      for (var j = iFrom; j <= iTo; j++) {
+        if (j % step !== 0) continue;
+        var pj = parts(bt[j]);
+        if (!pj) continue;
+        todo.push({ idx: j, text: pad2(pj.hh) + ':' + pad2(pj.mm), date: false });
+      }
+    }
+    todo.sort(function (a, b) {
+      return ((b.date ? 1 : 0) - (a.date ? 1 : 0)) || (a.idx - b.idx);
+    });
+
+    var placed = [];
+    var draws = [];
+    for (var q = 0; q < todo.length; q++) {
+      var item = todo[q];
+      var x = null;
+      try { x = chart.timeScale().logicalToCoordinate(item.idx); } catch (e) {}
+      if (x == null || !isFinite(x)) continue;
+      var hw = 0;
+      try { hw = ctx.measureText(item.text).width / 2; } catch (e) { hw = 16; }
+      var dx = x;
+      if (dx - hw < 1) dx = hw + 1;                 // keep the text inside the strip
+      if (dx + hw > w - 1) dx = w - 1 - hw;
+      if (dx + hw < 0 || dx - hw > w) continue;
+      var clash = false;
+      for (var k = 0; k < placed.length; k++) {
+        if (Math.abs(dx - placed[k].x) < placed[k].hw + hw + 10) { clash = true; break; }
+      }
+      if (clash) continue;
+      placed.push({ x: dx, hw: hw });
+      draws.push({ x: dx, text: item.text });
+    }
+    for (var z = 0; z < draws.length; z++) ctx.fillText(draws[z].text, draws[z].x, h / 2);
   }
 
   function tick(chart, time, markType, rangeOverride) {
