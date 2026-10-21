@@ -731,7 +731,7 @@ def run_job(job):
     # complete, and deliberately NOT as provider_absent (absence needs bracketing
     # evidence, above). Only a genuine error stays `permanently_failed`.
     if job["attempts"] >= JOB_MAX_ATTEMPTS and kind != "auth":
-        if persisted > 0 or kind in ("empty_response", None):
+        if persisted > 0:
             finish(job["id"], "complete_with_gaps", fetched=fetched, persisted=persisted,
                    remaining=len(still_missing), expected=expected_n,
                    error="provider returned no candle for %d interval(s) after %d attempts"
@@ -739,10 +739,20 @@ def run_job(job):
                    failure_kind="provider_empty")
             return "complete_with_gaps", {"remaining": len(still_missing),
                                           "reason": "provider_empty"}
-        finish(job["id"], "permanently_failed", fetched=fetched, persisted=persisted,
+        # NOTHING was persisted for the whole window. An empty or failed provider
+        # response is NOT evidence that the data does not exist: DRREDDY sat at
+        # provider_empty with 38 buckets unfilled after 7 attempts and was then
+        # abandoned forever, so opening the ticker could never fill the gap. Keep it
+        # retryable at the capped backoff instead. Provider load stays bounded --
+        # one attempt per JOB_MAX_BACKOFF_SEC per job -- and a genuinely dead symbol
+        # is still retired by the unsupported-symbol path above.
+        finish(job["id"], "retry_wait", fetched=fetched, persisted=0,
                remaining=len(still_missing), expected=expected_n,
-               error=last_err or "no data after max attempts", failure_kind=kind or "unknown")
-        return "permanently_failed", {"remaining": len(still_missing), "error": last_err}
+               error=last_err or "provider returned no data (kept retryable)",
+               failure_kind=kind or "empty_response",
+               backoff_override=JOB_MAX_BACKOFF_SEC)
+        return "retry_wait", {"remaining": len(still_missing),
+                              "reason": "provider_empty_retry"}
 
     if persisted > 0:
         finish(job["id"], "partially_complete", fetched=fetched, persisted=persisted,
