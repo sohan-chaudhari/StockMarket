@@ -13,7 +13,7 @@ architecture phase.
 """
 import multiprocessing  # noqa: F401  (intentionally unused -- see workers= below)
 
-bind = "0.0.0.0:8000"
+bind = "127.0.0.1:8000"
 
 # Hard-pinned, not derived from cpu_count() -- see module docstring.
 workers = 1
