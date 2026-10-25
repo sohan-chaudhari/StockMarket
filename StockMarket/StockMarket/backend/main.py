@@ -2829,7 +2829,8 @@ async def get_live_prices_batch(request: Request, req: BatchPriceRequest, curren
     return prices
 
 @app.get("/api/health")
-async def health_check(top_allocations: int = 0):
+async def health_check(top_allocations: int = 0,
+                       current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
     sub_metrics = viewed_ticker_mgr.get_metrics() if viewed_ticker_mgr else {}
     # Compute rates for counters since last reset
     uptime = time.time() - _monitoring["last_reset_time"]
@@ -2964,6 +2965,29 @@ async def health_check(top_allocations: int = 0):
     # will never notice and keep routing traffic to a DB-less worker.
     db_reachable = response.get("database", {}).get("reachable") is True
     response["status"] = "ok" if db_reachable else "error"
+
+    # SECURITY: anonymous callers get liveness + market state only. The full
+    # payload (DB pool occupancy, subscription counts, RSS, uptime, provider
+    # error counters) is reconnaissance material for an attacker, so it is
+    # gated to an ADMIN_EMAILS account -- the same allowlist that
+    # auth.require_admin uses, so there is only one definition of "admin".
+    try:
+        _allow = auth.admin_allowlist()
+        _email = (current_user.email or "").strip().lower() if current_user is not None else ""
+        _is_admin = bool(_allow and _email in _allow)
+    except Exception:
+        _is_admin = False
+
+    if not _is_admin:
+        _public = {
+            "status": response.get("status", "ok"),
+            "timestamp": response.get("timestamp"),
+            "market_open": response.get("market_open"),
+        }
+        if not db_reachable:
+            _public["status"] = "error"
+            return JSONResponse(status_code=503, content=_public)
+        return _public
 
     if not db_reachable:
         return JSONResponse(status_code=503, content=response)
@@ -4807,12 +4831,25 @@ async def proxy_market_sentiment(db: Session = Depends(get_db)):
 @app.get("/api/v1/news/google-rss")
 def google_news_rss(q: str):
     import requests
-    url = f"https://news.google.com/rss/search?q={q}&hl=en-IN&gl=IN&ceid=IN:en"
+    from urllib.parse import quote
+    # SEC: `q` was interpolated into the upstream URL raw, so a caller could
+    # inject extra query parameters (&hl=..., &ceid=...) and the query string
+    # was mirrored back on our own origin, unauthenticated and unthrottled.
+    # Encode it, bound its length, and bound how much of the upstream body we
+    # are willing to relay.
+    _q = (q or "").strip()[:200]
+    if not _q:
+        return Response(content="<error>missing q</error>", status_code=400, media_type="application/xml")
+    url = f"https://news.google.com/rss/search?q={quote(_q, safe='')}&hl=en-IN&gl=IN&ceid=IN:en"
     try:
         resp = requests.get(url, timeout=5)
-        return Response(content=resp.text, media_type="application/xml")
+        body = resp.text
+        if len(body) > 2_000_000:          # 2 MB ceiling on the relayed document
+            body = body[:2_000_000]
+        return Response(content=body, media_type="application/xml")
     except Exception as e:
-        return Response(content=f"<error>{str(e)}</error>", status_code=500, media_type="application/xml")
+        from xml.sax.saxutils import escape as _xml_escape
+        return Response(content=f"<error>{_xml_escape(str(e))}</error>", status_code=500, media_type="application/xml")
 
 @app.get("/api/news/general")
 async def proxy_news_general(db: Session = Depends(get_db)):
@@ -5534,7 +5571,11 @@ async def _broadcast_dashboard():
 def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
     try:
         if current_user is None:
-            return schemas.WatchlistResponse(watchlist=[], count=0)
+            # Was a 200 with an empty list, which made an anonymous caller
+            # indistinguishable from a signed-in user with no tickers. The
+            # frontend already handles 401/403 explicitly (watchlist.html,
+            # overview.html, dashboard.js), so this is the correct signal.
+            raise HTTPException(status_code=401, detail="Not authenticated")
         items = db.query(models.UserWatchlist).filter(
             models.UserWatchlist.user_id == current_user.user_id
         ).order_by(models.UserWatchlist.added_at.desc()).all()
