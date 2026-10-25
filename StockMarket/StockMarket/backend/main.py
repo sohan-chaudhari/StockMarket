@@ -5569,13 +5569,16 @@ async def _broadcast_dashboard():
 
 @app.get("/api/watchlist", response_model=schemas.WatchlistResponse)
 def get_watchlist(db: Session = Depends(get_db), current_user: Optional[models.User] = Depends(auth.get_current_user_optional)):
+    # Was a 200 with an empty list, which made an anonymous caller
+    # indistinguishable from a signed-in user with no tickers. Checked BEFORE the
+    # try/except below: that handler catches Exception, so a raise inside it was
+    # swallowed and still answered 200 with an empty list (the log said
+    # "[Watchlist] Error fetching watchlist: 401: Not authenticated").
+    # The frontend already handles 401/403 explicitly (watchlist.html,
+    # overview.html, dashboard.js), so this is the correct signal.
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     try:
-        if current_user is None:
-            # Was a 200 with an empty list, which made an anonymous caller
-            # indistinguishable from a signed-in user with no tickers. The
-            # frontend already handles 401/403 explicitly (watchlist.html,
-            # overview.html, dashboard.js), so this is the correct signal.
-            raise HTTPException(status_code=401, detail="Not authenticated")
         items = db.query(models.UserWatchlist).filter(
             models.UserWatchlist.user_id == current_user.user_id
         ).order_by(models.UserWatchlist.added_at.desc()).all()
