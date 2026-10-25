@@ -8043,6 +8043,7 @@ async def get_screener(
 
         avg_vol_cache: dict = {}   # ticker → (avg_volume, closes_list)
         last_candle_cache: dict = {}  # ticker → last candles(1D) row (fallback price)
+        last_day_vol: dict = {}    # ticker -> latest stored daily volume
         meta_by_ticker: dict = {}
 
         def _fetch_screener_db_data():
@@ -8075,8 +8076,26 @@ async def get_screener(
                 c_list.reverse()
                 closes = [c.close for c in c_list if c.close and c.close > 0]
                 volumes = [c.volume for c in c_list if c.volume and c.volume > 0]
-                avg_v = sum(volumes[:-1]) / (len(volumes) - 1) if len(volumes) >= 5 else None
+                # MEDIAN, not mean. A handful of corrupt BACKFILL 1D rows carry
+                # absurd volumes (HDFCLIFE 2026-10-06 = 8,754,133,922; YESBANK =
+                # 24,973,353,469), and averaging turns those into an "average
+                # volume" 100x-1000x too high, which silently breaks the
+                # volume-ratio filter. The median ignores them.
+                base = volumes[:-1] if len(volumes) > 1 else volumes
+                if len(base) >= 5:
+                    _sb = sorted(base)
+                    _mid = len(_sb) // 2
+                    avg_v = float(_sb[_mid]) if len(_sb) % 2 else (_sb[_mid - 1] + _sb[_mid]) / 2.0
+                else:
+                    avg_v = None
                 avg_vol_cache[t] = (avg_v, closes)
+                # Latest STORED daily volume: the live quote from the REST poller
+                # and from the DB snapshot carries no volume, so without this the
+                # screener reports volume 0 and vol_ratio falls back to 1.0.
+                for _c in reversed(c_list):
+                    if _c.volume and _c.volume > 0:
+                        last_day_vol[t] = int(_c.volume)
+                        break
 
             # 4b. Last candle for any ticker with no live price
             tickers_missing = [t for t in stocks if not prices.get(t, {}).get("current_price")]
@@ -8127,6 +8146,12 @@ async def get_screener(
             change     = round(cp - (prev_close if prev_close else open_p if open_p else cp), 2)
             change_pct = round((change / prev_close * 100), 2) if prev_close and prev_close != 0 else 0.0
             vol        = _safe_int(p.get("volume"))
+            if vol <= 0:
+                # The live quote carries no volume for the REST poller and for the
+                # DB snapshot sources, which made the screener show volume 0 and
+                # forced vol_ratio to 1.0 (so the volume-ratio filter never
+                # matched). Fall back to the stored volume of the latest session.
+                vol = last_day_vol.get(ticker, 0)
 
             clean_tkr  = ticker.upper().replace('.NS', '').replace('.BO', '')
             sm_obj     = meta_by_ticker.get(ticker) or meta_by_ticker.get(clean_tkr)
