@@ -7426,8 +7426,20 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     # manual refresh). The CacheControlMiddleware reads this flag.
                     if request is not None:
                         request.state.chart_uncacheable = True
-                    background_tasks.add_task(
-                        asyncio.to_thread, _sync_repair_recent_bg, clean_ticker, now, _sync_key)
+                    # A detached daemon thread, deliberately NOT background_tasks:
+                    # Starlette awaits background tasks before the ASGI call
+                    # returns, so the client still waited for the whole provider
+                    # fetch (measured 17.5 s even after the inline repair was
+                    # removed). The reserve/budget claims above already bound how
+                    # often this can run, and _sync_repair_recent_bg owns its own
+                    # DB session, so nothing here is shared with the request.
+                    import threading as _threading
+                    _threading.Thread(
+                        target=_sync_repair_recent_bg,
+                        args=(clean_ticker, now, _sync_key),
+                        daemon=True,
+                        name=f"sync-repair-{clean_ticker}",
+                    ).start()
         except Exception as _sr_err:
             print(f"[SyncRepair] {clean_ticker} error: {_sr_err}")
 
