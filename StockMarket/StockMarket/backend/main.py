@@ -456,15 +456,22 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
             # doing a fresh forward navigation.
             response.headers['Cache-Control'] = 'private, must-revalidate'
         elif path.startswith('/api/stock-data'):
-            # Chart/intraday data must ALWAYS reach the app. The server-side gap
-            # fill is dispatched asynchronously and the client re-polls to merge
-            # the recovered bars, but nginx's 10s micro-cache
-            # (proxy_cache_valid 200 10s, keyed by the full URI) answered that
-            # re-poll with the PRE-fill body -- so a chart stayed incomplete
-            # until the user manually refreshed. X-Accel-Expires:0 is nginx's own
-            # "do not cache this response" directive.
+            # Chart data is still never stored by the BROWSER: a stale chart in the
+            # tab is worse than a slow one.
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
-            response.headers['X-Accel-Expires'] = '0'
+            # nginx normally must not cache these either. It once answered the
+            # client's re-poll with the PRE-fill body, so a chart stayed incomplete
+            # until the user manually refreshed; X-Accel-Expires:0 is nginx's own
+            # "do not cache this response" directive and is what fixed that.
+            # Since the intraday endpoint now answers from storage and repairs in
+            # the background (see _sync_repair_recent_bg), a COMPLETE body is safe
+            # to keep for nginx's 10 s window. The endpoint sets
+            # request.state.chart_uncacheable when THIS response may still be a
+            # pre-fill one; only then is the no-cache directive sent.
+            _may_cache = (path.startswith('/api/stock-data/intraday')
+                          and not getattr(request.state, 'chart_uncacheable', False))
+            if not _may_cache:
+                response.headers['X-Accel-Expires'] = '0'
         elif path.startswith(('/api/portfolio', '/api/trade', '/api/watchlist', '/api/auth', '/api/user')):
             # Security hardening: ensure authenticated user responses are NEVER stored by intermediate caches
             response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
@@ -6591,6 +6598,29 @@ _SYNC_REPAIR_MAX_SESSIONS = int(os.getenv("SYNC_REPAIR_MAX_SESSIONS", "10"))
 _SYNC_REPAIR_COOLDOWN_SEC = int(os.getenv("SYNC_REPAIR_COOLDOWN_SEC", "600"))
 
 
+def _sync_repair_recent_bg(ticker: str, now, sync_key: str) -> None:
+    """Run `_sync_repair_recent` off the request path.
+
+    Owns its own DB session (the request's session is closed as soon as the
+    response is sent) and applies the same cooldown bookkeeping the inline version
+    did, so a failing provider still backs off instead of retry-storming.
+    """
+    from database import SessionLocal
+    _db = SessionLocal()
+    try:
+        if _sync_repair_recent(_db, ticker, now):
+            _set_backfill_cooldown(sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
+        else:
+            _set_backfill_cooldown(sync_key, _BACKFILL_FAIL_MIN_SEC)
+    except Exception as e:
+        print(f"[SyncRepair] background error for {ticker}: {e}")
+    finally:
+        try:
+            _db.close()
+        except Exception:
+            pass
+
+
 def _sync_repair_recent(db, ticker, now) -> int:
     """Fetch and PERSIST the recent missing 5m range synchronously (bounded).
 
@@ -7105,10 +7135,11 @@ def _intraday_paginated_route(request: Request, ticker: str = Query(..., max_len
     requires a `Request` argument, so the route must be a separate function."""
     return get_intraday_paginated(ticker=ticker, interval=interval, before=before,
                                   after=after, limit=limit,
-                                  background_tasks=background_tasks, db=db)
+                                  background_tasks=background_tasks, db=db,
+                                  request=request)
 
 
-def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
+def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db), request: Request = None):
     """Paginated intraday intraday_candles_5min. Auto-triggers gap fill on first page load (before=None)."""
     db_tickers = _normalize_ticker(ticker)
     
@@ -7358,11 +7389,17 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
 
-    # === SYNCHRONOUS REPAIR (5m is the source of truth) ===
-    # Runs AFTER the gap checks and BEFORE the response is built, so the FIRST
-    # visitor to a ticker gets a complete recent range instead of a gap -- and it
-    # is persisted, so every later visitor reads it from the database. This also
-    # fixes 15m/30m/1h/4h at once, because they are resampled from this 5m.
+    # === BACKGROUND REPAIR (5m is the source of truth) ===
+    # The provider repair used to run INLINE here, before the response was built.
+    # A cold ticker therefore cost the whole round-trip inside the request --
+    # measured at 11.6 s (UNITDSPR) and 90 s (ROUTE, timed out). That is also what
+    # made the browser's ~1.5 s AbortController abort and re-issue the same
+    # request 12 times.
+    # The response is now built from what is already stored (~0.2 s) and the
+    # repair runs in a worker thread, so the next request -- or the client's own
+    # re-poll -- sees the recovered bars. It is persisted, so later visitors read
+    # it from the database. This fixes 15m/30m/1h/4h at once, because they are
+    # resampled from this 5m.
     # Bounded (see _sync_repair_recent) and skipped for 1m, which we do not serve.
     # Only on a real request (background_tasks is not None) so tests never hit the
     # network.
@@ -7384,27 +7421,13 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     else:
                         _release_backfill(_sync_key)
                 if _sync_claimed:
-                    if _sync_repair_recent(db, clean_ticker, now):
-                        _set_backfill_cooldown(_sync_key, _SYNC_REPAIR_COOLDOWN_SEC)
-                        _q2 = q_base
-                        if before is not None and isinstance(before, (int, float)):
-                            _q2 = _q2.filter(model.timestamp < _epoch_to_ist_dt(before))
-                        if after is not None and isinstance(after, (int, float)):
-                            _q2 = _q2.filter(model.timestamp > _epoch_to_ist_dt(after))
-                        # Same collapse: the rebuilt page must not reintroduce a bar for
-                        # a timestamp an alias spelling also covers.
-                        records = _dedupe_candles_prefer_canonical(
-                            _q2.order_by(model.timestamp.desc())
-                               .limit(_page_fetch_limit(limit + 1, db_tickers)).all(),
-                            db_tickers)
-                        print(f"[SyncRepair] {clean_ticker} {interval}: response rebuilt with "
-                              f"{len(records)} stored candle(s)")
-                    else:
-                        # Nothing came back (empty / no-trade window or a
-                        # transient error): short backoff rather than the full
-                        # success cooldown, so a transient failure retries soon
-                        # without a retry storm.
-                        _set_backfill_cooldown(_sync_key, _BACKFILL_FAIL_MIN_SEC)
+                    # This body may still be a pre-fill one, so a SHARED cache must
+                    # not serve it (that is the bug that once froze a chart until a
+                    # manual refresh). The CacheControlMiddleware reads this flag.
+                    if request is not None:
+                        request.state.chart_uncacheable = True
+                    background_tasks.add_task(
+                        asyncio.to_thread, _sync_repair_recent_bg, clean_ticker, now, _sync_key)
         except Exception as _sr_err:
             print(f"[SyncRepair] {clean_ticker} error: {_sr_err}")
 
