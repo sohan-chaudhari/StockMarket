@@ -8744,6 +8744,135 @@ def _yf_daily_df_to_candle_rows(df, tkr: str) -> list:
     return rows
 
 
+def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200) -> dict:
+    """Reconcile `stock_metadata` with the broker's instrument master (new listings).
+
+    Why this exists: every writer of stock_metadata is a one-off seeder
+    (fetch_stocks.py / seed_metadata.py / seed_stocks.py), so a company listed AFTER
+    the last seed is invisible -- absent from /api/all-stocks, the screener and
+    search. The broker master already lists every security; it was simply never used
+    for this. Measured 2026-10-27: 7,821 metadata rows but only 1,471 flagged
+    is_active, while 3,418 tickers actually have 5m data -- the flag is not
+    maintained and cannot mean "currently listed".
+
+    Safety rules (deliberate, so a bad night cannot wipe the universe):
+      * never deletes a row -- history must survive a delisting;
+      * deactivates ONLY when the master really loaded AND it looks complete
+        (>= 1000 NSE instruments), never on a partial/failed download;
+      * enqueues a 5m backfill for newly inserted NSE tickers, capped per run so a
+        large batch cannot swamp the 1 GB box or the provider quota.
+
+    Returns a summary dict (also logged), so a dry run is measurable.
+    """
+    out = {"ok": False, "nse_symbols": 0, "bse_symbols": 0,
+           "inserted": 0, "reactivated": 0, "deactivated": 0, "queued_backfill": 0}
+    try:
+        if not getattr(angelone_service, "_instruments_loaded", False):
+            try:
+                angelone_service.load_instruments()
+            except Exception as e:
+                print(f"[UniverseSync] master load error: {e}")
+        rows = getattr(angelone_service, "_instruments_rows", None) or []
+        if not rows:
+            out["reason"] = "instrument master unavailable"
+            print("[UniverseSync] skipped: instrument master unavailable (nothing changed)")
+            return out
+
+        nse = {}   # TICKER -> name
+        bse = {}
+        for r in rows:
+            seg = (r.get("exch_seg") or "").upper()
+            sym = (r.get("symbol") or "").strip()
+            if not sym.upper().endswith("-EQ"):
+                continue
+            tkr = sym[:-3].strip().upper()
+            if not tkr:
+                continue
+            nm = (r.get("name") or "").strip() or tkr
+            if seg == "NSE":
+                nse.setdefault(tkr, nm)
+            elif seg == "BSE":
+                bse.setdefault(tkr, nm)
+        out["nse_symbols"] = len(nse)
+        out["bse_symbols"] = len(bse)
+        complete = len(nse) >= 1000      # sanity gate for the deactivation step
+
+        from database import SessionLocal as _SL
+        from sqlalchemy import text as _t
+        db = _SL()
+        try:
+            existing = {(r[0].upper(), (r[1] or '').upper())
+                        for r in db.execute(_t("SELECT ticker, exchange FROM stock_metadata")).fetchall()}
+            to_insert = []
+            for tkr, nm in nse.items():
+                if (tkr, "NSE") not in existing:
+                    to_insert.append((tkr, nm, "NSE"))
+            for tkr, nm in bse.items():
+                if (tkr, "BSE") not in existing:
+                    to_insert.append((tkr, nm, "BSE"))
+            out["inserted"] = len(to_insert)
+            print(f"[UniverseSync] master: {len(nse)} NSE / {len(bse)} BSE equities | "
+                  f"metadata rows={len(existing)} | new={len(to_insert)} | dry_run={dry_run}")
+
+            if dry_run:
+                sample = ", ".join(f"{t}({e})" for t, _n, e in to_insert[:15])
+                print(f"[UniverseSync] DRY RUN -- would insert e.g.: {sample or '(none)'}")
+                out["ok"] = True
+                return out
+
+            ins = 0
+            for tkr, nm, exch in to_insert:
+                try:
+                    db.execute(_t("""
+                        INSERT INTO stock_metadata (ticker, name, exchange, is_active)
+                        VALUES (:tk, :nm, :ex, true)
+                        ON CONFLICT (ticker, exchange) DO NOTHING
+                    """), {"tk": tkr, "nm": nm, "ex": exch})
+                    ins += 1
+                except Exception:
+                    continue
+            db.commit()
+            out["inserted"] = ins
+
+            # Deactivate ONLY on a complete master: keeps history, hides the symbol
+            if complete:
+                res = db.execute(_t("""
+                    UPDATE stock_metadata SET is_active = false
+                    WHERE is_active IS TRUE
+                      AND exchange IN ('NSE','BSE')
+                      AND UPPER(ticker) <> ALL(:live)
+                """), {"live": sorted(set(nse) | set(bse))})
+                out["deactivated"] = res.rowcount or 0
+                db.commit()
+
+            # Backfill for the brand-new NSE listings (bounded)
+            try:
+                import backfill_jobs as _bj
+                end_dt = datetime.combine(database.get_ist_now().date(), datetime.min.time())
+                start_dt = end_dt - timedelta(days=60)
+                for tkr, _nm, exch in to_insert[:backfill_cap]:
+                    if exch != "NSE":
+                        continue
+                    try:
+                        if _bj.enqueue(tkr, "5m", start_dt, end_dt, reason="new_listing"):
+                            out["queued_backfill"] += 1
+                    except Exception:
+                        continue
+            except Exception as e:
+                print(f"[UniverseSync] backfill enqueue skipped: {e}")
+
+            out["ok"] = True
+            print(f"[UniverseSync] DONE inserted={out['inserted']} deactivated={out['deactivated']} "
+                  f"queued_backfill={out['queued_backfill']}")
+            return out
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[UniverseSync] error: {e}")
+        out["reason"] = str(e)
+        return out
+
+
 def _sync_yfinance_inactive_symbols() -> int:
     """Synchronous worker for the periodic yfinance-inactive-symbol sync.
 
@@ -9982,6 +10111,34 @@ async def startup():
     audit_task.add_done_callback(_log_task_error)
 
     # Periodic sync of yfinance inactive symbols to DB (every 5 minutes)
+    # ── Universe sync: keep stock_metadata in step with the broker master ──────
+    # New listings (IPOs), renames and delistings. Insert-only, and deactivation is
+    # gated on a complete master download, so a bad night can never wipe the
+    # universe. Runs shortly after startup and then daily at 08:00 IST (before the
+    # open) -- deliberately not at 19:00/18:30 where the prefill and daily sync
+    # already compete for the box.
+    async def _universe_sync_loop():
+        await asyncio.sleep(180)
+        try:
+            await asyncio.to_thread(_sync_universe_once)
+        except Exception as e:
+            print(f"[UniverseSync] startup run error: {e}")
+        while True:
+            try:
+                now_ist = database.get_ist_now()
+                nxt = now_ist.replace(hour=8, minute=0, second=0, microsecond=0)
+                if now_ist >= nxt:
+                    nxt = nxt + timedelta(days=1)
+                await asyncio.sleep(max(60, (nxt - now_ist).total_seconds()))
+                await asyncio.to_thread(_sync_universe_once)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                print(f"[UniverseSync] loop error: {e}")
+                await asyncio.sleep(600)
+    us_task = _track_task(asyncio.create_task(_universe_sync_loop()))
+    us_task.add_done_callback(_log_task_error)
+
     async def _yfinance_inactive_sync():
         while True:
             await asyncio.sleep(300)
