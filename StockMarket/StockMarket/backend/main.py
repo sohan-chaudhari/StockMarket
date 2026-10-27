@@ -8982,6 +8982,16 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
                  AND m.d = date_trunc('day', c.timestamp)
                 WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
                   AND c.timestamp >= :s
+                  -- INDICES ONLY. For the index set we can prove the result against
+                  -- the exchange tick's own day high/low, and after this change
+                  -- NIFTY, SMALLCAP, BANKNIFTY and FINNIFTY all match it exactly.
+                  -- Stocks are deliberately excluded: their 5m series carries sporadic
+                  -- bad bars that a statistical band cannot separate from a real move
+                  -- (a 3% outlier vs a stock that genuinely trended 3%), and an earlier
+                  -- attempt admitted RELIANCE 1,233.70 / SBIN 923.85 / TCS 2,426.60 /
+                  -- INFY 1,188.40 into their dailies -- worse than leaving the provider
+                  -- row. Fix the 5m bars first, then widen this.
+                  AND c.ticker = ANY(:idx)
                   AND m.med > 0
                   -- A five-minute bar must be reasonably near the session's own median
                   -- close. Indices are held to 2%, everything else to 10%.
