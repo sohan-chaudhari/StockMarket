@@ -8976,6 +8976,14 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
             FROM candles c
             WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
               AND c.timestamp >= :s
+              -- Ignore sporadic outlier bars: a five-minute spike must not decide the
+              -- day's high/low. Measured 2026-10-27: NIFTY and BANKNIFTY both had a
+              -- 15:20 bar with an identical 2.72% high/low range (23,328.90 while the
+              -- exchange tick's own day high was 22,829.75), and MIDCAP carried 65 such
+              -- bars. Excluding them keeps the daily tied to the real session range; a
+              -- genuine >5% five-minute move is rare and only shifts the daily extreme
+              -- slightly, whereas one bad tick corrupts the whole day.
+              AND (c.high - c.low) <= 0.05 * NULLIF(c.low, 0)
             GROUP BY c.ticker, date_trunc('day', c.timestamp)
             HAVING count(*) >= :minb
             ON CONFLICT ON CONSTRAINT uix_candle_key DO UPDATE
