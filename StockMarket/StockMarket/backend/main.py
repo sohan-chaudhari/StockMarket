@@ -8744,29 +8744,133 @@ def _yf_daily_df_to_candle_rows(df, tkr: str) -> list:
     return rows
 
 
-def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200) -> dict:
-    """Reconcile `stock_metadata` with the broker's instrument master (new listings).
+# ── Universe sync: keep stock_metadata in step with the broker's master ──────────
+# THE BUG THIS FIXES (measured 2026-10-27): every writer of stock_metadata is a
+# one-off seeder, and `load_instruments()` only downloads the broker master when the
+# cache file is MISSING. The cache on this box was from 2026-10-11, so the master was
+# frozen and every company listed afterwards was invisible -- not in /api/all-stocks,
+# not in the screener, not in search. A fresh master holds 2,742 NSE -EQ symbols
+# against 2,512 in that stale cache: 135 genuinely new listings (AASTHA, ADROITIND,
+# ARCIL, ESDS, DHOOTTRANS, GAJA, ...), none of which had a single candle.
+#
+# Two traps found while building this, both measured, both guarded below:
+#   1. NSE spells `BAJAJ-AUTO` where we store `BAJAJ_AUTO`. Comparing raw strings made
+#      all 8 of the first batch of "new" symbols duplicates of stocks we already hold,
+#      so comparison is normalised (`_universe_norm`).
+#   2. Deactivating on the `-EQ` series alone would have flipped 831 NSE rows, 751 of
+#      which have 5m candle data, because BE/BZ/SM are also tradable series. The live
+#      set therefore spans every equity series, and deactivation is additionally
+#      capped and gated on a complete master.
+_UNIVERSE_EQUITY_SERIES = {"EQ", "SM", "BE", "BZ"}   # tradable NSE equity series
+_UNIVERSE_JUNK = ("NSETEST", "INAV")                 # test rows / indicative-NAV rows
 
-    Why this exists: every writer of stock_metadata is a one-off seeder
-    (fetch_stocks.py / seed_metadata.py / seed_stocks.py), so a company listed AFTER
-    the last seed is invisible -- absent from /api/all-stocks, the screener and
-    search. The broker master already lists every security; it was simply never used
-    for this. Measured 2026-10-27: 7,821 metadata rows but only 1,471 flagged
-    is_active, while 3,418 tickers actually have 5m data -- the flag is not
-    maintained and cannot mean "currently listed".
+_MASTER_DOWNLOAD_SNIPPET = r'''
+import json, os, sys, tempfile, urllib.request
+url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
+target = sys.argv[1]
+raw = urllib.request.urlopen(url, timeout=240).read()
+data = json.loads(raw)
+if not isinstance(data, list) or len(data) < 50000:
+    print("REJECT rows=%s" % (len(data) if isinstance(data, list) else "n/a"))
+    sys.exit(3)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target) or ".", suffix=".tmp")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    json.dump(data, f)
+os.replace(tmp, target)
+print("OK rows=%d bytes=%d" % (len(data), len(raw)))
+'''
 
-    Safety rules (deliberate, so a bad night cannot wipe the universe):
-      * never deletes a row -- history must survive a delisting;
-      * deactivates ONLY when the master really loaded AND it looks complete
-        (>= 1000 NSE instruments), never on a partial/failed download;
-      * enqueues a 5m backfill for newly inserted NSE tickers, capped per run so a
-        large batch cannot swamp the 1 GB box or the provider quota.
 
-    Returns a summary dict (also logged), so a dry run is measurable.
-    """
-    out = {"ok": False, "nse_symbols": 0, "bse_symbols": 0,
-           "inserted": 0, "reactivated": 0, "deactivated": 0, "queued_backfill": 0}
+def _universe_norm(ticker: str) -> str:
+    """Comparison key only -- `BAJAJ-AUTO` (NSE) and `BAJAJ_AUTO` (ours) are one stock."""
+    return (ticker or "").strip().upper().replace("-", "_")
+
+
+def _universe_is_junk(symbol: str) -> bool:
+    s = (symbol or "").upper()
+    return s.startswith("TEST") or any(j in s for j in _UNIVERSE_JUNK)
+
+
+def _mem_available_mb() -> float:
     try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    return 0.0
+
+
+def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
+    """Download the broker master when the local cache is stale -- in a SUBPROCESS.
+
+    `json.loads` of the ~38 MB master peaks at several hundred MB of RSS. On this
+    913 MB box the service already holds one copy of the index, so doing it in-process
+    risks an OOM kill (this instance has a history of them under startup load). The
+    child frees its memory on exit and the cache is replaced atomically, so a failed
+    download can never destroy a working cache.
+    """
+    out = {"refreshed": False, "reason": ""}
+    try:
+        cache_path = angelone_service._cache_path()
+        if os.path.exists(cache_path):
+            age_h = (time.time() - os.path.getmtime(cache_path)) / 3600.0
+            if age_h < max_age_hours:
+                out["reason"] = f"cache fresh ({age_h:.1f}h old)"
+                return out
+        else:
+            age_h = -1.0
+        import subprocess
+        proc = subprocess.run([sys.executable, "-c", _MASTER_DOWNLOAD_SNIPPET, cache_path],
+                              capture_output=True, text=True, timeout=900)
+        msg = (proc.stdout or "").strip() or ((proc.stderr or "").strip().splitlines() or [""])[-1][:200]
+        if proc.returncode != 0:
+            out["reason"] = f"download failed (rc={proc.returncode}): {msg}"
+            print(f"[UniverseSync] {out['reason']} -- keeping the previous cache")
+            return out
+        out["refreshed"] = True
+        out["reason"] = f"refreshed ({age_h:.1f}h old): {msg}"
+        # Make the new tokens resolvable now -- but only with memory headroom to spare.
+        avail = _mem_available_mb()
+        if avail >= 300:
+            try:
+                angelone_service.load_instruments()
+                out["index_reloaded"] = True
+            except Exception as e:
+                out["index_reloaded"] = f"failed: {e}"
+        else:
+            out["index_reloaded"] = (
+                f"deferred ({avail:.0f} MB available) -- the next restart loads it")
+        return out
+    except Exception as e:
+        out["reason"] = f"{type(e).__name__}: {e}"
+        return out
+
+
+def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200,
+                        refresh_hours: float = 20.0) -> dict:
+    """Reconcile `stock_metadata` with the broker's instrument master.
+
+    Handles new listings (IPOs), SME listings, series changes and delistings.
+
+    Safety rules, each one there because a naive version broke when measured:
+      * never deletes a row -- a delisting must not erase its history;
+      * deactivates ONLY when the master looks complete (>= 1500 equity symbols) and
+        the batch would not flip more than 5% of the active NSE set, so one truncated
+        download cannot wipe the universe;
+      * matches on a normalised symbol so `BAJAJ-AUTO` / `BAJAJ_AUTO` are one stock;
+      * skips test rows and indicative-NAV rows;
+      * enqueues a 60-day 5m backfill for new NSE listings, capped per run so a large
+        batch cannot swamp the provider quota or this 1 GB box.
+
+    Returns a summary dict so a dry run is measurable.
+    """
+    out = {"ok": False, "live_nse": 0, "inserted": 0, "deactivated": 0,
+           "deactivation_skipped": "", "queued_backfill": 0}
+    try:
+        if refresh_hours and refresh_hours < 1e6:
+            out["cache_refresh"] = _refresh_instrument_cache_if_stale(refresh_hours)
         if not getattr(angelone_service, "_instruments_loaded", False):
             try:
                 angelone_service.load_instruments()
@@ -8778,92 +8882,106 @@ def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200) -> dict:
             print("[UniverseSync] skipped: instrument master unavailable (nothing changed)")
             return out
 
-        nse = {}   # TICKER -> name
-        bse = {}
+        live = {}   # NSE TICKER -> name, equity series only
         for r in rows:
-            seg = (r.get("exch_seg") or "").upper()
-            sym = (r.get("symbol") or "").strip()
-            if not sym.upper().endswith("-EQ"):
+            if (r.get("exch_seg") or "").upper() != "NSE":
                 continue
-            tkr = sym[:-3].strip().upper()
-            if not tkr:
+            sym = (r.get("symbol") or "").strip().upper()
+            if "-" not in sym or _universe_is_junk(sym):
                 continue
-            nm = (r.get("name") or "").strip() or tkr
-            if seg == "NSE":
-                nse.setdefault(tkr, nm)
-            elif seg == "BSE":
-                bse.setdefault(tkr, nm)
-        out["nse_symbols"] = len(nse)
-        out["bse_symbols"] = len(bse)
-        complete = len(nse) >= 1000      # sanity gate for the deactivation step
+            tkr, series = sym.rsplit("-", 1)
+            if series not in _UNIVERSE_EQUITY_SERIES or not tkr:
+                continue
+            live.setdefault(tkr, (r.get("name") or "").strip() or tkr)
+
+        out["live_nse"] = len(live)
+        live_norm = {_universe_norm(t) for t in live}
+        master_complete = len(live) >= 1500
 
         from database import SessionLocal as _SL
         from sqlalchemy import text as _t
         db = _SL()
         try:
-            existing = {(r[0].upper(), (r[1] or '').upper())
-                        for r in db.execute(_t("SELECT ticker, exchange FROM stock_metadata")).fetchall()}
-            to_insert = []
-            for tkr, nm in nse.items():
-                if (tkr, "NSE") not in existing:
-                    to_insert.append((tkr, nm, "NSE"))
-            for tkr, nm in bse.items():
-                if (tkr, "BSE") not in existing:
-                    to_insert.append((tkr, nm, "BSE"))
+            nse_rows = db.execute(_t(
+                "SELECT ticker, is_active FROM stock_metadata WHERE exchange='NSE'"
+            )).fetchall()
+            existing_norm = {_universe_norm(r[0]) for r in nse_rows}
+            active_ct = sum(1 for r in nse_rows if r[1])
+
+            to_insert = [(t, n) for t, n in live.items()
+                         if _universe_norm(t) not in existing_norm]
+            to_deactivate = [r[0] for r in nse_rows
+                             if r[1] and _universe_norm(r[0]) not in live_norm]
+
             out["inserted"] = len(to_insert)
-            print(f"[UniverseSync] master: {len(nse)} NSE / {len(bse)} BSE equities | "
-                  f"metadata rows={len(existing)} | new={len(to_insert)} | dry_run={dry_run}")
+            print(f"[UniverseSync] master equity series={len(live)} | metadata NSE={len(nse_rows)} "
+                  f"(active {active_ct}) | new={len(to_insert)} | "
+                  f"to_deactivate={len(to_deactivate)} | dry_run={dry_run}")
 
             if dry_run:
-                sample = ", ".join(f"{t}({e})" for t, _n, e in to_insert[:15])
-                print(f"[UniverseSync] DRY RUN -- would insert e.g.: {sample or '(none)'}")
+                print(f"[UniverseSync] DRY RUN would insert: "
+                      f"{', '.join(t for t, _n in to_insert[:20]) or '(none)'}")
+                if to_deactivate:
+                    print(f"[UniverseSync] DRY RUN would deactivate: "
+                          f"{', '.join(to_deactivate[:20])}")
                 out["ok"] = True
                 return out
 
             ins = 0
-            for tkr, nm, exch in to_insert:
+            for tkr, nm in to_insert:
                 try:
                     db.execute(_t("""
                         INSERT INTO stock_metadata (ticker, name, exchange, is_active)
-                        VALUES (:tk, :nm, :ex, true)
+                        VALUES (:tk, :nm, 'NSE', true)
                         ON CONFLICT (ticker, exchange) DO NOTHING
-                    """), {"tk": tkr, "nm": nm, "ex": exch})
+                    """), {"tk": tkr, "nm": nm})
                     ins += 1
                 except Exception:
                     continue
             db.commit()
             out["inserted"] = ins
 
-            # Deactivate ONLY on a complete master: keeps history, hides the symbol
-            if complete:
+            # Deactivate only on a complete master, and never in one huge sweep.
+            cap = max(50, int(active_ct * 0.05))
+            if not master_complete:
+                out["deactivation_skipped"] = (
+                    f"master looks partial ({len(live)} equity symbols)")
+            elif len(to_deactivate) > cap:
+                out["deactivation_skipped"] = (
+                    f"{len(to_deactivate)} would flip, above the {cap} safety cap")
+            elif to_deactivate:
                 res = db.execute(_t("""
                     UPDATE stock_metadata SET is_active = false
-                    WHERE is_active IS TRUE
-                      AND exchange IN ('NSE','BSE')
-                      AND UPPER(ticker) <> ALL(:live)
-                """), {"live": sorted(set(nse) | set(bse))})
+                    WHERE exchange='NSE' AND is_active IS TRUE AND ticker = ANY(:dead)
+                """), {"dead": to_deactivate})
                 out["deactivated"] = res.rowcount or 0
                 db.commit()
+            if out["deactivation_skipped"]:
+                print(f"[UniverseSync] deactivation skipped: {out['deactivation_skipped']}")
 
-            # Backfill for the brand-new NSE listings (bounded)
+            # Give the brand-new listings some history (bounded).
             try:
                 import backfill_jobs as _bj
                 end_dt = datetime.combine(database.get_ist_now().date(), datetime.min.time())
                 start_dt = end_dt - timedelta(days=60)
-                for tkr, _nm, exch in to_insert[:backfill_cap]:
-                    if exch != "NSE":
-                        continue
+                for tkr, _nm in to_insert[:backfill_cap]:
                     try:
                         if _bj.enqueue(tkr, "5m", start_dt, end_dt, reason="new_listing"):
                             out["queued_backfill"] += 1
+                    except Exception:
+                        continue
+                for tkr, _nm in to_insert[:backfill_cap]:
+                    try:
+                        _bj.enqueue(tkr, "1D", start_dt - timedelta(days=300), end_dt,
+                                    reason="new_listing")
                     except Exception:
                         continue
             except Exception as e:
                 print(f"[UniverseSync] backfill enqueue skipped: {e}")
 
             out["ok"] = True
-            print(f"[UniverseSync] DONE inserted={out['inserted']} deactivated={out['deactivated']} "
-                  f"queued_backfill={out['queued_backfill']}")
+            print(f"[UniverseSync] DONE inserted={out['inserted']} "
+                  f"deactivated={out['deactivated']} queued_backfill={out['queued_backfill']}")
             return out
         finally:
             db.close()
@@ -10120,7 +10238,10 @@ async def startup():
     async def _universe_sync_loop():
         await asyncio.sleep(180)
         try:
-            await asyncio.to_thread(_sync_universe_once)
+            # Startup run: reconcile against the cache we already hold, but do NOT
+            # download the 38 MB master here -- startup is exactly where this box has
+            # been OOM-killed before. The nightly run refreshes it.
+            await asyncio.to_thread(_sync_universe_once, False, 200, 0)
         except Exception as e:
             print(f"[UniverseSync] startup run error: {e}")
         while True:
