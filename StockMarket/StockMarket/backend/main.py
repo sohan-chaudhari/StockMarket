@@ -8848,6 +8848,36 @@ def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
         return out
 
 
+_UNIVERSE_LIVE_CACHE = {"ts": 0.0, "symbols": set()}
+
+
+def _universe_live_symbols(max_age_sec: float = 3600.0) -> set:
+    """Tickers the broker master lists in a tradable NSE equity series.
+
+    Cached for an hour: this walks ~160k master rows and the yfinance sync calls it
+    every 5 minutes.
+    """
+    now = time.time()
+    if _UNIVERSE_LIVE_CACHE["symbols"] and (now - _UNIVERSE_LIVE_CACHE["ts"]) < max_age_sec:
+        return _UNIVERSE_LIVE_CACHE["symbols"]
+    live = set()
+    try:
+        for r in (getattr(angelone_service, "_instruments_rows", None) or []):
+            if (r.get("exch_seg") or "").upper() != "NSE":
+                continue
+            sym = (r.get("symbol") or "").strip().upper()
+            if "-" not in sym or _universe_is_junk(sym):
+                continue
+            tkr, series = sym.rsplit("-", 1)
+            if series in _UNIVERSE_EQUITY_SERIES and tkr:
+                live.add(tkr)
+    except Exception:
+        return set()
+    _UNIVERSE_LIVE_CACHE["symbols"] = live
+    _UNIVERSE_LIVE_CACHE["ts"] = now
+    return live
+
+
 def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200,
                         refresh_hours: float = 20.0) -> dict:
     """Reconcile `stock_metadata` with the broker's instrument master.
@@ -8910,8 +8940,23 @@ def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200,
 
             to_insert = [(t, n) for t, n in live.items()
                          if _universe_norm(t) not in existing_norm]
-            to_deactivate = [r[0] for r in nse_rows
-                             if r[1] and _universe_norm(r[0]) not in live_norm]
+            # A symbol absent from the master is NOT proof it stopped trading --
+            # measured 2026-10-27: all 10 candidates (AXISNIFTY, AXISGOLD, ...) had
+            # 5m bars from the previous session, so the master simply spells them
+            # differently. Require silence for 10 days before flipping the flag.
+            recent = set()
+            try:
+                recent = {r[0].upper() for r in db.execute(_t("""
+                    SELECT DISTINCT ticker FROM candles
+                    WHERE timeframe='5m' AND timestamp >= NOW() - INTERVAL '10 days'
+                """)).fetchall()}
+            except Exception as e:
+                print(f"[UniverseSync] recent-candle query failed ({e}); deactivation skipped")
+                recent = None
+            to_deactivate = [] if recent is None else [
+                r[0] for r in nse_rows
+                if r[1] and _universe_norm(r[0]) not in live_norm
+                and (r[0] or "").upper() not in recent]
 
             out["inserted"] = len(to_insert)
             print(f"[UniverseSync] master equity series={len(live)} | metadata NSE={len(nse_rows)} "
@@ -9024,7 +9069,14 @@ def _sync_yfinance_inactive_symbols() -> int:
     from database import SessionLocal
     db_sync = SessionLocal()
     try:
+        # Never deactivate something the broker master lists as trading. yfinance
+        # does not know a company on its listing day, so without this guard every
+        # new IPO would be flipped inactive here minutes after the nightly sync
+        # activated it (measured: 342 new listings inserted 2026-10-27).
+        _live = {t.replace('-', '_') for t in _universe_live_symbols()}
         for ticker, reason in inactive.items():
+            if (ticker or '').upper().replace('-', '_') in _live:
+                continue
             existing = db_sync.query(models.StockMetadata).filter(
                 models.StockMetadata.ticker == ticker
             ).first()
