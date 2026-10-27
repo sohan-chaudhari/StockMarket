@@ -1261,6 +1261,50 @@ def remove_from_watchlist(ticker: str, db: Session = Depends(get_db), current_us
 # --- Historical API Endpoints ---
 
 @app.get("/api/stocks-version")
+def get_stocks_version():
+    """Version string the browser uses to validate its localStorage stock list.
+
+    IT MUST CHANGE WHENEVER THE UNIVERSE CHANGES. It used to be derived from the
+    clock alone (the 18:00 IST daily-sync boundary), which meant a ticker inserted
+    after 18:00 left the version identical -- so every browser kept a cache HIT and
+    the symbol stayed invisible in search. Measured 2026-10-27: the 342 new listings
+    were inserted at 21:50 while the version still read
+    "2026-10-27T18:00:01|u3", so BONFIG and TONBO (both present in /api/all-stocks,
+    5,738 entries) could not be found anywhere in the UI until the next 18:00.
+
+    The version now folds in the row count, the highest id and the active count, so
+    an insert, a delete or an activation flip invalidates every client immediately.
+    The date is kept so name/sector edits (which change no count) still refresh daily.
+    """
+    now_ist = datetime.now(IST)
+    if now_ist.hour >= 18:
+        sync_date = now_ist.date()
+    else:
+        from datetime import timedelta as _td
+        sync_date = (now_ist - _td(days=1)).date()
+
+    rows = max_id = active = 0
+    try:
+        from sqlalchemy import text as _text
+        from database import SessionLocal as _SL
+        _db = _SL()
+        try:
+            r = _db.execute(_text(
+                "SELECT COUNT(*), COALESCE(MAX(id), 0), COUNT(*) FILTER (WHERE is_active) "
+                "FROM stock_metadata")).fetchone()
+            rows, max_id, active = int(r[0] or 0), int(r[1] or 0), int(r[2] or 0)
+        finally:
+            _db.close()
+    except Exception as e:
+        print(f"[StocksVersion] db read failed, falling back to the date only: {e}")
+
+    # `u` is the search-universe revision: bump it whenever the eligible universe
+    # DEFINITION changes (not when rows change -- the counts above cover that).
+    _UNIVERSE_REVISION = "u4"
+    if rows:
+        return {"version": f"{rows}-{max_id}-{active}|{sync_date}|{_UNIVERSE_REVISION}"}
+    return {"version": f"{sync_date}T18:00:01|{_UNIVERSE_REVISION}"}
+
 
 def get_stocks_version():
 
