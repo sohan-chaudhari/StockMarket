@@ -8475,6 +8475,7 @@ _INDEX_TICK_DIAG = frozenset((
     "BANKNIFTY", "NIFTYBANK", "SENSEX", "FINNIFTY", "NIFTY_FIN_SERVICE", "NIFTYFIN",
 ))
 _INDEX_TICK_DIAG_LAST: dict = {}
+_MIDCAP_TOKEN_DIAG: dict = {}
 
 
 def _on_angel_tick(ticker: str, data: dict):
@@ -8503,6 +8504,36 @@ def _on_angel_tick(ticker: str, data: dict):
                           f"source={data.get('_source')} _ts={data.get('_ts')} "
                           f"token={data.get('token')} prev_close={data.get('prev_close')} "
                           f"high={data.get('high')} low={data.get('low')}")
+    except Exception:
+        pass
+
+    # ── DIAGNOSTIC: which WIRE TOKEN does a MIDCAP tick actually come from? ───
+    # Pure logging, once every 30 s. `get_token('MIDCAP')` is 99926074 (NIFTY MID
+    # SELECT, ~13,26x) while the corrupt bars carry Nifty Midcap 50 (~16,4xx,
+    # token 99926014), and the tick record itself is self-consistent — so the only
+    # remaining discriminator is the token on the wire. The one-time map dump
+    # shows every token currently aliased to MIDCAP.
+    try:
+        if str(ticker).upper() == "MIDCAP":
+            _md_now = time.time()
+            if _md_now - _MIDCAP_TOKEN_DIAG.get("t", 0) > 30:
+                _MIDCAP_TOKEN_DIAG["t"] = _md_now
+                print(f"[TokenDiag] MIDCAP tick: token={data.get('token')} "
+                      f"name={data.get('name')} price={data.get('current_price')} "
+                      f"open={data.get('open')} source={data.get('_source')}")
+                if not _MIDCAP_TOKEN_DIAG.get("map_dumped"):
+                    _MIDCAP_TOKEN_DIAG["map_dumped"] = True
+                    try:
+                        _tm = getattr(angelone_service, "token_to_ticker_map", {}) or {}
+                        _mapped = {str(t): str(n) for t, n in _tm.items()
+                                   if str(n).upper() in ("MIDCAP", "MIDCPNIFTY")}
+                        print(f"[TokenDiag] tokens mapped to MIDCAP: {_mapped}")
+                        _subs = getattr(angelone_service, "subscribed_tokens", None)
+                        if _subs:
+                            print(f"[TokenDiag] MIDCAP/Midcap-50 tokens subscribed: "
+                                  f"{[t for t in ('99926074', '99926014') if t in {str(x) for x in _subs}]}")
+                    except Exception as _mx:
+                        print(f"[TokenDiag] map dump failed: {_mx}")
     except Exception:
         pass
 
