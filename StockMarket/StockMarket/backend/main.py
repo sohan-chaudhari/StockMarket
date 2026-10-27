@@ -6539,6 +6539,48 @@ def _fetch_yfinance_intraday(db, clean_ticker: str, interval: str = "5m", use_bg
     # Snap yfinance timestamps to NSE session-aligned buckets
     intraday_candles_5min = _yf_intraday_df_to_candles(yf_int, clean_ticker, interval)
 
+    # ── Price-level guard: reject bars that belong to a DIFFERENT instrument ──
+    # A wrong Yahoo symbol silently returns another index. Measured on production
+    # 2026-10-27: `_yfinance_ticker('MIDCAP')` is '^NSEMDCP50', which reports
+    # Nifty Midcap 50 (~16,388), while this app's MIDCAP is NIFTY MID SELECT
+    # (~13,260) -- a 23 % level difference. Those bars were then merged onto the
+    # live-tick bars by the ON CONFLICT upsert (open/low preserved, high/close
+    # overwritten), which is exactly how MIDCAP produced 24 % five-minute candles.
+    # The LAST fetched bar is compared with the live price for the same ticker:
+    # for a correctly mapped symbol they agree to within a fraction of a percent,
+    # a wrong instrument is off by tens of percent.
+    if intraday_candles_5min:
+        try:
+            _live_px = 0.0
+            try:
+                with angelone_service.latest_ticks_lock:
+                    _ld = angelone_service.latest_ticks.get(clean_ticker.upper(), {}) or {}
+                _live_px = _safe_float(_ld.get("current_price") or _ld.get("current") or 0)
+            except Exception:
+                _live_px = 0.0
+            if _live_px > 0:
+                def _bar_ts(b):
+                    if isinstance(b, dict):
+                        return b.get("timestamp") or b.get("time") or ""
+                    return getattr(b, "timestamp", "")
+                def _bar_close(b):
+                    if isinstance(b, dict):
+                        v = b.get("close", b.get("Close", 0))
+                    else:
+                        v = getattr(b, "close", 0)
+                    return _safe_float(v)
+                _last = max(intraday_candles_5min, key=_bar_ts)
+                _last_close = _bar_close(_last)
+                if _last_close > 0:
+                    _ratio = _last_close / _live_px
+                    if not (0.90 <= _ratio <= 1.10):
+                        print(f"[YFGuard] {clean_ticker} {interval}: REJECTED yfinance bars — "
+                              f"last close {_last_close:.2f} vs live {_live_px:.2f} "
+                              f"({(_ratio - 1) * 100:+.1f}%). Wrong instrument for this symbol.")
+                        return []
+        except Exception as _g_err:
+            print(f"[YFGuard] {clean_ticker} level check skipped: {_g_err}")
+
     if intraday_candles_5min:
         _yf_intraday_cache[cache_key] = (time.time(), intraday_candles_5min)
         _yf_intraday_cache.move_to_end(cache_key)
