@@ -8470,11 +8470,42 @@ def _startup_backfill(tickers: list, now: datetime):
                 print(f"[PreWarm] Error {clean} {interval}: {e}")
 
 
+_INDEX_TICK_DIAG = frozenset((
+    "MIDCAP", "MIDCPNIFTY", "SMALLCAP", "NIFTYSMLCAP100", "NIFTY", "NIFTY50",
+    "BANKNIFTY", "NIFTYBANK", "SENSEX", "FINNIFTY", "NIFTY_FIN_SERVICE", "NIFTYFIN",
+))
+_INDEX_TICK_DIAG_LAST: dict = {}
+
+
 def _on_angel_tick(ticker: str, data: dict):
     """Called from AngelOne WS thread — buffers tick for async broadcast + feeds aggregator."""
     global _last_angel_tick_time
     _last_angel_tick_time = time.time()
     _last_angel_ts_per_ticker[ticker] = time.time()
+
+    # ── DIAGNOSTIC (index only, no behaviour change) ─────────────────────────
+    # A tick whose current_price and its own open disagree by more than 10 %
+    # cannot describe one instrument. Measured 2026-10-27: MIDCAP carried
+    # current_price ~16,4xx while open ~13,2xx (Nifty Midcap 50 vs Nifty Mid
+    # Select) and produced 24 % five-minute candles. This logs the whole record
+    # (throttled to once per ticker per minute) so the offending writer is
+    # identifiable instead of guessed.
+    try:
+        if str(ticker).upper() in _INDEX_TICK_DIAG:
+            _diag_cp = data.get("current_price") or data.get("current") or 0
+            _diag_op = data.get("open") or 0
+            if _diag_cp and _diag_op and abs(_diag_cp - _diag_op) / _diag_op > 0.10:
+                _diag_now = time.time()
+                if _diag_now - _INDEX_TICK_DIAG_LAST.get(ticker, 0) > 60:
+                    _INDEX_TICK_DIAG_LAST[ticker] = _diag_now
+                    print(f"[TickDiag] {ticker}: current_price={_diag_cp} but open={_diag_op} "
+                          f"({abs(_diag_cp - _diag_op) / _diag_op * 100:.1f}% apart) "
+                          f"source={data.get('_source')} _ts={data.get('_ts')} "
+                          f"token={data.get('token')} prev_close={data.get('prev_close')} "
+                          f"high={data.get('high')} low={data.get('low')}")
+    except Exception:
+        pass
+
     # Session gate. A quote whose broker/exchange timestamp proves it belongs to
     # an EARLIER session must never be BUFFERED: `_angel_tick_buffer` is exactly
     # what _broadcast_angel_ticks pushes to every websocket client, and
