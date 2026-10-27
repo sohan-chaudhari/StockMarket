@@ -8966,17 +8966,23 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
             database.get_ist_now().date() - timedelta(days=days_back), datetime.min.time())
         db = SessionLocal()
         res = db.execute(sa_text("""
-            WITH base AS (
-                SELECT c.ticker, date_trunc('day', c.timestamp) AS d, c.timestamp AS ts,
-                       c.open, c.high, c.low, c.close, c.volume,
-                       percentile_cont(0.5) WITHIN GROUP (ORDER BY c.close)
-                         OVER (PARTITION BY c.ticker, date_trunc('day', c.timestamp)) AS med
+            WITH daymed AS (
+                SELECT c.ticker, date_trunc('day', c.timestamp) AS d,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY c.close) AS med
                 FROM candles c
                 WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
                   AND c.timestamp >= :s
+                GROUP BY 1, 2
             ), good AS (
-                SELECT * FROM base
-                WHERE med > 0
+                SELECT c.ticker, c.timestamp AS ts, date_trunc('day', c.timestamp) AS d,
+                       c.open, c.high, c.low, c.close, c.volume
+                FROM candles c
+                JOIN daymed m
+                  ON m.ticker = c.ticker
+                 AND m.d = date_trunc('day', c.timestamp)
+                WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
+                  AND c.timestamp >= :s
+                  AND m.med > 0
                   -- A five-minute bar must be reasonably near the session's own median
                   -- close. Indices are held to 2%, everything else to 10%.
                   -- Measured 2026-10-27: NIFTY and BANKNIFTY each carried a 15:20 bar
@@ -8984,10 +8990,10 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
                   -- tick's own day high of 22,829.75), and MIDCAP carried whole bars
                   -- sitting at ~16,4xx (a DIFFERENT index) whose high/low range was
                   -- tiny -- so a range filter cannot catch that, only a level check can.
-                  AND (CASE WHEN ticker = ANY(:idx)
-                            THEN high <= med * 1.02 AND low >= med * 0.98
-                            ELSE high <= med * 1.10 AND low >= med * 0.90 END)
-                  AND (high - low) <= 0.05 * NULLIF(low, 0)
+                  AND (CASE WHEN c.ticker = ANY(:idx)
+                            THEN c.high <= m.med * 1.02 AND c.low >= m.med * 0.98
+                            ELSE c.high <= m.med * 1.10 AND c.low >= m.med * 0.90 END)
+                  AND (c.high - c.low) <= 0.05 * NULLIF(c.low, 0)
             )
             INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
                                  volume, is_completed, data_source, is_backfilled)
