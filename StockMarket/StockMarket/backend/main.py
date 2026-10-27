@@ -8938,6 +8938,72 @@ def _backfill_index_daily(days_back: int = 20) -> int:
     return inserted
 
 
+def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
+    """Rewrite recent 1D candles from our own stored 5m when the session is complete.
+
+    Why this exists (measured 2026-10-27): the end-of-day jobs wrote today's 1D row
+    from a provider BACKFILL -- and, on the DB-only pass, from the 5m aggregate run
+    BEFORE the closing 5m bars (15:15/15:20/15:25) had been flushed. Because that
+    insert is ON CONFLICT DO NOTHING, the wrong row was never corrected afterwards.
+
+    Result: for 120 of 168 tickers the 1D high/low contradicted our OWN 5m bars and
+    the exchange tick -- e.g. BANKNIFTY 1D low 54,212.05 while the live tick's low
+    was 53,951.20 and our 5m low was 53,953.20; SMALLCAP 1D high 18,369.50 while the
+    tick high was 18,487.35.
+
+    The 5m series is built from those ticks and matches them to the point, so for a
+    session where we hold a complete 5m series it is the better source -- indices
+    included (their 5m is equally tick-derived). Runs after the close so every
+    closing bar is already stored; min_bars stops a partial/holiday session from
+    overwriting a good provider row.
+    """
+    from database import SessionLocal
+    from sqlalchemy import text as sa_text
+    n = 0
+    db = None
+    try:
+        start = datetime.combine(
+            database.get_ist_now().date() - timedelta(days=days_back), datetime.min.time())
+        db = SessionLocal()
+        res = db.execute(sa_text("""
+            INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
+                                 volume, is_completed, data_source, is_backfilled)
+            SELECT c.ticker, '1D', date_trunc('day', c.timestamp),
+                   (array_agg(c.open  ORDER BY c.timestamp ASC))[1],
+                   max(c.high), min(c.low),
+                   (array_agg(c.close ORDER BY c.timestamp DESC))[1],
+                   coalesce(sum(c.volume), 0), true, '5M_AGG', false
+            FROM candles c
+            WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
+              AND c.timestamp >= :s
+            GROUP BY c.ticker, date_trunc('day', c.timestamp)
+            HAVING count(*) >= :minb
+            ON CONFLICT ON CONSTRAINT uix_candle_key DO UPDATE
+               SET open = EXCLUDED.open,
+                   high = EXCLUDED.high,
+                   low = EXCLUDED.low,
+                   close = EXCLUDED.close,
+                   volume = EXCLUDED.volume,
+                   is_completed = true,
+                   data_source = '5M_AGG',
+                   is_backfilled = false
+        """), {"s": start, "minb": int(min_bars)})
+        db.commit()
+        n = res.rowcount or 0
+    except Exception as e:
+        print(f"[DailyReconcile] Error: {e}")
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    finally:
+        if db is not None:
+            db.close()
+    print(f"[DailyReconcile] Reconciled {n} 1D candle(s) from 5m")
+    return n
+
+
 def _backfill_daily_from_5m(days_back: int = 10) -> int:
     """DB-only: aggregate stored 5m into 1D for any (ticker, day) missing a 1D row.
 
@@ -9919,6 +9985,13 @@ async def startup():
                 await asyncio.to_thread(_backfill_daily_from_5m)
             except Exception as e:
                 print(f"[DailySync] 5m pass error: {e}")
+            # Then RE-derive the sessions we hold a complete 5m series for: the
+            # provider BACKFILL above can disagree with our own ticks, and the
+            # early 5m pass missed the closing bars (see _reconcile_daily_from_5m).
+            try:
+                await asyncio.to_thread(_reconcile_daily_from_5m)
+            except Exception as e:
+                print(f"[DailySync] reconcile error: {e}")
             db_sync = SessionLocal()
             try:
                 rows = db_sync.execute(
@@ -10262,6 +10335,12 @@ async def startup():
                 await asyncio.to_thread(_backfill_daily_from_5m)
             except Exception as e:
                 print(f"[DailyPreFill] 5m pass error: {e}")
+            # Same reconciliation as the 18:30 sync: prefer our own complete 5m
+            # series over provider BACKFILL rows that contradict it.
+            try:
+                await asyncio.to_thread(_reconcile_daily_from_5m)
+            except Exception as e:
+                print(f"[DailyPreFill] reconcile error: {e}")
             _prefill_state["running"] = True
             _prefill_started_ts = time.time()
             _prefill_state["last_started_at"] = database.get_ist_now().isoformat()
