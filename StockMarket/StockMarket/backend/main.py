@@ -8966,25 +8966,38 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
             database.get_ist_now().date() - timedelta(days=days_back), datetime.min.time())
         db = SessionLocal()
         res = db.execute(sa_text("""
+            WITH base AS (
+                SELECT c.ticker, date_trunc('day', c.timestamp) AS d, c.timestamp AS ts,
+                       c.open, c.high, c.low, c.close, c.volume,
+                       percentile_cont(0.5) WITHIN GROUP (ORDER BY c.close)
+                         OVER (PARTITION BY c.ticker, date_trunc('day', c.timestamp)) AS med
+                FROM candles c
+                WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
+                  AND c.timestamp >= :s
+            ), good AS (
+                SELECT * FROM base
+                WHERE med > 0
+                  -- A five-minute bar must be reasonably near the session's own median
+                  -- close. Indices are held to 2%, everything else to 10%.
+                  -- Measured 2026-10-27: NIFTY and BANKNIFTY each carried a 15:20 bar
+                  -- whose high was 2.72% above the session (23,328.90 vs the exchange
+                  -- tick's own day high of 22,829.75), and MIDCAP carried whole bars
+                  -- sitting at ~16,4xx (a DIFFERENT index) whose high/low range was
+                  -- tiny -- so a range filter cannot catch that, only a level check can.
+                  AND (CASE WHEN ticker = ANY(:idx)
+                            THEN high <= med * 1.02 AND low >= med * 0.98
+                            ELSE high <= med * 1.10 AND low >= med * 0.90 END)
+                  AND (high - low) <= 0.05 * NULLIF(low, 0)
+            )
             INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
                                  volume, is_completed, data_source, is_backfilled)
-            SELECT c.ticker, '1D', date_trunc('day', c.timestamp),
-                   (array_agg(c.open  ORDER BY c.timestamp ASC))[1],
-                   max(c.high), min(c.low),
-                   (array_agg(c.close ORDER BY c.timestamp DESC))[1],
-                   coalesce(sum(c.volume), 0), true, '5M_AGG', false
-            FROM candles c
-            WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
-              AND c.timestamp >= :s
-              -- Ignore sporadic outlier bars: a five-minute spike must not decide the
-              -- day's high/low. Measured 2026-10-27: NIFTY and BANKNIFTY both had a
-              -- 15:20 bar with an identical 2.72% high/low range (23,328.90 while the
-              -- exchange tick's own day high was 22,829.75), and MIDCAP carried 65 such
-              -- bars. Excluding them keeps the daily tied to the real session range; a
-              -- genuine >5% five-minute move is rare and only shifts the daily extreme
-              -- slightly, whereas one bad tick corrupts the whole day.
-              AND (c.high - c.low) <= 0.05 * NULLIF(c.low, 0)
-            GROUP BY c.ticker, date_trunc('day', c.timestamp)
+            SELECT ticker, '1D', d,
+                   (array_agg(open  ORDER BY ts ASC))[1],
+                   max(high), min(low),
+                   (array_agg(close ORDER BY ts DESC))[1],
+                   coalesce(sum(volume), 0), true, '5M_AGG', false
+            FROM good
+            GROUP BY ticker, d
             HAVING count(*) >= :minb
             ON CONFLICT ON CONSTRAINT uix_candle_key DO UPDATE
                SET open = EXCLUDED.open,
@@ -8995,7 +9008,7 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
                    is_completed = true,
                    data_source = '5M_AGG',
                    is_backfilled = false
-        """), {"s": start, "minb": int(min_bars)})
+        """), {"s": start, "minb": int(min_bars), "idx": list(_INDEX_LIST)})
         db.commit()
         n = res.rowcount or 0
     except Exception as e:
