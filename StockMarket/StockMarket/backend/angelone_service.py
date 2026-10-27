@@ -89,6 +89,18 @@ TICKER_ALIASES = {
     "NIFTYREALTY": "NIFTY_REALTY",
 }
 
+def _norm_symbol(sym: str) -> str:
+    """Fold the punctuation the exchanges and our metadata disagree on.
+
+    `BAJAJ-AUTO` (NSE) vs `BAJAJ_AUTO` (ours), `M&M` vs `M_M`. Used ONLY for an exact
+    comparison -- never to justify a substring match.
+    """
+    s = (sym or "").strip().upper().replace("&", "AND")
+    for ch in ("-", "_", " ", "."):
+        s = s.replace(ch, "")
+    return s
+
+
 class AngelOneService:
     """Singleton service for Angel One API integration"""
     
@@ -815,20 +827,33 @@ class AngelOneService:
         # 4a. Exact symbol match (O(1) dict lookup)
         matches = self._sym_idx.get((search.upper(), exchange), [])
 
-        # 4b. Try with -EQ suffix (O(1) dict lookup)
+        # 4b. Equity-series lookups, in preference order. THIS is what makes a brand
+        #     new listing resolvable: a fresh listing frequently starts in the BE
+        #     (trade-to-trade) or SM (SME) series before it moves to EQ. Measured
+        #     2026-10-27: TIKONA -> TIKONA-BE, KALYANI -> KALYANI-BE.
         if not matches and exchange == "NSE":
-            matches = self._sym_idx.get((f"{search.upper()}-EQ", exchange), [])
+            for _suffix in ("EQ", "BE", "BZ", "SM", "ST", "N1", "N2", "IL"):
+                matches = self._sym_idx.get((f"{search.upper()}-{_suffix}", exchange), [])
+                if matches:
+                    break
 
-        # 4c. Partial symbol match (linear scan — rare fallback path)
+        # 4c. Normalised EXACT match (BAJAJ_AUTO vs BAJAJ-AUTO, M_M vs M&M).
+        #
+        #     This replaces two substring scans that returned the WRONG COMPANY for 51
+        #     tickers, measured 2026-10-27: RICHA -> TVSSRICHAK-EQ, APS -> NATCAPSUQ-BE,
+        #     ABAN -> MAHABANK-EQ, CPS -> a NIFTY index, KALYANI -> KALYANIFRG-BE.
+        #     Serving another company's prices is far worse than serving none, so when
+        #     nothing matches exactly we return None and let the caller show "no data".
         if not matches:
-            sl = search.lower()
-            matches = [r for r in self._instruments_rows
-                       if sl in r["symbol"].lower() and r["exch_seg"] == exchange]
-
-        # 4d. Name match (linear scan — rarest fallback path)
-        if not matches:
-            matches = [r for r in self._instruments_rows
-                       if sl in r["name"].lower() and r["exch_seg"] == exchange]
+            want = _norm_symbol(search)
+            for _row in self._instruments_rows:
+                if _row["exch_seg"] != exchange:
+                    continue
+                _sym = _row["symbol"]
+                _base = _sym.rsplit("-", 1)[0] if "-" in _sym else _sym
+                if _norm_symbol(_base) == want:
+                    matches = [_row]
+                    break
 
         if not matches:
             return None
