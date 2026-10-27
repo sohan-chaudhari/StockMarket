@@ -8991,7 +8991,13 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
                   -- sitting at ~16,4xx (a DIFFERENT index) whose high/low range was
                   -- tiny -- so a range filter cannot catch that, only a level check can.
                   AND (CASE WHEN c.ticker = ANY(:idx)
-                            THEN c.high <= m.med * 1.02 AND c.low >= m.med * 0.98
+                            -- Asymmetric on purpose: a bad HIGH is the failure mode we
+                            -- measured (NIFTY's 15:20 bar was 2.54% above the session),
+                            -- so highs are held tight; a legitimate LOW can sit further
+                            -- below the median on a trending day (SMALLCAP closed +2.3%,
+                            -- its true low was 2.7% under the median), so lows get a
+                            -- wider band or a real extreme gets clipped.
+                            THEN c.high <= m.med * 1.02 AND c.low >= m.med * 0.95
                             ELSE c.high <= m.med * 1.10 AND c.low >= m.med * 0.90 END)
                   AND (c.high - c.low) <= 0.05 * NULLIF(c.low, 0)
             )
