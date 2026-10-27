@@ -7139,6 +7139,95 @@ def _intraday_paginated_route(request: Request, ticker: str = Query(..., max_len
                                   request=request)
 
 
+_TF_5M_RATIO = {"15m": 3, "30m": 6, "1h": 12, "4h": 48}
+
+
+class _CandleView:
+    """Attribute shim so resampled dicts flow through the existing serializer."""
+    __slots__ = ("timestamp", "open", "high", "low", "close", "volume")
+
+    def __init__(self, d):
+        self.timestamp = d["timestamp"]
+        self.open = d["open"]
+        self.high = d["high"]
+        self.low = d["low"]
+        self.close = d["close"]
+        self.volume = d.get("volume") or 0
+
+
+def _derived_tf_rows_desc(db, db_tickers, interval, before, limit):
+    """Serve a DERIVED_FROM_5M timeframe from 5m. Returns rows newest-first (the
+    endpoint's contract), at most limit+1 so `has_more` still works.
+
+    One rule for BOTH the latest page and scroll-back pages:
+      * everything 5m can cover  -> resampled from 5m (the source of truth)
+      * the part older than the oldest 5m bar we hold -> the stored 15m/30m/1h
+        rows (they are the deep-history retention tier; 5m only holds the newest
+        ~60 sessions)
+
+    Why this exists: the latest page already resampled from 5m, but a history page
+    served the stored rows instead. Those stop exactly where the 5m tier starts, so
+    the window just before that seam came back EMPTY -- the reported "scroll back and
+    a day's candles are missing, a hard refresh fixes it" bug. It also bounds the
+    work: the old on-the-fly fill resampled everything after the retention cutoff
+    (~4,200 rows, measured 7.1 s) instead of just the requested page.
+
+    Returns None when it cannot help (unknown timeframe, an `after` incremental
+    request, or no 5m at all), so the caller keeps the legacy path.
+    """
+    ratio = _TF_5M_RATIO.get(interval)
+    if not ratio:
+        return None
+    target = max(1, int(limit)) + 1              # +1 so has_more can be reported
+    want_5m = min(target * ratio + ratio * 2, 20000)
+
+    q5 = db.query(models.Candle).filter(
+        models.Candle.timeframe == "5m",
+        models.Candle.ticker.in_(db_tickers),
+    )
+    if isinstance(before, (int, float)):
+        q5 = q5.filter(models.Candle.timestamp < _epoch_to_ist_dt(before))
+    rows5 = _dedupe_candles_prefer_canonical(
+        q5.order_by(models.Candle.timestamp.desc()).limit(want_5m).all(), db_tickers)
+    if not rows5:
+        return None
+    oldest_5m = rows5[-1].timestamp
+
+    dicts = []
+    for r in reversed(rows5):
+        if r.open and r.high and r.low and r.close:
+            dicts.append({
+                "timestamp": r.timestamp,
+                "open": float(r.open), "high": float(r.high),
+                "low": float(r.low), "close": float(r.close),
+                "volume": int(r.volume or 0),
+            })
+    try:
+        resampled = CandleResampler.resample_5m_to(dicts, interval) if dicts else []
+    except Exception as e:
+        print(f"[DerivedTF] resample failed for {interval}: {e}")
+        return None
+
+    by_ts = {}
+    if len(resampled) < target:
+        need = target - len(resampled)
+        qs = db.query(models.Candle).filter(
+            models.Candle.timeframe == interval,
+            models.Candle.ticker.in_(db_tickers),
+            models.Candle.timestamp < oldest_5m,
+        )
+        if isinstance(before, (int, float)):
+            qs = qs.filter(models.Candle.timestamp < _epoch_to_ist_dt(before))
+        for r in _dedupe_candles_prefer_canonical(
+                qs.order_by(models.Candle.timestamp.desc()).limit(need).all(), db_tickers):
+            by_ts[r.timestamp] = r                     # deep-history tier
+    for d in resampled:
+        by_ts[d["timestamp"]] = _CandleView(d)         # 5m-derived wins at the seam
+    if not by_ts:
+        return None
+    return [by_ts[ts] for ts in sorted(by_ts.keys(), reverse=True)][:target]
+
+
 def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db), request: Request = None):
     """Paginated intraday intraday_candles_5min. Auto-triggers gap fill on first page load (before=None)."""
     db_tickers = _normalize_ticker(ticker)
@@ -7477,8 +7566,15 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     # The two sources share bucket alignment (every stored 15m row sits on a
     # 15-minute boundary, verified 3476/3476) and the client de-dupes on exact
     # timestamp, so the seam between them is clean.
-    if interval in DERIVED_FROM_5M and is_latest_request:
-        records = []
+    _derived_applied = False
+    if interval in DERIVED_FROM_5M and not isinstance(after, (int, float)):
+        try:
+            _hyd = _derived_tf_rows_desc(db, db_tickers, interval, before, limit)
+            if _hyd is not None:
+                records = _hyd
+                _derived_applied = True
+        except Exception as _dtf_err:
+            print(f"[DerivedTF] {clean_ticker} {interval} fallback to legacy path: {_dtf_err}")
 
     has_more = len(records) > limit
     if has_more:
@@ -7487,7 +7583,9 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     data.reverse()
 
     # === ON-THE-FLY RESAMPLING FALLBACK ===
-    if is_latest_request and interval in DERIVED_FROM_5M:
+    # Skipped when the derived-from-5m path above already produced the page (it
+    # always does when 5m exists), so this is only a safety net now.
+    if is_latest_request and interval in DERIVED_FROM_5M and not _derived_applied:
         now = database.get_ist_now()
         last_dt = records[0].timestamp if records else _intraday_cutoff(interval)
         tip_gap_minutes = (now - last_dt).total_seconds() / 60
