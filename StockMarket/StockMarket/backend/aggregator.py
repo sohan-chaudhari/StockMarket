@@ -330,6 +330,42 @@ class Live5mBuilder:
         now = ist_now_naive()
         now_epoch = int(now.replace(tzinfo=IST).timestamp())
 
+        # ── Index price-sanity guard ──────────────────────────────────────────
+        # Two consecutive ticks for the SAME INDEX arrive milliseconds apart and
+        # cannot legitimately differ by 10 %. Without this, a tick belonging to a
+        # different instrument that resolves to the same name poisons the bar's
+        # high/low/close. Production 2026-10-27: MIDCAP 5m candles carried
+        # open/low ~13,26x but high/close ~16,39x — a Nifty Midcap 50 print
+        # (a DIFFERENT index, ~16,385) arriving under MIDCAP's name — producing
+        # 24 % five-minute candles. Restricted to indices on purpose: an illiquid
+        # small-cap can genuinely move 10 % between two sparse ticks, an index
+        # cannot.
+        _INDEX_PX_GUARD = frozenset((
+            "NIFTY", "NIFTY50", "BANKNIFTY", "NIFTYBANK", "SENSEX", "FINNIFTY",
+            "NIFTY_FIN_SERVICE", "NIFTYFIN", "MIDCAP", "MIDCPNIFTY", "SMALLCAP",
+            "NIFTYSMLCAP100", "NIFTYMIDCAP100", "NIFTY_AUTO", "NIFTYAUTO",
+            "NIFTY_IT", "NIFTYIT", "NIFTY_PHARMA", "NIFTYPHARMA", "NIFTY_FMCG",
+            "NIFTYFMCG", "NIFTY_METAL", "NIFTYMETAL", "NIFTY_ENERGY",
+            "NIFTYENERGY", "NIFTY_MEDIA", "NIFTYMEDIA", "NIFTY_PSU_BANK",
+            "NIFTYPSUBANK", "NIFTY_REALTY", "NIFTYREALTY",
+        ))
+        if price and price > 0 and str(ticker).upper() in _INDEX_PX_GUARD:
+            try:
+                if not hasattr(self, "_last_px"):
+                    self._last_px = {}
+                    self._rejected_px = 0
+                _lp = self._last_px.get(ticker)
+                if _lp and _lp > 0 and abs(price - _lp) / _lp > 0.10:
+                    self._rejected_px += 1
+                    if self._rejected_px <= 20 or self._rejected_px % 200 == 0:
+                        print(f"[Aggregator] rejected {ticker} tick {price} — "
+                              f"{abs(price - _lp) / _lp * 100:.1f}% away from last "
+                              f"accepted {_lp} (wrong instrument?)")
+                    return {}
+                self._last_px[ticker] = price
+            except Exception:
+                pass
+
         # ── Resolve the tick's timestamp ────────────────────────────────────
         # A missing / implausible timestamp cannot be placed on the timeline, so
         # it is treated as ARRIVAL time -- the legacy behaviour for the broker's
