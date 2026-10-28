@@ -9657,7 +9657,17 @@ def _backfill_index_daily(days_back: int = 20) -> int:
     return inserted
 
 
-def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 3) -> int:
+def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
+    """Rebuild recent 1D rows from our own 5m candles.
+
+    `min_bars` is a COMPLETENESS gate, not a sanity check: a full NSE 5m session is
+    75 bars, so 70 means "the session is essentially complete". It used to be 3, and
+    that is exactly why a half-downloaded day produced a wrong daily: CUPID on
+    2026-10-28 had only 32 of 75 5m bars (09:15-11:50) and the 3-bar threshold let
+    that truncated morning overwrite the exchange daily, giving close 315.75 / low
+    309.35 instead of the real 314.55 / 309.00. Any day below the threshold is now
+    left exactly as the provider wrote it, for every ticker.
+    """
     """Rewrite the 1D candle from our own stored 5m series -- for EVERY ticker.
 
     Why (measured 2026-10-28, verified against the exchange tick itself):
