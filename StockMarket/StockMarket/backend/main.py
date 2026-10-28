@@ -9642,103 +9642,101 @@ def _backfill_index_daily(days_back: int = 20) -> int:
     return inserted
 
 
-def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
-    """Rewrite recent 1D candles from our own stored 5m when the session is complete.
+def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 3) -> int:
+    """Rewrite the 1D candle from our own stored 5m series -- for EVERY ticker.
 
-    Why this exists (measured 2026-10-27): the end-of-day jobs wrote today's 1D row
-    from a provider BACKFILL -- and, on the DB-only pass, from the 5m aggregate run
-    BEFORE the closing 5m bars (15:15/15:20/15:25) had been flushed. Because that
-    insert is ON CONFLICT DO NOTHING, the wrong row was never corrected afterwards.
+    Why (measured 2026-10-28, verified against the exchange tick itself):
 
-    Result: for 120 of 168 tickers the 1D high/low contradicted our OWN 5m bars and
-    the exchange tick -- e.g. BANKNIFTY 1D low 54,212.05 while the live tick's low
-    was 53,951.20 and our 5m low was 53,953.20; SMALLCAP 1D high 18,369.50 while the
-    tick high was 18,487.35.
+        ticker      tick H/L/C                 5m H/L/C                1D H/L/C (before)
+        HUHTAMAKI   229.57 / 190.22 / 229.57   229.57 / 190.22 / 229.57  197.31 / 191.45 / 195.97
+        20MICRONS   187.83 / 162.93 / 162.93   187.83 / 162.93 / 162.93  187.83 / 183.10 / 185.06
+        URBAN       122.00 / 107.25 / 110.00   122.00 / 107.25 / 110.00  122.00 / 122.00 / 122.00
+        NIFTY       22778.05 / 22497.70 / 22698.85   (matched)             (matched)
 
-    The 5m series is built from those ticks and matches them to the point, so for a
-    session where we hold a complete 5m series it is the better source -- indices
-    included (their 5m is equally tick-derived). Runs after the close so every
-    closing bar is already stored; min_bars stops a partial/holiday session from
-    overwriting a good provider row.
+    The tick equals the 5m aggregate to the paisa, so the 5m series (which is built
+    from those ticks) is the correct source and the 1D row was stale: it is written
+    ONCE by the morning provider snapshot (data_source=BACKFILL) and nothing ever
+    updated it, so the daily candle froze at whatever the price was when that job ran.
+
+    Why this no longer needs to be index-only: the earlier attempt restricted itself to
+    indices because the 5m series carried sporadic FOREIGN-INSTRUMENT bars (MIDCAP was
+    showing the Nifty Midcap-50 level ~16,4xx while the true index was ~13,2xx), and a
+    statistical band around the median cannot separate a corrupt bar from a stock that
+    genuinely trended. The discriminator below is not statistical -- it is sequential:
+    a foreign bar is ISOLATED, i.e. its close jumps >8 % away from the bar before AND
+    the bar after, whereas a real trend moves a few percent per 5-minute step. Measured
+    on the two cases that used to break the median band:
+      * MIDCAP 13,2xx -> 16,4xx -> 13,2xx : both jumps ~20-24 % -> dropped;
+      * HUHTAMAKI 190 -> 229 over the session : every step is small -> kept, so the
+        genuine +21 % day survives.
+
+    Also drops bars whose own OHLC is impossible (high < max(open,close), etc.), and
+    skips a (ticker, day) with fewer than `min_bars` clean bars so a partial or holiday
+    session cannot overwrite a good row. Safe to run repeatedly and mid-session.
     """
     from database import SessionLocal
     from sqlalchemy import text as sa_text
     n = 0
     db = None
     try:
-        start = datetime.combine(
-            database.get_ist_now().date() - timedelta(days=days_back), datetime.min.time())
+        now_ist = database.get_ist_now()
+        start = datetime.combine(now_ist.date() - timedelta(days=days_back), datetime.min.time())
+        end = datetime.combine(now_ist.date(), datetime.max.time())
         db = SessionLocal()
         res = db.execute(sa_text("""
-            WITH daymed AS (
-                SELECT c.ticker, date_trunc('day', c.timestamp) AS d,
-                       percentile_cont(0.5) WITHIN GROUP (ORDER BY c.close) AS med
+            WITH bars AS (
+                SELECT c.ticker,
+                       date_trunc('day', c.timestamp) AS d,
+                       c.timestamp, c.open, c.high, c.low, c.close, c.volume,
+                       LAG(c.close)  OVER (PARTITION BY c.ticker, date_trunc('day', c.timestamp)
+                                           ORDER BY c.timestamp) AS prev_c,
+                       LEAD(c.close) OVER (PARTITION BY c.ticker, date_trunc('day', c.timestamp)
+                                           ORDER BY c.timestamp) AS next_c
                 FROM candles c
-                WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
-                  AND c.timestamp >= :s
-                GROUP BY 1, 2
-            ), good AS (
-                SELECT c.ticker, c.timestamp AS ts, date_trunc('day', c.timestamp) AS d,
-                       c.open, c.high, c.low, c.close, c.volume
-                FROM candles c
-                JOIN daymed m
-                  ON m.ticker = c.ticker
-                 AND m.d = date_trunc('day', c.timestamp)
-                WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
-                  AND c.timestamp >= :s
-                  -- INDICES ONLY. For the index set we can prove the result against
-                  -- the exchange tick's own day high/low, and after this change
-                  -- NIFTY, SMALLCAP, BANKNIFTY and FINNIFTY all match it exactly.
-                  -- Stocks are deliberately excluded: their 5m series carries sporadic
-                  -- bad bars that a statistical band cannot separate from a real move
-                  -- (a 3% outlier vs a stock that genuinely trended 3%), and an earlier
-                  -- attempt admitted RELIANCE 1,233.70 / SBIN 923.85 / TCS 2,426.60 /
-                  -- INFY 1,188.40 into their dailies -- worse than leaving the provider
-                  -- row. Fix the 5m bars first, then widen this.
-                  AND c.ticker = ANY(:idx)
-                  AND m.med > 0
-                  -- A five-minute bar must be reasonably near the session's own median
-                  -- close. Indices are held to 2%, everything else to 10%.
-                  -- Measured 2026-10-27: NIFTY and BANKNIFTY each carried a 15:20 bar
-                  -- whose high was 2.72% above the session (23,328.90 vs the exchange
-                  -- tick's own day high of 22,829.75), and MIDCAP carried whole bars
-                  -- sitting at ~16,4xx (a DIFFERENT index) whose high/low range was
-                  -- tiny -- so a range filter cannot catch that, only a level check can.
-                  AND (CASE WHEN c.ticker = ANY(:idx)
-                            -- Asymmetric on purpose: a bad HIGH is the failure mode we
-                            -- measured (NIFTY's 15:20 bar was 2.54% above the session),
-                            -- so highs are held tight; a legitimate LOW can sit further
-                            -- below the median on a trending day (SMALLCAP closed +2.3%,
-                            -- its true low was 2.7% under the median), so lows get a
-                            -- wider band or a real extreme gets clipped.
-                            THEN c.high <= m.med * 1.02 AND c.low >= m.med * 0.95
-                            ELSE c.high <= m.med * 1.10 AND c.low >= m.med * 0.90 END)
-                  AND (c.high - c.low) <= 0.05 * NULLIF(c.low, 0)
+                WHERE c.timeframe = '5m'
+                  AND c.timestamp >= :s AND c.timestamp <= :e
+                  AND c.open > 0 AND c.high > 0 AND c.low > 0 AND c.close > 0
+                  AND c.high >= GREATEST(c.open, c.close) - 0.0001
+                  AND c.low  <= LEAST(c.open, c.close)  + 0.0001
+            ),
+            clean AS (
+                SELECT * FROM bars
+                WHERE NOT (
+                    COALESCE(ABS(close / NULLIF(prev_c, 0) - 1), 0) > 0.08
+                AND COALESCE(ABS(next_c / NULLIF(close, 0) - 1), 0) > 0.08
+                )
+            ),
+            agg AS (
+                SELECT ticker, d, COUNT(*) AS bars,
+                       (array_agg(open  ORDER BY timestamp ASC ))[1] AS o,
+                       MAX(high) AS h,
+                       MIN(low)  AS l,
+                       (array_agg(close ORDER BY timestamp DESC))[1] AS cl,
+                       COALESCE(SUM(volume), 0) AS v
+                FROM clean
+                GROUP BY ticker, d
             )
             INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
                                  volume, is_completed, data_source, is_backfilled)
-            SELECT ticker, '1D', d,
-                   (array_agg(open  ORDER BY ts ASC))[1],
-                   max(high), min(low),
-                   (array_agg(close ORDER BY ts DESC))[1],
-                   coalesce(sum(volume), 0), true, '5M_AGG', false
-            FROM good
-            GROUP BY ticker, d
-            HAVING count(*) >= :minb
+            SELECT ticker, '1D', d, o, h, l, cl, v, true, '5M_AGG', false
+            FROM agg
+            WHERE bars >= CASE WHEN d::date >= CURRENT_DATE THEN :min_bars ELSE 50 END
             ON CONFLICT ON CONSTRAINT uix_candle_key DO UPDATE
                SET open = EXCLUDED.open,
                    high = EXCLUDED.high,
-                   low = EXCLUDED.low,
+                   low  = EXCLUDED.low,
                    close = EXCLUDED.close,
                    volume = EXCLUDED.volume,
                    is_completed = true,
                    data_source = '5M_AGG',
                    is_backfilled = false
-        """), {"s": start, "minb": int(min_bars), "idx": list(_INDEX_LIST)})
+        """), {"s": start, "e": end, "min_bars": int(min_bars)})
         db.commit()
         n = res.rowcount or 0
+        if n:
+            print(f"[DailyFrom5m] reconciled {n} 1D candle(s) from 5m")
     except Exception as e:
-        print(f"[DailyReconcile] Error: {e}")
+        print(f"[DailyFrom5m] reconcile error: {e}")
         if db is not None:
             try:
                 db.rollback()
@@ -9746,8 +9744,10 @@ def _reconcile_daily_from_5m(days_back: int = 3, min_bars: int = 60) -> int:
                 pass
     finally:
         if db is not None:
-            db.close()
-    print(f"[DailyReconcile] Reconciled {n} 1D candle(s) from 5m")
+            try:
+                db.close()
+            except Exception:
+                pass
     return n
 
 
@@ -10022,6 +10022,28 @@ async def _backfill_job_worker():
         except Exception as e:
             print(f"[BackfillWorker] error: {e}")
         await asyncio.sleep(20 if market_open else 15)
+
+
+async def _daily_bar_refresh_loop():
+    """Keep TODAY's 1D candle correct for the whole session.
+
+    The 1D row used to be written ONCE (morning provider snapshot, data_source
+    BACKFILL) and never touched again, so the daily chart's last bar froze at the
+    price of that moment -- measured 2026-10-28: HUHTAMAKI 1D close 195.97 while the
+    exchange tick closed at 229.57, and 324 of 583 tickers disagreed with their own
+    5m series. Reconciling from our own 5m (which is built from those ticks) every two
+    minutes keeps today's bar honest; the after-close pass settles it for good.
+    """
+    await asyncio.sleep(90)
+    while True:
+        try:
+            if is_market_open_now():
+                await asyncio.to_thread(_reconcile_daily_from_5m, 0, 3)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[DailyFrom5m] live refresh error: {e}")
+        await asyncio.sleep(120)
 
 
 async def _index_daily_backfill_loop():
@@ -10729,6 +10751,8 @@ async def startup():
                 await asyncio.sleep(600)
     us_task = _track_task(asyncio.create_task(_universe_sync_loop()))
     us_task.add_done_callback(_log_task_error)
+    _dbr_task = _track_task(asyncio.create_task(_daily_bar_refresh_loop()))
+    _dbr_task.add_done_callback(_log_task_error)
 
     async def _yfinance_inactive_sync():
         while True:
