@@ -95,6 +95,13 @@ CREATE INDEX IF NOT EXISTS ix_backfill_jobs_claimable
     ON backfill_jobs (status, next_attempt_at);
 CREATE INDEX IF NOT EXISTS ix_backfill_jobs_ticker
     ON backfill_jobs (ticker, interval);
+-- A user-triggered repair (chart open / lazy-load) must outrank background work at
+-- the QUEUE and at the PROVIDER. It cannot be inferred from last_error: that field
+-- is overwritten by the first failure ('shared provider cooldown active'), which is
+-- exactly how BONFIG's repair lost its priority and stayed retry_wait forever.
+ALTER TABLE backfill_jobs ADD COLUMN IF NOT EXISTS priority BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS ix_backfill_jobs_priority
+    ON backfill_jobs (priority DESC, next_attempt_at);
 
 -- Buckets that cannot be repaired, recorded so they are never re-fetched.
 -- `reason` separates two very different things:
@@ -360,13 +367,14 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
             pass
         row = db.execute(text("""
             INSERT INTO backfill_jobs (ticker, exchange, interval, range_start, range_end,
-                                       status, next_attempt_at, last_error)
+                                       status, next_attempt_at, last_error, priority)
             VALUES (:t, :x, :i, :s, :e, 'queued',
                     CASE WHEN :r IN ('chart_open','history_page') THEN TIMESTAMP '2000-01-01 00:00:00' ELSE NOW() END,
-                    :r)
+                    :r, (:r IN ('chart_open','history_page')))
             ON CONFLICT (ticker, exchange, interval, range_start, range_end)
               WHERE status IN ('queued','running','retry_wait','partially_complete')
             DO UPDATE SET updated_at = NOW(),
+                          priority = backfill_jobs.priority OR (:r IN ('chart_open','history_page')),
                           next_attempt_at = CASE
                               WHEN :r IN ('chart_open','history_page')
                                   THEN TIMESTAMP '2000-01-01 00:00:00'
@@ -461,7 +469,7 @@ def claim(worker_id, limit=1):
                 WHERE (status = 'queued' OR status = 'retry_wait' OR status = 'partially_complete'
                        OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW())))
                   AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-                ORDER BY COALESCE(next_attempt_at, created_at) ASC
+                ORDER BY priority DESC, COALESCE(next_attempt_at, created_at) ASC
                 LIMIT :n
                 FOR UPDATE SKIP LOCKED
             )
@@ -472,11 +480,13 @@ def claim(worker_id, limit=1):
                    updated_at = NOW()
               FROM due
              WHERE j.id = due.id
-            RETURNING j.id, j.ticker, j.exchange, j.interval, j.range_start, j.range_end, j.attempts
+            RETURNING j.id, j.ticker, j.exchange, j.interval, j.range_start, j.range_end,
+                      j.attempts, j.priority
         """), {"w": worker_id, "n": limit, "lease": JOB_LEASE_SEC}).fetchall()
         db.commit()
         return [dict(id=r[0], ticker=r[1], exchange=r[2], interval=r[3],
-                     range_start=r[4], range_end=r[5], attempts=r[6]) for r in rows]
+                     range_start=r[4], range_end=r[5], attempts=r[6], priority=bool(r[7]))
+                for r in rows]
     except Exception as e:
         db.rollback()
         print(f"[BackfillJob] claim failed: {e}")
@@ -623,13 +633,9 @@ def run_job(job):
     # can succeed while the nightly sweep is saturating the account quota. Measured
     # 2026-10-28: BONFIG's queued repair was claimed immediately but the fetch was
     # refused with 'shared provider cooldown active' twice in a row.
-    try:
-        _reason = (job.get("last_error") or "").strip().lower()
-    except Exception:
-        _reason = ""
-    _is_user_repair = _reason in ("chart_open", "history_page")
+    _is_user_repair = bool(job.get("priority"))
     if _is_user_repair:
-        print(f"[BackfillJob] {job['ticker']} {job['interval']} user repair ({_reason}) "
+        print(f"[BackfillJob] {job['ticker']} {job['interval']} user repair "
               f"-> provider priority")
 
     # Respect the shared cooldown before spending a request, but come back FAST:
