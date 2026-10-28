@@ -1301,8 +1301,9 @@ def get_stocks_version():
     # `u` is the search-universe revision: bump it whenever the eligible universe
     # DEFINITION changes (not when rows change -- the counts above cover that).
     _UNIVERSE_REVISION = "u4"
+    _rev = _data_revision()
     if rows:
-        return {"version": f"{rows}-{max_id}-{active}|{sync_date}|{_UNIVERSE_REVISION}"}
+        return {"version": f"{rows}-{max_id}-{active}-r{_rev}|{sync_date}|{_UNIVERSE_REVISION}"}
     return {"version": f"{sync_date}T18:00:01|{_UNIVERSE_REVISION}"}
 
 
@@ -8975,6 +8976,37 @@ _LOGO_PALETTE = ["#1f6feb", "#8957e5", "#da3633", "#1a7f37",
                  "#bf8700", "#0d67a8", "#a4307a", "#2d8a8a"]
 
 
+def _data_revision() -> int:
+    """Monotonic counter bumped whenever stock_metadata content changes.
+
+    The stocks-version string only folds in COUNT/MAX(id)/active-count, so a
+    name-only or sector-only update changes nothing and browsers keep their cached
+    list -- exactly how 'JPL' stayed visible as a bare ticker after we filled in
+    'Jio Platforms Limited'. This counter is the missing signal; it lives in a small
+    file so it needs no schema change and is one cached read per request.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data_revision")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return int((f.read() or "0").strip() or 0)
+    except Exception:
+        return 0
+
+
+def _bump_data_revision() -> int:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".data_revision")
+    try:
+        cur = _data_revision() + 1
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(str(cur))
+        os.replace(tmp, path)
+        return cur
+    except Exception as e:
+        print(f"[Revision] bump failed: {e}")
+        return _data_revision()
+
+
 def _logo_svg(ticker: str) -> str:
     t = (ticker or "?").upper()
     alnum = [c for c in t if c.isalnum()] or ["?"]
@@ -9137,16 +9169,20 @@ def _enrich_sectors_once(limit: int = 400, workers: int = 4,
                     # Only replace a placeholder name (empty, or the bare ticker);
                     # a real company name is never overwritten.
                     if nm:
-                        db.execute(_t(
+                        _res = db.execute(_t(
                             "UPDATE stock_metadata SET name=:n WHERE id=:i "
                             "AND (name IS NULL OR name='' OR UPPER(name)=UPPER(ticker))"
                         ), {"n": nm, "i": rid})
+                        if (_res.rowcount or 0) > 0:
+                            out["renamed"] = out.get("renamed", 0) + 1
                 except Exception:
                     continue
             db.commit()
+            if out["filled"] or out.get("renamed"):
+                _bump_data_revision()
             out["ok"] = True
-            print(f"[Sectors] filled={out['filled']} unknown={out['unknown']} "
-                  f"of {out['checked']}")
+            print(f"[Sectors] filled={out['filled']} renamed={out.get('renamed', 0)} "
+                  f"unknown={out['unknown']} of {out['checked']}")
             return out
         finally:
             db.close()
@@ -9352,6 +9388,8 @@ def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200,
             except Exception as e:
                 print(f"[UniverseSync] backfill enqueue skipped: {e}")
 
+            if out["inserted"] or out["deactivated"]:
+                _bump_data_revision()
             out["ok"] = True
             print(f"[UniverseSync] DONE inserted={out['inserted']} "
                   f"deactivated={out['deactivated']} queued_backfill={out['queued_backfill']}")
