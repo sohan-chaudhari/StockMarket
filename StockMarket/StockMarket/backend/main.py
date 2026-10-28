@@ -9783,8 +9783,11 @@ def _reconcile_index_daily_from_tick(days_back: int = 0) -> int:
                     continue
                 if h < max(o, c) - 0.0001 or l > min(o, c) + 0.0001:
                     continue                       # inconsistent -> do not touch
-                if not p.get("_live"):
-                    continue                       # no current-session tick
+                # While the session is live a stale baseline must never be used, but
+                # after the close the tick still carries the finished session's OHLC --
+                # which is exactly the row we want to write.
+                if is_market_open_now() and not p.get("_live"):
+                    continue
                 db.execute(sa_text("""
                     UPDATE candles
                        SET open=:o, high=:h, low=:l, close=:c,
