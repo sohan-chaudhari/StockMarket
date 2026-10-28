@@ -8892,6 +8892,166 @@ def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
         return out
 
 
+# ── Logos + sectors for the universe ────────────────────────────────────────────
+# LOGOS: /logos/<TICKER>.svg is served statically by nginx. When the file is absent
+# nginx falls through to the SPA fallback and answers 200 with HTML, so the <img>
+# receives markup it cannot decode and the page's onerror handler hides it -- the
+# ticker shows a blank. Measured 2026-10-28: 5,447 files exist (4,999 genuinely
+# distinct, i.e. real logos), but BONFIG, TONBO, AASTHA, ARCIL, ESDS, ZETWERK,
+# BIRLATOTAL and SMT had none. We now generate a deterministic monogram instead of
+# leaving a hole, and only ever write files that are missing -- a real logo is never
+# overwritten.
+_LOGO_PALETTE = ["#1f6feb", "#8957e5", "#da3633", "#1a7f37",
+                 "#bf8700", "#0d67a8", "#a4307a", "#2d8a8a"]
+
+
+def _logo_svg(ticker: str) -> str:
+    t = (ticker or "?").upper()
+    alnum = [c for c in t if c.isalnum()] or ["?"]
+    mono = alnum[0] + (alnum[1] if len(alnum) > 1 else "")
+    h = 0
+    for c in t:
+        h = (h * 31 + ord(c)) % 1000003
+    bg = _LOGO_PALETTE[h % len(_LOGO_PALETTE)]
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">'
+            f'<rect width="40" height="40" rx="9" fill="{bg}"/>'
+            '<text x="20" y="21" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="16" '
+            'font-weight="700" fill="#ffffff" text-anchor="middle" '
+            f'dominant-baseline="middle">{mono}</text></svg>')
+
+
+def _logos_dir() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(os.path.dirname(here), "frontend", "logos")
+
+
+def _ensure_logo_files(tickers, cap: int = 5000) -> int:
+    """Write a monogram SVG for every ticker that has no logo file. Never overwrites."""
+    made = 0
+    try:
+        d = _logos_dir()
+        if not os.path.isdir(d):
+            print(f"[Logos] directory not found ({d}); skipping")
+            return 0
+        for t in list(tickers)[:cap]:
+            name = (t or "").strip().upper()
+            if not name:
+                continue
+            path = os.path.join(d, f"{name}.svg")
+            if os.path.exists(path):
+                continue
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(_logo_svg(name))
+                made += 1
+            except Exception as e:
+                print(f"[Logos] cannot write {name}.svg ({e}); stopping this pass")
+                break
+        if made:
+            print(f"[Logos] generated {made} monogram(s)")
+    except Exception as e:
+        print(f"[Logos] error: {e}")
+    return made
+
+
+# SECTORS: measured 2026-10-28 -- only 241 of 3,609 NSE rows carried a sector, so the
+# screener's sector filter and the sector columns were empty for almost everything.
+# yfinance reports a GICS-style sector; the app's vocabulary is its own, so the values
+# are mapped onto the names the screener already offers.
+_YF_SECTOR_MAP = {
+    "technology": "IT",
+    "healthcare": "Pharma",
+    "consumer defensive": "FMCG",
+    "consumer cyclical": "Consumer Durables",
+    "basic materials": "Metal",
+    "communication services": "Telecom",
+    "real estate": "Realty",
+    "financial services": "Financial Services",
+    "energy": "Energy",
+    "industrials": "Industrials",
+    "utilities": "Utilities",
+}
+
+
+def _sector_for_ticker(ticker: str) -> str:
+    """Best-effort sector for one ticker. Returns '' when unknown."""
+    try:
+        import yfinance as _yf
+        info = _yf.Ticker(f"{ticker}.NS").info or {}
+        raw = (info.get("sector") or "").strip()
+        if not raw:
+            return ""
+        return _YF_SECTOR_MAP.get(raw.lower(), raw)
+    except Exception:
+        return ""
+
+
+def _enrich_sectors_once(limit: int = 400, workers: int = 4,
+                         only_tickers=None) -> dict:
+    """Fill `stock_metadata.sector` from yfinance for rows that have none.
+
+    Only rows with an empty sector are touched, so a hand-curated value is never
+    overwritten. Newest rows are preferred, which means a ticker added by the nightly
+    universe sync gets its sector on the same run. Runs off the request path with a
+    small thread pool; the network calls happen in the threads and every DB write is
+    done here, in one session.
+    """
+    out = {"ok": False, "checked": 0, "filled": 0, "unknown": 0}
+    try:
+        from database import SessionLocal as _SL
+        from sqlalchemy import text as _t
+        db = _SL()
+        try:
+            if only_tickers:
+                rows = db.execute(_t(
+                    "SELECT id, ticker FROM stock_metadata WHERE exchange='NSE' "
+                    "AND UPPER(ticker) = ANY(:tk)"), {"tk": [t.upper() for t in only_tickers]}
+                ).fetchall()
+            else:
+                rows = db.execute(_t(
+                    "SELECT id, ticker FROM stock_metadata WHERE exchange='NSE' "
+                    "AND (sector IS NULL OR sector='') ORDER BY id DESC LIMIT :lim"
+                ), {"lim": int(limit)}).fetchall()
+            if not rows:
+                out["ok"] = True
+                return out
+            out["checked"] = len(rows)
+            print(f"[Sectors] enriching {len(rows)} ticker(s)")
+
+            results = {}
+            try:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+                    for (rid, tkr), sec in zip(rows, ex.map(lambda r: _sector_for_ticker(r[1]), rows)):
+                        results[rid] = (tkr, sec)
+            except Exception as e:
+                print(f"[Sectors] pool failed ({e}); falling back to sequential")
+                for rid, tkr in rows:
+                    results[rid] = (tkr, _sector_for_ticker(tkr))
+
+            for rid, (tkr, sec) in results.items():
+                if not sec:
+                    out["unknown"] += 1
+                    continue
+                try:
+                    db.execute(_t("UPDATE stock_metadata SET sector=:s WHERE id=:i"),
+                               {"s": sec, "i": rid})
+                    out["filled"] += 1
+                except Exception:
+                    continue
+            db.commit()
+            out["ok"] = True
+            print(f"[Sectors] filled={out['filled']} unknown={out['unknown']} "
+                  f"of {out['checked']}")
+            return out
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[Sectors] error: {e}")
+        out["reason"] = str(e)
+        return out
+
+
 _UNIVERSE_LIVE_CACHE = {"ts": 0.0, "symbols": set()}
 
 
@@ -9029,6 +9189,24 @@ def _sync_universe_once(dry_run: bool = False, backfill_cap: int = 200,
                     continue
             db.commit()
             out["inserted"] = ins
+
+            # Logos + sectors. A new ticker with no /logos/<T>.svg renders as a blank
+            # box (nginx answers 200 with the SPA fallback, the <img> cannot decode it
+            # and onerror hides it), and with no sector it is absent from every sector
+            # filter. Both passes cover EVERY ticker, so a historical gap heals too.
+            try:
+                _all = [r[0] for r in db.execute(_t(
+                    "SELECT ticker FROM stock_metadata WHERE exchange IN ('NSE','BSE')"
+                )).fetchall()]
+                _ensure_logo_files(_all)
+            except Exception as _e:
+                print(f"[UniverseSync] logo pass skipped: {_e}")
+            try:
+                if to_insert:
+                    _enrich_sectors_once(workers=4,
+                                         only_tickers=[t for t, _n in to_insert])
+            except Exception as _e:
+                print(f"[UniverseSync] sector pass skipped: {_e}")
 
             # Deactivate only on a complete master, and never in one huge sweep.
             cap = max(50, int(active_ct * 0.05))
@@ -10348,6 +10526,12 @@ async def startup():
                     nxt = nxt + timedelta(days=1)
                 await asyncio.sleep(max(60, (nxt - now_ist).total_seconds()))
                 await asyncio.to_thread(_sync_universe_once)
+                # Backfill the historical sector gap a slice at a time (~3,000 rows
+                # had none); bounded so it cannot dominate a nightly run.
+                try:
+                    await asyncio.to_thread(_enrich_sectors_once, 600, 4)
+                except Exception as _e:
+                    print(f"[UniverseSync] nightly sector pass failed: {_e}")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
