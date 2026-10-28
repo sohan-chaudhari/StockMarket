@@ -2657,9 +2657,27 @@ async function initBigChart() {
   window.fmtCompact = fmtCompact;
 
   function showChartError(msg) {
+    // "No chart data" while a backfill is still running is a PENDING state, not a
+    // failure. Painting it as an error made every cold ticker flap
+    // (error -> loading -> error -> loading): the request correctly returns an
+    // empty page with backfill_status "backfilling", the fill lands seconds later,
+    // and the poll re-renders. Empty+fetching now says so once, calmly, and stays
+    // put. Genuine failures (HTTP 500/504, malformed payload, unknown ticker) keep
+    // the red banner unchanged.
+    var pending = /^No chart data\b/i.test(String(msg || ''));
     var errEl = document.getElementById('error-msg');
-    if (errEl) { errEl.style.display = 'block'; errEl.textContent = msg; }
-    console.error('Chart error:', msg);
+    if (errEl) {
+      if (pending) {
+        errEl.style.display = 'block';
+        errEl.style.color = '#a1a1aa';
+        errEl.textContent = 'Fetching history - this ticker\u2019s historical candles are still being downloaded. They will appear automatically.';
+      } else {
+        errEl.style.display = 'block';
+        errEl.style.color = '';
+        errEl.textContent = msg;
+      }
+    }
+    if (pending) { console.info('Chart pending:', msg); } else { console.error('Chart error:', msg); }
   }
 
   function hideChartError() {
