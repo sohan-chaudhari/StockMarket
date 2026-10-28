@@ -239,6 +239,12 @@ class Live5mBuilder:
         # Last cumulative day volume (volume_trade_for_the_day) seen per ticker.
         # Used to derive each tick's TRUE incremental volume as a delta — see
         # the volume handling in process_tick(). Keyed by ticker.
+        # Index price-sanity anchor. Seeded from a TRUSTED source (the last daily
+        # close in the DB) -- never from the first tick after a restart: that was the
+        # hole in the original guard, because whichever instrument's packet arrived
+        # first became the reference and the CORRECT one was then rejected.
+        self._last_px: Dict[str, float] = {}
+        self._rejected_px: int = 0
         self._last_day_volume: Dict[str, int] = {}
         # Trading date that `_last_day_volume[ticker]` belongs to. The baseline
         # may only move DOWNWARD on a date change (a genuine new-session reset);
@@ -657,6 +663,23 @@ class Live5mBuilder:
             }
         }
 
+    def set_reference_price(self, ticker: str, price: float) -> None:
+        """Seed the sanity anchor for `ticker` from a trusted level (a daily close).
+
+        Called from main.py whenever the DB baseline is refreshed. Without this the
+        anchor was whatever tick arrived first after a restart, so a foreign packet
+        (MIDCAP's tick has been seen carrying the Nifty Midcap-50 level ~16,4xx while
+        the true index sits at ~13,2xx) could become the reference for the whole day
+        and every CORRECT tick was then rejected as "24 % away".
+        """
+        try:
+            px = float(price)
+        except (TypeError, ValueError):
+            return
+        if px > 0:
+            with self._lock:
+                self._last_px[str(ticker).strip().upper()] = px
+
     def _init_ticker(self, now_epoch: int, ticker: str, price: float,
                      day_open: float = None, day_high: float = None, day_low: float = None,
                      open_sec: int = None, close_sec: int = None, close_grace_sec: int = None):
@@ -676,7 +699,13 @@ class Live5mBuilder:
         snapped_5m = snap_to_nse_session(now_epoch, 5, open_sec, close_sec, close_grace_sec)
         snapped_dt = datetime.fromtimestamp(snapped_5m, tz=IST).replace(tzinfo=None)
         seed_price = price
-        if day_open and day_open > 0 and snapped_5m == nse_session_open_epoch(now_epoch, open_sec):
+        # A foreign `day_open` used to seed the session's first bucket with the other
+        # instrument's level (measured 2026-10-28: 7 of 75 MIDCAP bars had an open of
+        # ~16,4xx while every other field was ~13,2xx). Only trust it when it is
+        # plausibly the same instrument as the tick we are holding.
+        if (day_open and day_open > 0 and price and price > 0
+                and abs(day_open / price - 1) <= 0.08
+                and snapped_5m == nse_session_open_epoch(now_epoch, open_sec)):
             seed_price = day_open
         self.active_candles[ticker]["5m"] = self._create_candle(snapped_dt, seed_price)
 

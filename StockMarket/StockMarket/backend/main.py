@@ -3257,6 +3257,21 @@ def _refresh_db_baseline_sync():
             _db_baseline_prices = baseline
             _db_baseline_ts = time.time()
         print(f"[Movers] DB baseline refreshed for {len(baseline)} tickers")
+
+        # Anchor the index sanity guard on the last settled close. MIDCAP has been
+        # observed receiving the Nifty Midcap-50 print (~16,4xx) alongside the true
+        # ~13,2xx, and without a trusted anchor the first packet after a restart
+        # became the reference -- after which every CORRECT tick was rejected and the
+        # foreign one accepted. Seeding from the DB makes the correct level win by
+        # construction (a 24% jump is then always refused).
+        try:
+            for _t in _INDEX_LIST:
+                _b = baseline.get(_t) or {}
+                _pc = _safe_float(_b.get("prev_close", 0))
+                if _pc > 0:
+                    candle_aggregator.set_reference_price(_t, _pc)
+        except Exception as _anc_err:
+            print(f"[Aggregator] index anchor seed failed: {_anc_err}")
     except Exception as e:
         print(f"[Movers] DB baseline query error: {e}")
     finally:
