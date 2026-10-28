@@ -8808,6 +8808,9 @@ def _yf_daily_df_to_candle_rows(df, tkr: str) -> list:
 _UNIVERSE_EQUITY_SERIES = {"EQ", "SM", "BE", "BZ"}   # tradable NSE equity series
 _UNIVERSE_JUNK = ("NSETEST", "INAV")                 # test rows / indicative-NAV rows
 
+_MASTER_URL = ("https://margincalculator.angelbroking.com/OpenAPI_File/files/"
+               "OpenAPIScripMaster.json")
+
 _MASTER_DOWNLOAD_SNIPPET = r'''
 import json, os, sys, tempfile, urllib.request
 url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -8858,13 +8861,36 @@ def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
     out = {"refreshed": False, "reason": ""}
     try:
         cache_path = angelone_service._cache_path()
+        need = False
         if os.path.exists(cache_path):
             age_h = (time.time() - os.path.getmtime(cache_path)) / 3600.0
-            if age_h < max_age_hours:
-                out["reason"] = f"cache fresh ({age_h:.1f}h old)"
-                return out
+            need = age_h >= max_age_hours
         else:
             age_h = -1.0
+            need = True
+
+        # A listing-day symbol is usually published by the broker in the morning, so
+        # an age-only rule would miss it until the next day. Ask the CDN whether the
+        # file changed (HEAD, a few hundred bytes) and only download the 38 MB when it
+        # really did.
+        try:
+            import email.utils as _eu
+            _req = urllib.request.Request(_MASTER_URL, method="HEAD")
+            with urllib.request.urlopen(_req, timeout=25) as _r:
+                _lm = _r.headers.get("Last-Modified")
+                _cl = _r.headers.get("Content-Length")
+            out["remote"] = {"last_modified": _lm, "content_length": _cl}
+            if _lm and os.path.exists(cache_path):
+                _rt = _eu.parsedate_to_datetime(_lm).timestamp()
+                if _rt > os.path.getmtime(cache_path) + 120:
+                    need = True
+                    out["reason"] = "broker republished the master"
+        except Exception as _e:
+            out["remote_check"] = f"{type(_e).__name__}"
+
+        if not need:
+            out["reason"] = out.get("reason") or f"cache fresh ({age_h:.1f}h old)"
+            return out
         import subprocess
         proc = subprocess.run([sys.executable, "-c", _MASTER_DOWNLOAD_SNIPPET, cache_path],
                               capture_output=True, text=True, timeout=900)
@@ -8928,6 +8954,7 @@ def _logos_dir() -> str:
 def _ensure_logo_files(tickers, cap: int = 5000) -> int:
     """Write a monogram SVG for every ticker that has no logo file. Never overwrites."""
     made = 0
+    failed = 0
     try:
         d = _logos_dir()
         if not os.path.isdir(d):
@@ -8945,10 +8972,13 @@ def _ensure_logo_files(tickers, cap: int = 5000) -> int:
                     f.write(_logo_svg(name))
                 made += 1
             except Exception as e:
-                print(f"[Logos] cannot write {name}.svg ({e}); stopping this pass")
-                break
-        if made:
-            print(f"[Logos] generated {made} monogram(s)")
+                # One bad filename must never abort the whole pass (it did once: a
+                # single permission denial stopped thousands of logos behind it).
+                failed += 1
+                if failed <= 3:
+                    print(f"[Logos] cannot write {name}.svg ({e}) -- continuing")
+                continue
+        print(f"[Logos] generated {made} monogram(s), {failed} could not be written")
     except Exception as e:
         print(f"[Logos] error: {e}")
     return made
@@ -9015,6 +9045,15 @@ def _enrich_sectors_once(limit: int = 400, workers: int = 4,
             if not rows:
                 out["ok"] = True
                 return out
+            if not only_tickers:
+                # Skip anything that is not a live equity symbol (rights entitlements
+                # such as SHAH-RE1, BAGMANE.RR, ATLPP.E1 have no yfinance page and
+                # wasted an entire 40-row batch the first time this ran).
+                _live = _universe_live_symbols()
+                rows = [r for r in rows if (r[1] or "").upper() in _live]
+                if not rows:
+                    out["ok"] = True
+                    return out
             out["checked"] = len(rows)
             print(f"[Sectors] enriching {len(rows)} ticker(s)")
 
@@ -10521,10 +10560,17 @@ async def startup():
         while True:
             try:
                 now_ist = database.get_ist_now()
-                nxt = now_ist.replace(hour=8, minute=0, second=0, microsecond=0)
-                if now_ist >= nxt:
-                    nxt = nxt + timedelta(days=1)
-                await asyncio.sleep(max(60, (nxt - now_ist).total_seconds()))
+                _hm = now_ist.hour * 60 + now_ist.minute
+                if now_ist.weekday() < 5 and 480 <= _hm <= 630:
+                    # 08:00-10:30 on a trading day: a company that debuts today is
+                    # published by the broker this morning and must be in the universe
+                    # BEFORE the 10:00 open, so poll (cheap HEAD inside) every 10 min.
+                    await asyncio.sleep(600)
+                else:
+                    nxt = now_ist.replace(hour=8, minute=0, second=0, microsecond=0)
+                    if now_ist >= nxt:
+                        nxt = nxt + timedelta(days=1)
+                    await asyncio.sleep(max(60, (nxt - now_ist).total_seconds()))
                 await asyncio.to_thread(_sync_universe_once)
                 # Backfill the historical sector gap a slice at a time (~3,000 rows
                 # had none); bounded so it cannot dominate a nightly run.
