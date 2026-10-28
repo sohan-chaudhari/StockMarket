@@ -8875,8 +8875,9 @@ def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
         # really did.
         try:
             import email.utils as _eu
-            _req = urllib.request.Request(_MASTER_URL, method="HEAD")
-            with urllib.request.urlopen(_req, timeout=25) as _r:
+            import urllib.request as _ur
+            _req = _ur.Request(_MASTER_URL, method="HEAD")
+            with _ur.urlopen(_req, timeout=25) as _r:
                 _lm = _r.headers.get("Last-Modified")
                 _cl = _r.headers.get("Content-Length")
             out["remote"] = {"last_modified": _lm, "content_length": _cl}
@@ -9050,7 +9051,8 @@ def _enrich_sectors_once(limit: int = 400, workers: int = 4,
                 # such as SHAH-RE1, BAGMANE.RR, ATLPP.E1 have no yfinance page and
                 # wasted an entire 40-row batch the first time this ran).
                 _live = _universe_live_symbols()
-                rows = [r for r in rows if (r[1] or "").upper() in _live]
+                if _live:            # never filter against an empty set
+                    rows = [r for r in rows if (r[1] or "").upper() in _live]
                 if not rows:
                     out["ok"] = True
                     return out
@@ -9105,6 +9107,8 @@ def _universe_live_symbols(max_age_sec: float = 3600.0) -> set:
         return _UNIVERSE_LIVE_CACHE["symbols"]
     live = set()
     try:
+        if not getattr(angelone_service, "_instruments_loaded", False):
+            angelone_service.load_instruments()
         for r in (getattr(angelone_service, "_instruments_rows", None) or []):
             if (r.get("exch_seg") or "").upper() != "NSE":
                 continue
