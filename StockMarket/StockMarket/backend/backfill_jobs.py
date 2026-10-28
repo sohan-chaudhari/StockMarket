@@ -362,13 +362,14 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
             INSERT INTO backfill_jobs (ticker, exchange, interval, range_start, range_end,
                                        status, next_attempt_at, last_error)
             VALUES (:t, :x, :i, :s, :e, 'queued',
-                    CASE WHEN :r IN ('chart_open','history_page') THEN NOW() - INTERVAL '1 hour' ELSE NOW() END,
+                    CASE WHEN :r IN ('chart_open','history_page') THEN TIMESTAMP '2000-01-01 00:00:00' ELSE NOW() END,
                     :r)
             ON CONFLICT (ticker, exchange, interval, range_start, range_end)
               WHERE status IN ('queued','running','retry_wait','partially_complete')
             DO UPDATE SET updated_at = NOW(),
                           next_attempt_at = CASE
-                              WHEN :r IN ('chart_open','history_page') THEN NOW() - INTERVAL '1 hour'
+                              WHEN :r IN ('chart_open','history_page')
+                                  THEN TIMESTAMP '2000-01-01 00:00:00'
                               ELSE backfill_jobs.next_attempt_at END
             RETURNING id, status
         """), {"t": t, "x": exchange, "i": interval, "s": range_start, "e": range_end,
