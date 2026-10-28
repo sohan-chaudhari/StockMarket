@@ -6677,7 +6677,7 @@ def _intraday_cutoff(interval: str):
 _INTRADAY_DEPTH_GRACE_DAYS = 2
 
 
-_SYNC_REPAIR_MAX_SESSIONS = int(os.getenv("SYNC_REPAIR_MAX_SESSIONS", "10"))
+_SYNC_REPAIR_MAX_SESSIONS = int(os.getenv("SYNC_REPAIR_MAX_SESSIONS", "20"))
 # A ticker can still hold unfillable no-trade buckets, so `has_missing` stays true
 # and the synchronous repair would re-fetch on EVERY open (measured: TATACAP
 # 6-18s per open, every time). This cooldown re-checks a ticker at most once per
@@ -7565,6 +7565,43 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
 
+    # === LAZY-LOAD (history page) REPAIR ===
+    # Every gap check above lives inside `if is_latest_request:`, so scrolling back
+    # (before=<epoch>) never repaired ANYTHING: a hole in the older window returned
+    # rows=0 and stayed empty forever, because only the background sweep could ever
+    # fill it. Measured on MONEYVIEW 2026-10-28: listed 01 Oct, stored 5m ran
+    # 01 Oct -> 13 Oct, and the 14 Oct -> 28 Oct stretch stayed missing until a sweep
+    # happened to reach it -- the user saw a chart that simply stopped at 13 Oct.
+    #
+    # Now the window the page is actually asking for is checked against the 5m
+    # source and a PRIORITISED job is queued for exactly that day span (day-aligned
+    # so repeated scrolls inside the same days reuse one job instead of piling up
+    # rows). Deliberately not a synchronous fetch: scrolling must never wait on the
+    # provider -- the client re-polls via backfill_status and merges the bars in.
+    if (not is_latest_request and background_tasks is not None
+            and interval != "1m" and isinstance(before, (int, float))):
+        try:
+            import backfill_jobs as _bj
+            _hw_now = database.get_ist_now()
+            _hw_bucket = {"5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240}.get(interval, 5)
+            _hw_end = _epoch_to_ist_dt(before)
+            _hw_start = _hw_end - timedelta(minutes=_hw_bucket * max(1, int(limit)))
+            _hw_floor = _intraday_cutoff("5m")
+            if _hw_start < _hw_floor:
+                _hw_start = _hw_floor
+            _hw_start = datetime.combine(_hw_start.date(), datetime.min.time())
+            _hw_end = datetime.combine(_hw_end.date(), datetime.max.time())
+            if _hw_start < _hw_end and _bj.has_missing(
+                    db, clean_ticker, "5m", _hw_start, _hw_end, now=_hw_now):
+                if _bj.enqueue(clean_ticker, "5m", _hw_start, _hw_end,
+                               reason="history_page"):
+                    job_queued = True
+                    fill_needed = True
+                    print(f"[GapFill] History-page repair queued for {clean_ticker} 5m "
+                          f"({_hw_start.date()}..{_hw_end.date()})")
+        except Exception as _hw_err:
+            print(f"[GapFill] History-page gap check failed for {clean_ticker}: {_hw_err}")
+
     # === BACKGROUND REPAIR (5m is the source of truth) ===
     # The provider repair used to run INLINE here, before the response was built.
     # A cold ticker therefore cost the whole round-trip inside the request --
@@ -7774,16 +7811,18 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
     # bounded re-poll merges the repaired candles in instead of the user silently
     # keeping an incomplete chart until they reload.
     bf_status = "idle"
-    if is_latest_request:
-        try:
-            import backfill_jobs as _bj
-            # The repair that matters for ANY intraday timeframe is the 5m one,
-            # because 15m/30m/1h/4h are derived from stored 5m.
-            _open_job = _bj.has_open_job(clean_ticker, "5m")
-        except Exception:
-            _open_job = False
-        if fill_needed or job_queued or _open_job:
-            bf_status = "backfilling"
+    # Deliberately NOT gated on is_latest_request: a history page that just queued a
+    # repair must report it too, otherwise the client never re-polls and the user
+    # keeps an empty scroll-back until a manual reload.
+    try:
+        import backfill_jobs as _bj
+        # The repair that matters for ANY intraday timeframe is the 5m one,
+        # because 15m/30m/1h/4h are derived from stored 5m.
+        _open_job = _bj.has_open_job(clean_ticker, "5m")
+    except Exception:
+        _open_job = False
+    if fill_needed or job_queued or _open_job:
+        bf_status = "backfilling"
 
     return {"data": data, "has_more": has_more, "backfill_status": bf_status}
 
