@@ -9773,12 +9773,23 @@ def _reconcile_index_daily_from_tick(days_back: int = 0) -> int:
         from sqlalchemy import text as sa_text
         db = SessionLocal()
         try:
+            _ticks = getattr(angelone_service, "latest_ticks", {}) or {}
             for tk in _INDEX_LIST:
                 p = prices.get(tk) or {}
-                o = _safe_float(p.get("open", 0))
-                h = _safe_float(p.get("high", 0))
-                l = _safe_float(p.get("low", 0))
-                c = _safe_float(p.get("current", p.get("current_price", 0)))
+                # Prefer the RAW broker tick: the derived price map can carry a high
+                # built from our own candles, which for MIDCAP still contains bars from
+                # the wrong instrument (16,478 vs the exchange's 13,371). The tick's
+                # own open/high/low are the exchange's numbers.
+                _tk_raw = _ticks.get(tk) or {}
+                o = _safe_float(_tk_raw.get("open") or _tk_raw.get("day_open") or 0) \
+                    or _safe_float(p.get("open", 0))
+                h = _safe_float(_tk_raw.get("high") or _tk_raw.get("day_high") or 0) \
+                    or _safe_float(p.get("high", 0))
+                l = _safe_float(_tk_raw.get("low") or _tk_raw.get("day_low") or 0) \
+                    or _safe_float(p.get("low", 0))
+                c = _safe_float(_tk_raw.get("ltp") or _tk_raw.get("current_price")
+                                or _tk_raw.get("current") or 0) \
+                    or _safe_float(p.get("current", p.get("current_price", 0)))
                 if not (o > 0 and h > 0 and l > 0 and c > 0):
                     continue
                 if h < max(o, c) - 0.0001 or l > min(o, c) + 0.0001:
