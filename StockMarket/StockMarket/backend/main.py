@@ -9047,17 +9047,27 @@ _YF_SECTOR_MAP = {
 }
 
 
-def _sector_for_ticker(ticker: str) -> str:
-    """Best-effort sector for one ticker. Returns '' when unknown."""
+def _profile_for_ticker(ticker: str):
+    """(sector, company_name) for one ticker; either may be None.
+
+    The broker master only carries a short code as the name, so a newly inserted
+    ticker used to show 'JPL' where every older row shows 'Jio Platforms Limited'.
+    yfinance's longName fixes that.
+    """
     try:
         import yfinance as _yf
         info = _yf.Ticker(f"{ticker}.NS").info or {}
         raw = (info.get("sector") or "").strip()
-        if not raw:
-            return ""
-        return _YF_SECTOR_MAP.get(raw.lower(), raw)
+        sec = _YF_SECTOR_MAP.get(raw.lower(), raw) if raw else None
+        nm = (info.get("longName") or info.get("shortName") or "").strip() or None
+        return sec, nm
     except Exception:
-        return ""
+        return None, None
+
+
+def _sector_for_ticker(ticker: str) -> str:
+    """Best-effort sector for one ticker. Returns '' when unknown."""
+    return _profile_for_ticker(ticker)[0] or ""
 
 
 def _enrich_sectors_once(limit: int = 400, workers: int = 4,
@@ -9078,13 +9088,14 @@ def _enrich_sectors_once(limit: int = 400, workers: int = 4,
         try:
             if only_tickers:
                 rows = db.execute(_t(
-                    "SELECT id, ticker FROM stock_metadata WHERE exchange='NSE' "
+                    "SELECT id, ticker, name FROM stock_metadata WHERE exchange='NSE' "
                     "AND UPPER(ticker) = ANY(:tk)"), {"tk": [t.upper() for t in only_tickers]}
                 ).fetchall()
             else:
                 rows = db.execute(_t(
-                    "SELECT id, ticker FROM stock_metadata WHERE exchange='NSE' "
-                    "AND (sector IS NULL OR sector='') ORDER BY id DESC LIMIT :lim"
+                    "SELECT id, ticker, name FROM stock_metadata WHERE exchange='NSE' "
+                    "AND (sector IS NULL OR sector='' OR name IS NULL OR name='' "
+                    "OR UPPER(name) = UPPER(ticker)) ORDER BY id DESC LIMIT :lim"
                 ), {"lim": int(limit)}).fetchall()
             if not rows:
                 out["ok"] = True
@@ -9106,21 +9117,30 @@ def _enrich_sectors_once(limit: int = 400, workers: int = 4,
             try:
                 from concurrent.futures import ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-                    for (rid, tkr), sec in zip(rows, ex.map(lambda r: _sector_for_ticker(r[1]), rows)):
-                        results[rid] = (tkr, sec)
+                    for (rid, tkr, _nm0), (sec, nm) in zip(rows, ex.map(lambda r: _profile_for_ticker(r[1]), rows)):
+                        results[rid] = (tkr, sec, nm)
             except Exception as e:
                 print(f"[Sectors] pool failed ({e}); falling back to sequential")
-                for rid, tkr in rows:
-                    results[rid] = (tkr, _sector_for_ticker(tkr))
+                for rid, tkr, _nm0 in rows:
+                    _sec, _nm = _profile_for_ticker(tkr)
+                    results[rid] = (tkr, _sec, _nm)
 
-            for rid, (tkr, sec) in results.items():
-                if not sec:
+            for rid, (tkr, sec, nm) in results.items():
+                if not sec and not nm:
                     out["unknown"] += 1
                     continue
                 try:
-                    db.execute(_t("UPDATE stock_metadata SET sector=:s WHERE id=:i"),
-                               {"s": sec, "i": rid})
-                    out["filled"] += 1
+                    if sec:
+                        db.execute(_t("UPDATE stock_metadata SET sector=:s WHERE id=:i"),
+                                   {"s": sec, "i": rid})
+                        out["filled"] += 1
+                    # Only replace a placeholder name (empty, or the bare ticker);
+                    # a real company name is never overwritten.
+                    if nm:
+                        db.execute(_t(
+                            "UPDATE stock_metadata SET name=:n WHERE id=:i "
+                            "AND (name IS NULL OR name='' OR UPPER(name)=UPPER(ticker))"
+                        ), {"n": nm, "i": rid})
                 except Exception:
                     continue
             db.commit()
