@@ -8849,6 +8849,42 @@ def _mem_available_mb() -> float:
     return 0.0
 
 
+def _remote_master_meta() -> dict:
+    """Last-Modified / total size of the remote scrip master, cheaply.
+
+    HEAD is refused by this CDN (measured: HTTPError), which silently disabled the
+    republish check and left listing-day symbols undetected. So: try HEAD, then a
+    one-byte ranged GET, and read the total size out of Content-Range.
+    """
+    import urllib.request as _ur
+    last = ""
+    for mode in ("HEAD", "RANGE"):
+        try:
+            if mode == "HEAD":
+                req = _ur.Request(_MASTER_URL, method="HEAD")
+            else:
+                req = _ur.Request(_MASTER_URL, method="GET")
+                req.add_header("Range", "bytes=0-0")
+            with _ur.urlopen(req, timeout=30) as r:
+                cr = r.headers.get("Content-Range") or ""
+                total = None
+                if "/" in cr:
+                    try:
+                        total = int(cr.rsplit("/", 1)[1])
+                    except Exception:
+                        total = None
+                if total is None:
+                    try:
+                        total = int(r.headers.get("Content-Length") or 0) or None
+                    except Exception:
+                        total = None
+                return {"mode": mode, "last_modified": r.headers.get("Last-Modified"),
+                        "total_bytes": total}
+        except Exception as e:
+            last = f"{mode}:{type(e).__name__}"
+    return {"error": last or "unavailable"}
+
+
 def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
     """Download the broker master when the local cache is stale -- in a SUBPROCESS.
 
@@ -8873,19 +8909,26 @@ def _refresh_instrument_cache_if_stale(max_age_hours: float = 20.0) -> dict:
         # an age-only rule would miss it until the next day. Ask the CDN whether the
         # file changed (HEAD, a few hundred bytes) and only download the 38 MB when it
         # really did.
+        meta = _remote_master_meta()
+        out["remote"] = meta
         try:
             import email.utils as _eu
-            import urllib.request as _ur
-            _req = _ur.Request(_MASTER_URL, method="HEAD")
-            with _ur.urlopen(_req, timeout=25) as _r:
-                _lm = _r.headers.get("Last-Modified")
-                _cl = _r.headers.get("Content-Length")
-            out["remote"] = {"last_modified": _lm, "content_length": _cl}
-            if _lm and os.path.exists(cache_path):
-                _rt = _eu.parsedate_to_datetime(_lm).timestamp()
-                if _rt > os.path.getmtime(cache_path) + 120:
+            if os.path.exists(cache_path):
+                # Size is the strongest signal: adding a listing changes the file size
+                # immediately, and it survives a CDN that refuses HEAD (which is exactly
+                # how JPL, listed 2026-10-28, was missed -- HEAD returned HTTPError and
+                # the code fell back to "cache is young, skip").
+                local_size = os.path.getsize(cache_path)
+                remote_size = meta.get("total_bytes")
+                if remote_size and remote_size != local_size:
                     need = True
-                    out["reason"] = "broker republished the master"
+                    out["reason"] = f"master size changed ({local_size} -> {remote_size})"
+                _lm = meta.get("last_modified")
+                if not need and _lm and remote_size:
+                    _rt = _eu.parsedate_to_datetime(_lm).timestamp()
+                    if _rt > os.path.getmtime(cache_path) + 120:
+                        need = True
+                        out["reason"] = "broker republished the master"
         except Exception as _e:
             out["remote_check"] = f"{type(_e).__name__}"
 
