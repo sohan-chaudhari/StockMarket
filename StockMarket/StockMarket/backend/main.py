@@ -9751,99 +9751,54 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 3) -> int:
     return n
 
 
-def _reconcile_extreme_ranges(days_back: int = 1) -> int:
-    """Repair 1D rows whose intraday range is impossible, using the last cluster of 5m.
+def _reconcile_index_daily_from_tick(days_back: int = 0) -> int:
+    """Set today's INDEX 1D candle from the exchange tick's own OHLC.
 
-    The sequential filter in _reconcile_daily_from_5m drops a FOREIGN-INSTRUMENT bar
-    when it is isolated (a >8 % jump on both sides). A contiguous run of such bars
-    survives it -- which is exactly MIDCAP's failure: its 5m held a stretch at the
-    Nifty Midcap-50 level (~16,4xx) while the true index was ~13,2xx, so the aggregate
-    came out high 16,478 / low 13,142 / close 13,286: a 25 % intraday range for an
-    index, which is impossible.
+    Indices need this because their 5m series still occasionally carries bars from a
+    different instrument (MIDCAP has been seen at the Nifty Midcap-50 level ~16,4xx
+    while the true index sits at ~13,2xx), and a statistical repair cannot separate
+    that from a genuine move: a range-based split destroyed legitimate rows when it
+    was tried (HUHTAMAKI's real 190 -> 229 day was cut to L=213.86).
 
-    This pass looks only at (ticker, day) rows whose range exceeds 12 % of the close --
-    a handful across the universe -- and rebuilds them by splitting the day's 5m closes
-    at the largest gap and keeping the cluster that contains the LAST close (the live
-    one). A genuinely volatile stock has no such gap, so it is left untouched.
+    The live tick already carries the exchange's OWN day open/high/low, verified equal
+    to our 5m aggregate on clean names (NIFTY 22778.05 / 22497.70 / 22698.85). So for
+    the index set there is nothing to infer -- copy the numbers. Requires a
+    current-session tick and sane values, otherwise the row is left alone.
     """
-    import statistics
-    from database import SessionLocal
-    from sqlalchemy import text as sa_text
     fixed = 0
-    db = None
     try:
-        now_ist = database.get_ist_now()
-        start = datetime.combine(now_ist.date() - timedelta(days=days_back), datetime.min.time())
+        prices = _get_all_market_prices()
+        today = datetime.combine(database.get_ist_now().date(), datetime.min.time())
+        from database import SessionLocal
+        from sqlalchemy import text as sa_text
         db = SessionLocal()
-        suspects = db.execute(sa_text("""
-            SELECT ticker, timestamp
-            FROM candles
-            WHERE timeframe='1D' AND timestamp >= :s
-              AND close > 0 AND high > 0 AND low > 0
-              AND (high - low) / close > 0.12
-        """), {"s": start}).fetchall()
-        if not suspects:
-            return 0
-
-        for ticker, day in suspects:
-            day_end = day + timedelta(days=1)
-            bars = db.execute(sa_text("""
-                SELECT timestamp, open, high, low, close, volume
-                FROM candles
-                WHERE timeframe='5m' AND ticker = :t
-                  AND timestamp >= :a AND timestamp < :b
-                  AND open > 0 AND close > 0 AND high > 0 AND low > 0
-                ORDER BY timestamp
-            """), {"t": ticker, "a": day, "b": day_end}).fetchall()
-            if len(bars) < 3:
-                continue
-            closes = sorted(float(b.close) for b in bars)
-            # largest relative gap between consecutive closes
-            best_gap, cut = 0.0, None
-            for i in range(1, len(closes)):
-                gap = closes[i] - closes[i - 1]
-                if gap > best_gap:
-                    best_gap, cut = gap, closes[i - 1]
-            med = statistics.median(closes)
-            if not cut or med <= 0 or best_gap / med < 0.05:
-                continue                      # no level shift -> leave it alone
-            last_close = float(bars[-1].close)
-            keep_low_side = last_close <= cut
-            kept = [b for b in bars if (float(b.close) <= cut) == keep_low_side]
-            if len(kept) < 3:
-                continue
-            o = float(kept[0].open)
-            h = max(float(b.high) for b in kept)
-            l = min(float(b.low) for b in kept)
-            c = float(kept[-1].close)
-            v = int(sum(int(b.volume or 0) for b in kept))
-            if not (o > 0 and h >= max(o, c) - 0.0001 and l <= min(o, c) + 0.0001):
-                continue
-            db.execute(sa_text("""
-                UPDATE candles
-                   SET open=:o, high=:h, low=:l, close=:c, volume=:v,
-                       is_completed=true, data_source='5M_AGG'
-                 WHERE timeframe='1D' AND ticker=:t AND timestamp=:d
-            """), {"o": o, "h": h, "l": l, "c": c, "v": v, "t": ticker, "d": day})
-            fixed += 1
-            print(f"[DailyFrom5m] extreme range repaired: {ticker} {day.date()} "
-                  f"-> O={o:.2f} H={h:.2f} L={l:.2f} C={c:.2f} "
-                  f"(dropped {len(bars) - len(kept)} foreign bar(s))")
-        if fixed:
-            db.commit()
+        try:
+            for tk in _INDEX_LIST:
+                p = prices.get(tk) or {}
+                o = _safe_float(p.get("open", 0))
+                h = _safe_float(p.get("high", 0))
+                l = _safe_float(p.get("low", 0))
+                c = _safe_float(p.get("current", p.get("current_price", 0)))
+                if not (o > 0 and h > 0 and l > 0 and c > 0):
+                    continue
+                if h < max(o, c) - 0.0001 or l > min(o, c) + 0.0001:
+                    continue                       # inconsistent -> do not touch
+                if not p.get("_live"):
+                    continue                       # no current-session tick
+                db.execute(sa_text("""
+                    UPDATE candles
+                       SET open=:o, high=:h, low=:l, close=:c,
+                           is_completed=true, data_source='ANGELONE'
+                     WHERE timeframe='1D' AND ticker=:t AND timestamp=:d
+                """), {"o": o, "h": h, "l": l, "c": c, "t": tk, "d": today})
+                fixed += 1
+            if fixed:
+                db.commit()
+                print(f"[IndexDaily] set {fixed} index daily candle(s) from the exchange tick")
+        finally:
+            db.close()
     except Exception as e:
-        print(f"[DailyFrom5m] extreme-range pass error: {e}")
-        if db is not None:
-            try:
-                db.rollback()
-            except Exception:
-                pass
-    finally:
-        if db is not None:
-            try:
-                db.close()
-            except Exception:
-                pass
+        print(f"[IndexDaily] error: {e}")
     return fixed
 
 
@@ -10135,7 +10090,7 @@ async def _daily_bar_refresh_loop():
         try:
             if is_market_open_now():
                 await asyncio.to_thread(_reconcile_daily_from_5m, 0, 3)
-                await asyncio.to_thread(_reconcile_extreme_ranges, 0)
+                await asyncio.to_thread(_reconcile_index_daily_from_tick, 0)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -10157,7 +10112,7 @@ async def _index_daily_backfill_loop():
             print(f"[DailyFrom5m] Done: {m} row(s) inserted")
             try:
                 await asyncio.to_thread(_reconcile_daily_from_5m, 1, 3)
-                await asyncio.to_thread(_reconcile_extreme_ranges, 1)
+                await asyncio.to_thread(_reconcile_index_daily_from_tick, 1)
             except Exception as _rc_err:
                 print(f"[DailyFrom5m] reconcile pass error: {_rc_err}")
         except Exception as e:
