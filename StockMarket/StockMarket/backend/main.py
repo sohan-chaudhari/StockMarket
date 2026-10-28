@@ -9695,6 +9695,9 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 3) -> int:
     db = None
     try:
         now_ist = database.get_ist_now()
+        # Clamp: the window-function pass over ~30 days of 5m exceeds the 30 s
+        # statement timeout (measured 2026-10-28). Only the recent sessions matter.
+        days_back = max(0, min(int(days_back), 3))
         start = datetime.combine(now_ist.date() - timedelta(days=days_back), datetime.min.time())
         end = datetime.combine(now_ist.date(), datetime.max.time())
         db = SessionLocal()
