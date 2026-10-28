@@ -617,10 +617,25 @@ def run_job(job):
                failure_kind="pre_data")
         return "complete_with_gaps", {"remaining": expected_n, "reason": "pre_data"}
 
+    # A user-triggered repair (chart open / lazy-load page) must outrank background
+    # work at the PROVIDER as well, not only in this queue. priority=True bypasses
+    # the shared cooldown and the pacing gate, which is the only way a user's repair
+    # can succeed while the nightly sweep is saturating the account quota. Measured
+    # 2026-10-28: BONFIG's queued repair was claimed immediately but the fetch was
+    # refused with 'shared provider cooldown active' twice in a row.
+    try:
+        _reason = (job.get("last_error") or "").strip().lower()
+    except Exception:
+        _reason = ""
+    _is_user_repair = _reason in ("chart_open", "history_page")
+    if _is_user_repair:
+        print(f"[BackfillJob] {job['ticker']} {job['interval']} user repair ({_reason}) "
+              f"-> provider priority")
+
     # Respect the shared cooldown before spending a request, but come back FAST:
     # a long exponential backoff here is what starved TATACAP's real 8-session hole.
     _cd = hs.rate_limit_backoff_remaining()
-    if _cd > 0:
+    if _cd > 0 and not _is_user_repair:
         finish(job["id"], "retry_wait", expected=expected_n, remaining=expected_n,
                error="shared provider cooldown active", failure_kind="throttled",
                retry_after=_cd, attempts=job["attempts"],
@@ -648,7 +663,8 @@ def run_job(job):
                 candles = svc.get_historical_candles(
                     ticker=job["ticker"], exchange=job["exchange"],
                     interval=_ANGEL_INTERVAL[job["interval"]],
-                    from_date=r_start, to_date=r_end, raise_on_error=True) or []
+                    from_date=r_start, to_date=r_end, raise_on_error=True,
+                    priority=_is_user_repair) or []
                 break
             except HistoricalFetchError as e:
                 last_err = str(e)
