@@ -107,11 +107,22 @@ def test_the_depth_guard_is_computed_once_before_both_branches():
     """Regression: computed inside the 1W branch only, it raised NameError on 1M
     (JPL returned HTTP 500). It must be defined before both branches."""
     body = _function_body("_resample_gap_fill")
-    w = body.index('if target_tf == "1W":')
-    m = body.index('if target_tf == "1M":')
+    w = body.rindex('if target_tf == "1W":')     # the fill branch (an earlier check exists)
+    m = body.rindex('if target_tf == "1M":')
     d = body.index("_daily_rows = db.query(func.count(")
-    assert d < w < m
+    assert d < w < m, (d, w, m)
     assert "_too_young_for_inline_m = _too_young_for_inline" in body
+
+
+def test_the_ondemand_fill_is_a_thread_not_a_background_task():
+    """Starlette awaits background_tasks before the ASGI call completes, so a chart
+    that used them still waited for the whole provider fetch (TATACAP 15m: 18.5 s)."""
+    body = _code_only(_function_body("_spawn_ondemand_fill"))
+    assert "daemon=True" in body and "perform_on_demand_backfill(" in body
+    route = _code_only(_function_body("get_intraday_paginated"))
+    assert "background_tasks.add_task(" not in route, (
+        "background_tasks delays the response; use _spawn_ondemand_fill")
+    assert "_spawn_ondemand_fill(clean_ticker, interval, fill_start, now)" in route
 
 
 def test_no_endpoint_inlines_a_historical_call_in_a_request():

@@ -6687,6 +6687,27 @@ _SYNC_REPAIR_MAX_SESSIONS = int(os.getenv("SYNC_REPAIR_MAX_SESSIONS", "20"))
 _SYNC_REPAIR_COOLDOWN_SEC = int(os.getenv("SYNC_REPAIR_COOLDOWN_SEC", "600"))
 
 
+def _spawn_ondemand_fill(ticker: str, interval: str, fill_start, now) -> None:
+    """Run a provider fill on a daemon thread -- never `background_tasks`.
+
+    Starlette awaits background tasks before the ASGI call completes, so
+    `background_tasks.add_task(perform_on_demand_backfill, ...)` still made the browser
+    wait for the whole fetch: measured 2026-10-29, TATACAP's 15m chart took 18.5 s while
+    serving 600 bars that were already stored. A thread returns the chart at once.
+    """
+    def _run():
+        try:
+            perform_on_demand_backfill(ticker, interval, fill_start, now)
+        except Exception as e:
+            print(f"[GapFill] background fill {ticker} {interval} error: {e}")
+
+    try:
+        threading.Thread(target=_run, daemon=True,
+                         name=f"ondemand-{ticker}-{interval}").start()
+    except Exception as e:
+        print(f"[GapFill] could not start fill thread for {ticker} {interval}: {e}")
+
+
 def _sync_repair_recent_bg(ticker: str, now, sync_key: str) -> None:
     """Run `_sync_repair_recent` off the request path.
 
@@ -7588,11 +7609,7 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                     # A recent attempt for this ticker/interval is still cooling
                     # down -- skip the dispatch entirely instead of re-queuing.
                     print(f"[GapFill] Skip fill for {clean_ticker} {interval} (cooldown active)")
-                elif background_tasks is not None:
-                    # Non-blocking async background backfill in production
-                    background_tasks.add_task(perform_on_demand_backfill, clean_ticker, interval, fill_start, now)
-                    print(f"[GapFill] Dispatched background fill for {clean_ticker} {interval} from {fill_start}")
-                else:
+                elif background_tasks is None:
                     # Direct test call with background_tasks=None: run synchronously and release session before network I/O
                     db.close()
                     perform_on_demand_backfill(clean_ticker, interval, fill_start, now)
@@ -7604,6 +7621,14 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                                .limit(_page_fetch_limit(limit + 1, db_tickers)).all(),
                         db_tickers)
                     print(f"[GapFill] Sync fill done for {clean_ticker} {interval}: {len(records)} candles now available")
+                else:
+                    # NOTE: not background_tasks. Starlette AWAITS background tasks before
+                    # the ASGI call completes, so the browser still waited for the whole
+                    # provider fetch -- measured 2026-10-29: TATACAP 15m took 18.5 s with
+                    # an empty-looking chart. A daemon thread returns the chart
+                    # immediately and fills behind it.
+                    _spawn_ondemand_fill(clean_ticker, interval, fill_start, now)
+                    print(f"[GapFill] Dispatched background fill for {clean_ticker} {interval} from {fill_start}")
         except Exception as _gf_err:
             print(f"[GapFill] Error checking gap: {_gf_err}")
 
