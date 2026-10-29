@@ -144,8 +144,16 @@ def select_rows(candles: Iterable[Any], start_day: date, today: date) -> List[Di
     return out
 
 
-def candidates(db, today: date, limit: int) -> List[str]:
-    """Tickers whose ``today`` 1D row is missing or still derived."""
+def candidates(db, start_day: date, today: date, limit: int) -> List[str]:
+    """Tickers that still need exchange data anywhere in ``[start_day, today]``.
+
+    Two conditions, both needed for convergence:
+      * no 1D row at all in the window (a ticker that was never written), or
+      * at least one row still carrying a derived source.
+
+    A ticker whose every row in the window is already ``ANGELONE`` is NOT selected, so
+    repeated runs finish the universe and then cost one cheap query and nothing else.
+    """
     from sqlalchemy import text as sa_text
     rows = db.execute(sa_text("""
         SELECT sm.ticker
@@ -153,14 +161,16 @@ def candidates(db, today: date, limit: int) -> List[str]:
         LEFT JOIN candles c
                ON c.ticker = sm.ticker
               AND c.timeframe = '1D'
-              AND c.timestamp::date = :today
+              AND c.timestamp::date >= :start_day
+              AND c.timestamp::date <= :today
         WHERE sm.is_active
           AND COALESCE(sm.exchange, 'NSE') IN ('NSE', 'BSE')
-          AND (c.ticker IS NULL OR c.data_source IN ('5M_AGG', 'BACKFILL', 'YFINANCE'))
         GROUP BY sm.ticker
-        ORDER BY (bool_or(c.ticker IS NULL)) DESC, sm.ticker
+        HAVING COUNT(c.ticker) = 0
+            OR COUNT(*) FILTER (WHERE c.data_source IN ('5M_AGG', 'BACKFILL', 'YFINANCE')) > 0
+        ORDER BY (MAX(c.timestamp) IS NULL) DESC, sm.ticker
         LIMIT :lim
-    """), {"today": today, "lim": int(limit)}).fetchall()
+    """), {"start_day": start_day, "today": today, "lim": int(limit)}).fetchall()
     return [r[0] for r in rows]
 
 
@@ -209,7 +219,7 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
         if only_tickers:
             todo = [t for t in only_tickers]
         else:
-            todo = candidates(db, today, limit)
+            todo = candidates(db, start_day, today, limit)
         stats["candidates"] = len(todo)
 
         # The provider drops the window endpoints: measured 2026-10-29,

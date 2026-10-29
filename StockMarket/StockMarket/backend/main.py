@@ -10259,7 +10259,7 @@ async def _daily_bar_refresh_loop():
                         _last_provider_pass = time.monotonic()
                         try:
                             import daily_provider_refresh as _dpr
-                            r = await asyncio.to_thread(_dpr.refresh, 120, 60.0)
+                            r = await asyncio.to_thread(_dpr.refresh, 120, 60.0, 3)
                             if r.get("rows"):
                                 print(f"[ProviderDaily] wrote {r['rows']} 1D row(s) from "
                                       f"ONE_DAY ({r['tickers']}/{r['candidates']} "

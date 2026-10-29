@@ -222,6 +222,17 @@ def test_refresh_never_raises_when_the_provider_throws(fakes):
     assert stats["errors"] == 1
 
 
+def test_candidates_only_return_rows_that_still_need_the_exchange():
+    """Convergence depends on this: a fully-ANGELONE window must not be re-queued."""
+    src = (BK / "daily_provider_refresh.py").read_text(encoding="utf-8")
+    i = src.index("def candidates(")
+    body = src[i:src.index("def _upsert(", i)]
+    sql = body[body.index('sa_text("""') + 11:body.index('"""', body.index('sa_text("""') + 12)]
+    assert "HAVING COUNT(c.ticker) = 0" in sql, "a never-written ticker must be included"
+    assert "FILTER (WHERE c.data_source IN ('5M_AGG', 'BACKFILL', 'YFINANCE'))" in sql
+    assert "ANGELONE" not in sql, "rows already from the exchange must not be re-fetched"
+
+
 def test_the_real_service_is_the_instance_not_the_module():
     """`historical_service.login()` lives on an instance; the module has no `.login()`.
 
