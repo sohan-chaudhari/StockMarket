@@ -80,6 +80,29 @@ def test_weekly_and_monthly_gap_fills_are_time_bounded():
         assert body.count("timeout=5)") == 2
 
 
+def test_weekly_and_monthly_only_fetch_inline_when_the_tail_is_missing():
+    """A young listing can never satisfy `len < 150`, so gating on depth alone ran a
+    'max' download on EVERY 1W open (measured 20 s on JPL right after a restart)."""
+    body = _code_only(_function_body("_resample_gap_fill"))
+    assert "_weekly_tail_gap" in body and "_monthly_tail_gap" in body
+    assert "if _weekly_tail_gap and not _too_young_for_inline and not _is_yfinance_failed(" in body
+    assert "if _monthly_tail_gap and not _too_young_for_inline_m and not _is_yfinance_failed(" in body
+    # a young listing's 1W/1M chart is its 1D series resampled -- no inline download
+    assert "_too_young_for_inline = _daily_rows < 60" in body
+
+
+def test_enqueue_reuses_an_active_job_instead_of_adding_another():
+    """Measured 2026-10-29: JPL held 7 rows for 5m because only FINISHED jobs were
+    debounced, so every open inserted a new row for a slightly different range."""
+    src = (pathlib.Path(__file__).resolve().parents[1] / "backfill_jobs.py").read_text(
+        encoding="utf-8", errors="replace")
+    i = src.index("def enqueue(")
+    body = _code_only(src[i:src.index("\ndef ", i + 10)])
+    assert "SELECT id, status FROM backfill_jobs" in body
+    assert "OR status IN ('queued','running','retry_wait','partially_complete')" in body
+    assert "if reason in ('chart_open', 'history_page') and _recent[1] in (" in body
+
+
 def test_no_endpoint_inlines_a_historical_call_in_a_request():
     """Belt and braces: no chart endpoint may call the provider directly."""
     for name in ("_stock_data_range_core", "get_intraday_paginated",

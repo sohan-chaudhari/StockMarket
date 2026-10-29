@@ -354,14 +354,34 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
         # gap simply re-enqueues once the window expires.
         try:
             _recent = db.execute(text("""
-                SELECT id FROM backfill_jobs
+                SELECT id, status FROM backfill_jobs
                  WHERE ticker = :t AND exchange = :x AND interval = :i
-                   AND status IN ('complete','complete_with_gaps','permanently_failed')
-                   AND updated_at > NOW() - make_interval(mins => :m)
+                   AND (
+                        (status IN ('complete','complete_with_gaps','permanently_failed')
+                         AND updated_at > NOW() - make_interval(mins => :m))
+                        OR status IN ('queued','running','retry_wait','partially_complete')
+                   )
                  ORDER BY updated_at DESC LIMIT 1
             """), {"t": t, "x": exchange, "i": interval,
                      "m": RECENT_ENQUEUE_SUPPRESS_MINUTES}).fetchone()
             if _recent:
+                # An ACTIVE job for this (ticker, interval) is reused, never duplicated.
+                # Measured 2026-10-29: JPL held 7 rows for 5m (2 running, 3 retry_wait,
+                # 2 complete_with_gaps) because only FINISHED jobs were debounced, so
+                # every chart open inserted a new row for a slightly different range --
+                # and those duplicates then competed for the single provider slot, which
+                # is what made everything else slower too.
+                if reason in ('chart_open', 'history_page') and _recent[1] in (
+                        'queued', 'retry_wait', 'partially_complete'):
+                    # The user is looking at this ticker: promote the existing job
+                    # instead of adding another one behind it.
+                    db.execute(text("""
+                        UPDATE backfill_jobs
+                           SET next_attempt_at = TIMESTAMP '2000-01-01 00:00:00',
+                               priority = true
+                         WHERE id = :id
+                    """), {"id": _recent[0]})
+                    db.commit()
                 return _recent[0]
         except Exception:
             pass

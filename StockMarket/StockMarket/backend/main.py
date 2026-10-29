@@ -6897,18 +6897,36 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         first_stored_date = (datetime.utcfromtimestamp(min_stored_ts).date()
                              if min_stored_ts else None)
         five_yr_cutoff = date(today_ist.year - 5, today_ist.month, today_ist.day)
+        # Tail vs depth, exactly like the daily path (measured 2026-10-29: JPL's first
+        # 1W open took 20 s because a young listing can never satisfy `len < 150`, so a
+        # 'max' yfinance download ran on EVERY 1W open). Only a missing TAIL is worth an
+        # inline fetch; depth is `_weekly_monthly_backfill`'s job, in the background.
+        _weekly_tail_gap = (
+            last_stored_date is None or (today_ist - last_stored_date).days > 14
+        )
         # Need to fill if stored 1W ends more than 14 days ago (tail gap) OR earliest stored 1W is missing 2-5 yr history
         need_weekly_fill = (
-            last_stored_date is None or 
-            (today_ist - last_stored_date).days > 14 or 
-            first_stored_date is None or 
+            _weekly_tail_gap or
+            first_stored_date is None or
             first_stored_date > five_yr_cutoff or
             len(stored_dict) < 150
         )
         _resample_weekly_key = f"{clean}:resample1W"
         _weekly_claimed = False
         _weekly_got_data = False
-        if need_weekly_fill and not _is_yfinance_failed(clean):
+        # A young listing has no weekly series of its own -- its 1W chart IS the 1D
+        # series resampled -- so an inline 'max' download buys nothing and cost 20 s on
+        # JPL's first open. Below 60 daily rows the fill is left to
+        # _weekly_monthly_backfill, which runs it in the background.
+        try:
+            _daily_rows = db.query(func.count(models.Candle.id)).filter(
+                models.Candle.ticker.in_(db_tickers),
+                models.Candle.timeframe == '1D',
+            ).scalar() or 0
+        except Exception:
+            _daily_rows = 10 ** 6          # unknown -> behave as before (no regression)
+        _too_young_for_inline = _daily_rows < 60
+        if _weekly_tail_gap and not _too_young_for_inline and not _is_yfinance_failed(clean):
             if _try_reserve_backfill(_resample_weekly_key):
                 if _try_consume_ondemand_budget():
                     _weekly_claimed = True
@@ -6983,16 +7001,24 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         last_stored_m = (datetime.utcfromtimestamp(max_stored_ts).date() if max_stored_ts else None)
         first_stored_m = (datetime.utcfromtimestamp(min_stored_ts).date() if min_stored_ts else None)
         ten_yr_cutoff = date(today_ist.year - 10, today_ist.month, today_ist.day)
+        # Same tail-vs-depth split as 1W above: a young listing must not pay a 'max'
+        # monthly download on every 1M open.
+        _monthly_tail_gap = (
+            last_stored_m is None or (today_ist - last_stored_m).days > 45
+        )
         need_monthly_fill = (
-            last_stored_m is None or 
-            first_stored_m is None or 
+            _monthly_tail_gap or
+            first_stored_m is None or
             first_stored_m > ten_yr_cutoff or
             len(stored_dict) < 60
         )
         _resample_monthly_key = f"{clean}:resample1M"
         _monthly_claimed = False
         _monthly_got_data = False
-        if need_monthly_fill and not _is_yfinance_failed(clean):
+        # Same depth guard as 1W above: a young listing's monthly chart is its 1D series
+        # resampled, so no inline 'max' download.
+        _too_young_for_inline_m = _daily_rows < 60
+        if _monthly_tail_gap and not _too_young_for_inline_m and not _is_yfinance_failed(clean):
             if _try_reserve_backfill(_resample_monthly_key):
                 if _try_consume_ondemand_budget():
                     _monthly_claimed = True
