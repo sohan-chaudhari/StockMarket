@@ -70,7 +70,7 @@ def test_no_caller_can_reopen_the_three_bar_bug():
 
 def test_5m_reconcile_refuses_to_downgrade_an_exchange_daily():
     i = SRC.index("def _reconcile_daily_from_5m(")
-    body = SRC[i:i + 6000]
+    body = SRC[i:SRC.index("\ndef ", i + 10)]
     assert "WHERE candles.data_source IS DISTINCT FROM 'ANGELONE'" in body, (
         "a 5m aggregate must never overwrite a daily that came from the exchange")
 

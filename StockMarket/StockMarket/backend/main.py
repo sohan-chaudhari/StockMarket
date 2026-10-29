@@ -9753,7 +9753,8 @@ def _session_coverage_min_bars(now_ist=None, floor: int = 3, cap: int = 70) -> i
 
 
 def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70,
-                             ticker: Optional[str] = None) -> int:
+                             ticker: Optional[str] = None,
+                             timeout_ms: Optional[int] = None) -> int:
     """Rewrite the 1D candle from our own stored 5m series -- for EVERY ticker.
 
     Why (measured 2026-10-28, verified against the exchange tick itself):
@@ -9806,6 +9807,17 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70,
         start = datetime.combine(now_ist.date() - timedelta(days=days_back), datetime.min.time())
         end = datetime.combine(now_ist.date(), datetime.max.time())
         db = SessionLocal()
+        if timeout_ms:
+            # Inside a chart request this must never WAIT on a row lock: the aggregator
+            # flushes today's 1D row continuously, so the UPSERT below can sit behind
+            # that transaction (measured 2026-10-29: one open in thirty took 18.3 s while
+            # the other 29 were under 2 s). Bounded -> worst case is "serve the rows we
+            # already have". int() keeps the literal safe; PG takes no bind params in SET.
+            try:
+                db.execute(sa_text("SET LOCAL lock_timeout = '%dms'" % int(timeout_ms)))
+                db.execute(sa_text("SET LOCAL statement_timeout = '%dms'" % int(timeout_ms)))
+            except Exception:
+                pass
         res = db.execute(sa_text("""
             WITH bars AS (
                 SELECT c.ticker,
@@ -10093,7 +10105,8 @@ def _ensure_daily_on_open(ticker: str, db) -> None:
     try:
         if not ticker or not _daily_recent_needs_exchange(ticker, db):
             return
-        _reconcile_daily_from_5m(2, _session_coverage_min_bars(), ticker=ticker)
+        _reconcile_daily_from_5m(2, _session_coverage_min_bars(), ticker=ticker,
+                                 timeout_ms=1500)
         if not is_market_open_now():
             _spawn_daily_provider_refresh(ticker)
     except Exception as e:

@@ -145,6 +145,15 @@ def test_background_provider_work_is_bounded():
     assert 'stats["reason"] = "provider_busy"' in dpr
 
 
+def test_the_inline_reconcile_is_time_bounded():
+    """One open in thirty took 18.3 s because the UPSERT waited on the aggregator's
+    flush transaction. A chart request must give up and serve stored rows instead."""
+    assert "_reconcile_daily_from_5m(2, _session_coverage_min_bars(), ticker=ticker," in SRC
+    assert "timeout_ms=1500" in SRC
+    body = _code_only(_function_body("_reconcile_daily_from_5m"))
+    assert "SET LOCAL lock_timeout" in body and "SET LOCAL statement_timeout" in body
+
+
 def test_no_endpoint_inlines_a_historical_call_in_a_request():
     """Belt and braces: no chart endpoint may call the provider directly."""
     for name in ("_stock_data_range_core", "get_intraday_paginated",
