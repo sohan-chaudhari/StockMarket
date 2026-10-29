@@ -60,7 +60,12 @@ _LOG = "[ProviderDaily]"
 def _get_service():
     if _service_override is not None:
         return _service_override
-    import historical_service  # imported lazily so tests need no credentials
+    # `historical_service` is an INSTANCE (historical_service = HistoricalDataService()
+    # at the bottom of that module), not a module: `historical_service.login()` lives on
+    # the class. Importing the module and calling `.login()` raised
+    # "module 'historical_service' has no attribute 'login'" the first time this ran,
+    # so the refresher silently refused to work. Import the object.
+    from historical_service import historical_service
     return historical_service
 
 

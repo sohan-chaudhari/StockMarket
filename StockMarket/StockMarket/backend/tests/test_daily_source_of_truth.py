@@ -218,3 +218,15 @@ def test_refresh_never_raises_when_the_provider_throws(fakes):
     stats = dpr.refresh(only_tickers=["CUPID"], budget_seconds=5.0)
     assert stats["rows"] == 0
     assert stats["errors"] == 1
+
+
+def test_the_real_service_is_the_instance_not_the_module():
+    """`historical_service.login()` lives on an instance; the module has no `.login()`.
+
+    The first production run failed with "module 'historical_service' has no attribute
+    'login'" and quietly wrote nothing, so assert the shape we actually get.
+    """
+    svc = dpr._get_service()
+    assert hasattr(svc, "login") and callable(svc.login)
+    assert hasattr(svc, "is_logged_in")
+    assert hasattr(svc, "get_historical_candles")
