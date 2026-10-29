@@ -53,8 +53,19 @@ DERIVED_SOURCES = ("5M_AGG", "BACKFILL", "YFINANCE")
 # Test seams: set these to fakes to exercise refresh() without a DB or a network.
 _service_override = None       # object exposing is_logged_in / login / get_historical_candles
 _session_factory_override = None  # callable returning a SQLAlchemy session
+_clock_override = None         # callable returning a naive-IST datetime
 
 _LOG = "[ProviderDaily]"
+
+
+def _today() -> date:
+    if _clock_override is not None:
+        return _clock_override().date()
+    try:
+        from database import get_ist_now
+        return get_ist_now().date()
+    except Exception:
+        return date.today()
 
 
 def _get_service():
@@ -178,12 +189,7 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
             priority: bool = False) -> Dict[str, Any]:
     """Correct recent 1D rows from AngelOne ``ONE_DAY``. Never raises."""
     started = time.monotonic()
-    # Local import of the IST clock keeps this module test-friendly.
-    try:
-        from database import get_ist_now
-        today = get_ist_now().date()
-    except Exception:
-        today = date.today()
+    today = _today()
     start_day = today - timedelta(days=max(0, int(days_back)))
     stats = {"candidates": 0, "tickers": 0, "rows": 0, "skipped": 0,
              "errors": 0, "elapsed": 0.0, "reason": ""}
@@ -206,6 +212,13 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
             todo = candidates(db, today, limit)
         stats["candidates"] = len(todo)
 
+        # The provider drops the window endpoints: measured 2026-10-29,
+        # get_historical_candles(ONE_DAY, date(28)..date(28)) returned 0 rows for a day
+        # that definitely exists, and date(27)..date(29) returned only the 28th. Asking
+        # for a day either side and filtering locally is immune to that off-by-one.
+        fetch_from = start_day - timedelta(days=1)
+        fetch_to = today + timedelta(days=1)
+
         for ticker in todo:
             if time.monotonic() - started > float(budget_seconds):
                 stats["reason"] = "budget"
@@ -213,7 +226,7 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
             try:
                 candles = svc.get_historical_candles(
                     ticker=ticker, interval="ONE_DAY",
-                    from_date=start_day, to_date=today,
+                    from_date=fetch_from, to_date=fetch_to,
                     raise_on_error=False, priority=priority)
             except Exception as e:
                 stats["errors"] += 1

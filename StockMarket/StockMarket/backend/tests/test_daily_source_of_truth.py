@@ -183,9 +183,11 @@ class _FakeSvc:
 def fakes():
     db = _FakeDB()
     dpr._session_factory_override = lambda: db
+    dpr._clock_override = lambda: datetime(2026, 10, 29, 6, 55)   # fixed "today"
     yield db
     dpr._session_factory_override = None
     dpr._service_override = None
+    dpr._clock_override = None
 
 
 def test_refresh_writes_the_good_row_and_skips_the_impossible_one(fakes):
@@ -230,3 +232,26 @@ def test_the_real_service_is_the_instance_not_the_module():
     assert hasattr(svc, "login") and callable(svc.login)
     assert hasattr(svc, "is_logged_in")
     assert hasattr(svc, "get_historical_candles")
+
+
+def test_refresh_asks_for_a_window_wider_than_the_days_it_writes(fakes):
+    """The provider drops the window endpoints (measured 2026-10-29).
+
+    ONE_DAY with date(28)..date(28) returned 0 rows for a day that exists, and
+    date(27)..date(29) returned only the 28th -- so a request for exactly the days we
+    want silently yields nothing. Ask a day either side and filter locally.
+    """
+    seen = {}
+
+    class _Recording(_FakeSvc):
+        def get_historical_candles(self, **kwargs):
+            seen.update(kwargs)
+            return [{"timestamp": datetime(2026, 10, 28), "open": 317.0, "high": 317.9,
+                     "low": 309.0, "close": 314.55, "volume": 10735425}]
+
+    dpr._service_override = _Recording([])
+    stats = dpr.refresh(only_tickers=["CUPID"], budget_seconds=5.0, days_back=1)
+    assert stats["rows"] == 1
+    # target window is 28..29 Oct; the request must reach a day either side of it
+    assert seen["from_date"] <= date(2026, 10, 27)
+    assert seen["to_date"] >= date(2026, 10, 30)
