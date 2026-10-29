@@ -6265,9 +6265,20 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
     MIN_DAILY_RECORDS = 10 if range.upper() == "ALL" else 5
     target_latest_trading_day = _get_target_latest_trading_day(ist_now)
 
-    # On-demand gap-fill: if missing target latest trading day or data is insufficient,
-    # fetch the gap from yfinance, and fallback to AngelOne if yfinance fails or misses recent days.
-    needs_gap_fill = (not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)
+    # On-demand gap-fill. Two different shortfalls, handled differently:
+    #   * the NEWEST DAY is missing or stale -> fetched inline (yfinance, bounded by its
+    #     own timeout), because the user's last candle is simply absent;
+    #   * only the DEPTH is short (a young listing with two or three sessions) -> pure
+    #     background work; blocking a chart load for it buys nothing the user can see.
+    # A chart request must never WAIT on AngelOne at all: get_historical_candles blocks on
+    # the shared historical limiter for up to _RATE_LIMIT_BACKOFF_SEC (90 s) while a
+    # cooldown is active. Measured 2026-10-29: JPL's daily chart blocked the full 90 s and
+    # the browser gave up (`http=000`), twice -- exactly the reported "I wait a minute and
+    # the graph does not open". A young listing hits it on EVERY open, because its row
+    # count is permanently below MIN_DAILY_RECORDS.
+    _newest_missing = (not records) or (records[0].timestamp.date() < target_latest_trading_day)
+    _depth_short = len(records) < MIN_DAILY_RECORDS
+    needs_gap_fill = _newest_missing or _depth_short
 
     # SEC-02 follow-up: atomically reserve this ticker BEFORE any provider work
     # and take one slot of the process-wide on-demand budget. A concurrent
@@ -6283,7 +6294,7 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
             else:
                 _release_backfill(_daily_fill_key)
 
-    if needs_gap_fill and not _is_yfinance_failed(clean_ticker) and _daily_fill_claimed:
+    if _newest_missing and not _is_yfinance_failed(clean_ticker) and _daily_fill_claimed:
         most_recent_date = records[0].timestamp.date() if records else (ist_now.date() - timedelta(days=365*5 if range.upper() == "ALL" else (range_days if range_days else 365)))
         try:
             from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -6336,57 +6347,27 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
         except Exception as e:
             print(f"[GapFill 1D] {clean_ticker} yfinance error: {e}")
 
-    # Fallback to AngelOne if still missing target latest trading day or insufficient records
+    # The AngelOne ONE_DAY fallback runs in the BACKGROUND, never inside this request.
+    # Calling it inline is what made a chart open block for up to 90 s behind the shared
+    # historical limiter (measured 2026-10-29 on JPL: `http=000` after 90 s, twice --
+    # the reported "I wait a minute and the graph does not open"). The background path
+    # is paced, deduped per ticker and capped at a few concurrent calls, and it writes
+    # the very same ANGELONE rows this block used to write. The chart renders the stored
+    # bars immediately and the filled ones on the next load.
     records = _query_candles_1d()
-    if ((not records) or (records[0].timestamp.date() < target_latest_trading_day) or (len(records) < MIN_DAILY_RECORDS)) and _daily_fill_claimed:
+    if needs_gap_fill and _daily_fill_claimed:
+        _spawn_daily_provider_refresh(clean_ticker)
         try:
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
-            if not historical_service.is_logged_in:
-                historical_service.login()
-            if historical_service.is_logged_in:
-                from_date = records[0].timestamp.date() if records else (ist_now.date() - timedelta(days=365*5 if range.upper() == "ALL" else (range_days if range_days else 365)))
-                angel_daily_candles = historical_service.get_historical_candles(
-                    ticker=clean_ticker, interval='ONE_DAY',
-                    from_date=from_date, to_date=target_latest_trading_day, exchange=resolved_exchange
-                )
-                if angel_daily_candles:
-                    new_angel_rows = 0
-                    try:
-                        for c in angel_daily_candles:
-                            ts_raw = c.get('timestamp')
-                            if not isinstance(ts_raw, datetime):
-                                continue
-                            o_val = _safe_float(c.get('open'))
-                            c_val = _safe_float(c.get('close'))
-                            h_val = _safe_float(c.get('high'))
-                            l_val = _safe_float(c.get('low'))
-                            v_val = _safe_int(c.get('volume'))
-                            if o_val <= 0 or c_val <= 0:
-                                continue
-                            ts = datetime(ts_raw.year, ts_raw.month, ts_raw.day, 0, 0, 0)
-                            db.execute(pg_insert(models.Candle).values(
-                                ticker=clean_ticker, timeframe='1D', timestamp=ts,
-                                open=o_val, high=max(o_val, h_val, c_val),
-                                low=min(o_val, l_val, c_val), close=c_val,
-                                volume=v_val,
-                                is_completed=True, data_source='ANGELONE', is_backfilled=True,
-                            ).on_conflict_do_update(
-                                constraint="uix_candle_key",
-                                set_={
-                                    "open": o_val, "high": max(o_val, h_val, c_val),
-                                    "low": min(o_val, l_val, c_val), "close": c_val,
-                                    "volume": v_val, "is_completed": True, "data_source": 'ANGELONE'
-                                }
-                            ))
-                            new_angel_rows += 1
-                        if new_angel_rows > 0:
-                            db.commit()
-                            records = _query_candles_1d()
-                            print(f"[GapFill 1D] {clean_ticker}: +{new_angel_rows} candles filled via AngelOne")
-                    except Exception:
-                        db.rollback()
-        except Exception as e:
-            print(f"[WARN] AngelOne historical fallback failed for {clean_ticker}: {e}")
+            # Depth is a JOB, not a request: the worker paces it, dedupes identical
+            # ranges, and promotes a user-opened ticker ahead of the sweep backlog.
+            import backfill_jobs as _bj_1d
+            _bj_1d.enqueue(
+                clean_ticker, "1D",
+                datetime.combine(ist_now.date() - timedelta(days=365), datetime.min.time()),
+                datetime.combine(ist_now.date(), datetime.min.time()),
+                reason="chart_open")
+        except Exception:
+            pass
 
     if _daily_fill_claimed:
         # Finalise the reservation: a fill that produced the expected stored
@@ -6936,11 +6917,15 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         if _weekly_claimed:
             try:
                 yf_sym = _yfinance_ticker(clean)
-                acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
+                # A chart request must not queue behind yfinance: waiting 20 s for the
+                # shared semaphore and then 15 s for a 'max' download turned a 1W open
+                # into a 35 s hang. If the semaphore is busy, skip -- the next open (or
+                # a background pass) fills it.
+                acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
                 if acquired:
                     try:
                         df_w = yf.download(yf_sym, period='max', interval='1wk',
-                                           progress=False, auto_adjust=True, timeout=15)
+                                           progress=False, auto_adjust=True, timeout=5)
                     finally:
                         _yf_semaphore.release()
 
@@ -7016,11 +7001,13 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         if _monthly_claimed:
             try:
                 yf_sym = _yfinance_ticker(clean)
-                acquired = _yf_semaphore.acquire(blocking=True, timeout=20)
+                # Same rule as the weekly path above: never queue a chart request behind
+                # the shared yfinance semaphore (was timeout=20 + download 15).
+                acquired = _yf_semaphore.acquire(blocking=True, timeout=1.0)
                 if acquired:
                     try:
                         df_m = yf.download(yf_sym, period='max', interval='1mo',
-                                           progress=False, auto_adjust=True, timeout=15)
+                                           progress=False, auto_adjust=True, timeout=5)
                     finally:
                         _yf_semaphore.release()
 
