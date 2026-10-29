@@ -325,7 +325,10 @@ def main():  # pragma: no cover - manual repair entry point
     """
     import sys
     tickers = sys.argv[1:] or None
-    print(refresh(limit=200, budget_seconds=600.0, only_tickers=tickers, priority=False))
+    # days_back=7 for a manual repair: one request covers the whole window per ticker,
+    # so a wider window costs the same as a narrow one.
+    print(refresh(limit=200, budget_seconds=600.0, days_back=7,
+                  only_tickers=tickers, priority=False))
 
 
 if __name__ == "__main__":  # pragma: no cover
