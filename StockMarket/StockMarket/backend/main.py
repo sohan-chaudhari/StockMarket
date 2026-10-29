@@ -9657,17 +9657,37 @@ def _backfill_index_daily(days_back: int = 20) -> int:
     return inserted
 
 
-def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
-    """Rebuild recent 1D rows from our own 5m candles.
+def _session_coverage_min_bars(now_ist=None, floor: int = 3, cap: int = 70) -> int:
+    """5m bars the *clock* says today's session should already have, times 0.9.
 
-    `min_bars` is a COMPLETENESS gate, not a sanity check: a full NSE 5m session is
-    75 bars, so 70 means "the session is essentially complete". It used to be 3, and
-    that is exactly why a half-downloaded day produced a wrong daily: CUPID on
-    2026-10-28 had only 32 of 75 5m bars (09:15-11:50) and the 3-bar threshold let
-    that truncated morning overwrite the exchange daily, giving close 315.75 / low
-    309.35 instead of the real 314.55 / 309.00. Any day below the threshold is now
-    left exactly as the provider wrote it, for every ticker.
+    This is what `_reconcile_daily_from_5m` compares against, and it is the reason a
+    truncated series can no longer pass as a complete session. A fixed threshold
+    cannot work: a 32-bar day at 11:50 is the whole session so far (and the daily
+    *should* track it), while the same 32 bars at 15:25 mean the download stalled and
+    the aggregate would understate the day's close, low and volume.
+
+        clock   expected bars   gate
+        09:30        3            3
+        11:55       32           28
+        15:25       74           66
+        15:35+      75           67   (capped at 70)
+
+    So a genuine mid-session day passes, and a series that lags the clock does not.
     """
+    try:
+        now = now_ist or database.get_ist_now()
+        open_dt = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        close_dt = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        if now < open_dt:
+            return floor
+        spanned = (min(now, close_dt) - open_dt).total_seconds()
+        expected = max(1, min(75, int(spanned // 300)))
+        return int(max(floor, min(cap, expected * 0.9)))
+    except Exception:
+        return 3
+
+
+def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
     """Rewrite the 1D candle from our own stored 5m series -- for EVERY ticker.
 
     Why (measured 2026-10-28, verified against the exchange tick itself):
@@ -9679,25 +9699,34 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
         NIFTY       22778.05 / 22497.70 / 22698.85   (matched)             (matched)
 
     The tick equals the 5m aggregate to the paisa, so the 5m series (which is built
-    from those ticks) is the correct source and the 1D row was stale: it is written
-    ONCE by the morning provider snapshot (data_source=BACKFILL) and nothing ever
-    updated it, so the daily candle froze at whatever the price was when that job ran.
+    from those ticks) tracks the session correctly; the 1D row used to be written
+    ONCE by the morning provider snapshot (data_source=BACKFILL) and never updated,
+    so the daily candle froze at whatever the price was when that job ran.
 
-    Why this no longer needs to be index-only: the earlier attempt restricted itself to
-    indices because the 5m series carried sporadic FOREIGN-INSTRUMENT bars (MIDCAP was
-    showing the Nifty Midcap-50 level ~16,4xx while the true index was ~13,2xx), and a
-    statistical band around the median cannot separate a corrupt bar from a stock that
-    genuinely trended. The discriminator below is not statistical -- it is sequential:
-    a foreign bar is ISOLATED, i.e. its close jumps >8 % away from the bar before AND
-    the bar after, whereas a real trend moves a few percent per 5-minute step. Measured
-    on the two cases that used to break the median band:
+    `min_bars` is a COMPLETENESS gate, not a sanity check: a full NSE 5m session is
+    75 bars. It used to be 3 -- and both live call sites passed `3` explicitly, so
+    three bars counted as a valid session and a half-downloaded morning overwrote the
+    exchange daily (CUPID 2026-10-28: 32 of 75 bars, 09:15-11:50, giving close 315.75
+    / low 309.35 instead of the real 314.55 / 309.00). Callers now pass the coverage
+    that the clock implies (see `_session_coverage_min_bars`), so a series that is
+    truncated relative to the session cannot be mistaken for a complete one.
+
+    Why this is no longer index-only: an earlier attempt restricted itself to indices
+    because the 5m series carried sporadic FOREIGN-INSTRUMENT bars (MIDCAP showed the
+    Nifty Midcap-50 level ~16,4xx while the true index was ~13,2xx), and a statistical
+    band around the median cannot separate a corrupt bar from a stock that genuinely
+    trended. The discriminator below is not statistical -- it is sequential: a foreign
+    bar is ISOLATED, i.e. its close jumps >8 % away from the bar before AND the bar
+    after, whereas a real trend moves a few percent per 5-minute step. Measured on the
+    two cases that used to break the median band:
       * MIDCAP 13,2xx -> 16,4xx -> 13,2xx : both jumps ~20-24 % -> dropped;
       * HUHTAMAKI 190 -> 229 over the session : every step is small -> kept, so the
         genuine +21 % day survives.
 
     Also drops bars whose own OHLC is impossible (high < max(open,close), etc.), and
-    skips a (ticker, day) with fewer than `min_bars` clean bars so a partial or holiday
-    session cannot overwrite a good row. Safe to run repeatedly and mid-session.
+    never downgrades a row that already came from the exchange: a 5m aggregate cannot
+    carry the 15:30 closing-auction price, so an `ANGELONE` row always wins over it
+    (see daily_provider_refresh.py). Safe to run repeatedly and mid-session.
     """
     from database import SessionLocal
     from sqlalchemy import text as sa_text
@@ -9758,6 +9787,7 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
                    is_completed = true,
                    data_source = '5M_AGG',
                    is_backfilled = false
+             WHERE candles.data_source IS DISTINCT FROM 'ANGELONE'
         """), {"s": start, "e": end, "min_bars": int(min_bars)})
         db.commit()
         n = res.rowcount or 0
@@ -9841,6 +9871,82 @@ def _reconcile_index_daily_from_tick(days_back: int = 0) -> int:
             db.close()
     except Exception as e:
         print(f"[IndexDaily] error: {e}")
+    return fixed
+
+
+def _reconcile_daily_from_quote(limit: int = 400) -> int:
+    """Set TODAY's 1D candle from the exchange's own quote -- for ANY ticker we hold one for.
+
+    Indices have done this since Session 63 because their 5m series can carry bars from a
+    different instrument. The same argument applies to every stock, for a second and more
+    general reason: our 5m series ends at the 15:25 bar while the official close is produced
+    by the 15:30 call auction, so a daily aggregated from 5m closes on the wrong number.
+    Measured 2026-10-28 after the close:
+
+        CUPID   stored 316.00   exchange 314.55     (missing closing print)
+        TCS     stored high 2479.00   exchange 2461.30   (foreign print inside a 5m bar)
+
+    The live quote already carries the exchange's own day open/high/low/ltp/volume -- the
+    same three numbers the chart header shows -- so there is nothing to infer: copy them.
+
+    Only tickers with a RAW broker tick are touched; a baseline row read back out of our own
+    database is not evidence about the exchange. A tick that is not from the current session,
+    or whose OHLC is internally inconsistent, is skipped, so this can never write a stale or
+    impossible daily. Rows written here are `ANGELONE`, which `_reconcile_daily_from_5m` will
+    not downgrade.
+    """
+    fixed = 0
+    try:
+        _ticks = getattr(angelone_service, "latest_ticks", {}) or {}
+        if not _ticks:
+            return 0
+        market_open = is_market_open_now()
+        today = datetime.combine(database.get_ist_now().date(), datetime.min.time())
+        from database import SessionLocal
+        from sqlalchemy import text as sa_text
+        db = SessionLocal()
+        try:
+            for tk in list(_ticks.keys())[:max(1, int(limit))]:
+                if tk in _INDEX_LIST:
+                    continue          # handled by _reconcile_index_daily_from_tick
+                raw = _ticks.get(tk) or {}
+                if not isinstance(raw, dict):
+                    continue
+                if not _tick_is_current_session(raw, market_open):
+                    continue
+                o = _safe_float(raw.get("open") or raw.get("day_open") or 0)
+                h = _safe_float(raw.get("high") or raw.get("day_high") or 0)
+                l = _safe_float(raw.get("low") or raw.get("day_low") or 0)
+                c = _safe_float(raw.get("ltp") or raw.get("current_price")
+                                or raw.get("current") or 0)
+                v = _safe_float(raw.get("volume") or raw.get("day_volume") or 0)
+                if not (o > 0 and h > 0 and l > 0 and c > 0):
+                    continue
+                if h < max(o, c) - 0.01 or l > min(o, c) + 0.01:
+                    continue                        # inconsistent -> do not touch
+                db.execute(sa_text("""
+                    INSERT INTO candles (ticker, timeframe, timestamp, open, high, low, close,
+                                         volume, is_completed, data_source, is_backfilled)
+                    VALUES (:t, '1D', :d, :o, :h, :l, :c, :v, true, 'ANGELONE', false)
+                    ON CONFLICT ON CONSTRAINT uix_candle_key DO UPDATE
+                       SET open = EXCLUDED.open,
+                           high = EXCLUDED.high,
+                           low = EXCLUDED.low,
+                           close = EXCLUDED.close,
+                           volume = GREATEST(EXCLUDED.volume, candles.volume),
+                           is_completed = true,
+                           data_source = 'ANGELONE',
+                           is_backfilled = false
+                """), {"t": tk, "d": today, "o": o, "h": h, "l": l, "c": c,
+                       "v": int(max(0.0, v))})
+                fixed += 1
+            if fixed:
+                db.commit()
+                print(f"[QuoteDaily] set {fixed} daily candle(s) from the exchange quote")
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[QuoteDaily] error: {e}")
     return fixed
 
 
@@ -10128,11 +10234,38 @@ async def _daily_bar_refresh_loop():
     minutes keeps today's bar honest; the after-close pass settles it for good.
     """
     await asyncio.sleep(90)
+    _last_provider_pass = 0.0
     while True:
         try:
             if is_market_open_now():
-                await asyncio.to_thread(_reconcile_daily_from_5m, 0, 3)
+                # Time-aware completeness gate: a series that lags the clock (CUPID had
+                # 32 of 74 bars at 15:25) must never be mistaken for a finished session.
+                await asyncio.to_thread(_reconcile_daily_from_5m, 0,
+                                        _session_coverage_min_bars())
                 await asyncio.to_thread(_reconcile_index_daily_from_tick, 0)
+                # The tick carries the exchange's running day OHLC, so it is both fresher
+                # and more accurate than a 5m aggregate (no bar-boundary lag).
+                await asyncio.to_thread(_reconcile_daily_from_quote)
+            else:
+                # After the close the daily must come from the exchange itself: our 5m
+                # stops at the 15:25 bar while the official close is produced by the
+                # 15:30 call auction, so an aggregate cannot carry the real close
+                # (CUPID 2026-10-28: 316.00 stored vs 314.55 on the exchange). Ticks
+                # first -- exact and free -- then ONE_DAY for the tickers nobody streams.
+                now_ist = database.get_ist_now()
+                if (now_ist.hour, now_ist.minute) >= (15, 35):
+                    await asyncio.to_thread(_reconcile_daily_from_quote)
+                    if time.monotonic() - _last_provider_pass >= 600:
+                        _last_provider_pass = time.monotonic()
+                        try:
+                            import daily_provider_refresh as _dpr
+                            r = await asyncio.to_thread(_dpr.refresh, 120, 60.0)
+                            if r.get("rows"):
+                                print(f"[ProviderDaily] wrote {r['rows']} 1D row(s) from "
+                                      f"ONE_DAY ({r['tickers']}/{r['candidates']} "
+                                      f"candidate(s), {r['elapsed']}s)")
+                        except Exception as _pd_err:
+                            print(f"[ProviderDaily] error: {_pd_err}")
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -10153,7 +10286,8 @@ async def _index_daily_backfill_loop():
             m = await asyncio.to_thread(_backfill_daily_from_5m)
             print(f"[DailyFrom5m] Done: {m} row(s) inserted")
             try:
-                await asyncio.to_thread(_reconcile_daily_from_5m, 1, 3)
+                await asyncio.to_thread(_reconcile_daily_from_5m, 1,
+                                        _session_coverage_min_bars())
                 await asyncio.to_thread(_reconcile_index_daily_from_tick, 1)
             except Exception as _rc_err:
                 print(f"[DailyFrom5m] reconcile pass error: {_rc_err}")

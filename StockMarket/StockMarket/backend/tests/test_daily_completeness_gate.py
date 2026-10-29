@@ -21,7 +21,9 @@ def test_completeness_threshold():
 
 def test_threshold_is_documented_as_completeness():
     i = SRC.index("def _reconcile_daily_from_5m(")
-    body = SRC[i:i + 900]
+    # The docstring now also records why the gate exists, so read the whole thing
+    # rather than a fixed slice of it.
+    body = SRC[i:SRC.index('"""', SRC.index('"""', i) + 3) + 3]
     assert "COMPLETENESS gate" in body
     assert "75 bars" in body
 
