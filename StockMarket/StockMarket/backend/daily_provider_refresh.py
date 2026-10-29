@@ -316,10 +316,16 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
 
 
 def main():  # pragma: no cover - manual repair entry point
-    """``python daily_provider_refresh.py [TICKER ...]`` -- backfill now, ignoring the queue."""
+    """``python daily_provider_refresh.py [TICKER ...]`` -- backfill now.
+
+    NOTE: priority=False deliberately. `priority=True` bypasses the shared limiter, and
+    measured 2026-10-29 the broker then answers 0 rows in 0.00 s for every call after the
+    first, so a 3-ticker run wrote 1 row and looked like a data problem. Paced calls take
+    ~15 s each and always return data.
+    """
     import sys
     tickers = sys.argv[1:] or None
-    print(refresh(limit=200, budget_seconds=180.0, only_tickers=tickers, priority=True))
+    print(refresh(limit=200, budget_seconds=600.0, only_tickers=tickers, priority=False))
 
 
 if __name__ == "__main__":  # pragma: no cover

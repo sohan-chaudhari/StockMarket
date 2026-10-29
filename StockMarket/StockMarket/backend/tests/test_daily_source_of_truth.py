@@ -104,6 +104,23 @@ def test_provider_refresh_runs_after_the_close():
     assert "_reconcile_daily_from_quote" in body
 
 
+def test_the_daily_refresher_never_uses_the_priority_path():
+    """priority=True bypasses the shared limiter; the broker then answers 0 rows.
+
+    Measured 2026-10-29: with priority=True the first call returned 2 rows and every
+    call after it returned 0 rows in 0.00 s, so a 3-ticker run wrote one row and looked
+    like missing data. With the default pacing each call blocks ~15 s and returns data.
+    """
+    i = SRC.index("async def _daily_bar_refresh_loop(")
+    body = SRC[i:SRC.index("\nasync def ", i + 10)]
+    assert "_dpr.refresh, 60, 240.0, 3" in body, "the call must use positional args, no priority"
+    mod = (BK / "daily_provider_refresh.py").read_text(encoding="utf-8")
+    assert "priority=False" in mod[mod.index("def main():"):]
+
+
+
+
+
 # --------------------------------------------------------------------------- #
 # 4. provider candle validation -- never write an impossible daily
 # --------------------------------------------------------------------------- #

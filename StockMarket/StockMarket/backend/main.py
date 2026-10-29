@@ -10255,11 +10255,16 @@ async def _daily_bar_refresh_loop():
                 now_ist = database.get_ist_now()
                 if (now_ist.hour, now_ist.minute) >= (15, 35):
                     await asyncio.to_thread(_reconcile_daily_from_quote)
-                    if time.monotonic() - _last_provider_pass >= 600:
+                    if time.monotonic() - _last_provider_pass >= 300:
                         _last_provider_pass = time.monotonic()
                         try:
                             import daily_provider_refresh as _dpr
-                            r = await asyncio.to_thread(_dpr.refresh, 120, 60.0, 3)
+                            # priority=False on purpose: the priority path bypasses the
+                            # shared limiter and the broker then returns 0 rows for every
+                            # call after the first (measured 2026-10-29). A paced call
+                            # blocks ~15 s inside the thread and always returns data, so
+                            # the budget -- not a tick count -- bounds the pass.
+                            r = await asyncio.to_thread(_dpr.refresh, 60, 240.0, 3)
                             if r.get("rows"):
                                 print(f"[ProviderDaily] wrote {r['rows']} 1D row(s) from "
                                       f"ONE_DAY ({r['tickers']}/{r['candidates']} "
