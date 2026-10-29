@@ -6716,6 +6716,15 @@ def _sync_repair_recent_bg(ticker: str, now, sync_key: str) -> None:
     did, so a failing provider still backs off instead of retry-storming.
     """
     from database import SessionLocal
+    from historical_service import BACKGROUND_PROVIDER_SLOTS
+    # Do not add another thread to the provider queue: each waiter holds a DB session
+    # while it blocks, and enough of them exhaust the pool so that every request --
+    # including /api/health -- waits pool_timeout. If the slots are taken, this ticker
+    # simply stays with the job queue, which retries it with priority.
+    if not BACKGROUND_PROVIDER_SLOTS.acquire(blocking=False):
+        print(f"[SyncRepair] {ticker} 5m skipped: {BACKGROUND_PROVIDER_SLOTS._initial_value} "
+              f"background provider slot(s) busy")
+        return
     _db = SessionLocal()
     try:
         if _sync_repair_recent(_db, ticker, now):
@@ -6727,6 +6736,10 @@ def _sync_repair_recent_bg(ticker: str, now, sync_key: str) -> None:
     finally:
         try:
             _db.close()
+        except Exception:
+            pass
+        try:
+            BACKGROUND_PROVIDER_SLOTS.release()
         except Exception:
             pass
 

@@ -236,7 +236,20 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
     stats = {"candidates": 0, "tickers": 0, "rows": 0, "skipped": 0,
              "errors": 0, "elapsed": 0.0, "reason": ""}
     db = None
+    provider_slot = False
     try:
+        # Share the background provider budget: a waiting call holds a DB session, and
+        # enough of those exhaust the pool for every request (see
+        # historical_service.BACKGROUND_PROVIDER_SLOTS).
+        try:
+            from historical_service import BACKGROUND_PROVIDER_SLOTS
+            provider_slot = BACKGROUND_PROVIDER_SLOTS.acquire(timeout=0.5)
+        except Exception:
+            provider_slot = True          # unknown -> behave as before
+        if not provider_slot:
+            stats["reason"] = "provider_busy"
+            return stats
+
         svc = _get_service()
         if not getattr(svc, "is_logged_in", False):
             try:
@@ -310,6 +323,12 @@ def refresh(limit: int = 120, budget_seconds: float = 60.0, days_back: int = 1,
         if db is not None:
             try:
                 db.close()
+            except Exception:
+                pass
+        if provider_slot:
+            try:
+                from historical_service import BACKGROUND_PROVIDER_SLOTS
+                BACKGROUND_PROVIDER_SLOTS.release()
             except Exception:
                 pass
     return stats

@@ -125,6 +125,26 @@ def test_the_ondemand_fill_is_a_thread_not_a_background_task():
     assert "_spawn_ondemand_fill(clean_ticker, interval, fill_start, now)" in route
 
 
+def test_background_provider_work_is_bounded():
+    """Each provider waiter holds a DB session, so an unbounded burst empties the pool
+    and then EVERY request waits pool_timeout (measured: /api/health timed out at 15 s
+    while 7 backends sat 'idle in transaction')."""
+    src = (pathlib.Path(__file__).resolve().parents[1] / "historical_service.py").read_text(
+        encoding="utf-8", errors="replace")
+    assert "BACKGROUND_PROVIDER_SLOTS = threading.BoundedSemaphore(" in src
+    assert 'os.getenv("BG_PROVIDER_SLOTS", "2")' in src
+
+    body = _code_only(_function_body("_sync_repair_recent_bg"))
+    assert "BACKGROUND_PROVIDER_SLOTS.acquire(blocking=False)" in body, (
+        "a 5m repair must skip rather than queue behind the provider")
+    assert "BACKGROUND_PROVIDER_SLOTS.release()" in body
+
+    dpr = (pathlib.Path(__file__).resolve().parents[1] / "daily_provider_refresh.py").read_text(
+        encoding="utf-8", errors="replace")
+    assert "BACKGROUND_PROVIDER_SLOTS.acquire(timeout=0.5)" in dpr
+    assert 'stats["reason"] = "provider_busy"' in dpr
+
+
 def test_no_endpoint_inlines_a_historical_call_in_a_request():
     """Belt and braces: no chart endpoint may call the provider directly."""
     for name in ("_stock_data_range_core", "get_intraday_paginated",

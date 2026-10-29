@@ -123,6 +123,15 @@ _RATE_LIMIT_BACKOFF_SEC = float(os.getenv("HIST_BACKOFF_SEC", "90"))
 
 _rate_limit_until = 0.0
 _limiter_lock = threading.Lock()
+
+# Only a few BACKGROUND jobs may sit inside a provider call at once. Each one holds a
+# DB session while it waits (the provider paces at ~15 s and can cool down for 90 s),
+# so an unbounded burst empties the connection pool and then EVERY request waits
+# pool_timeout=10 s. Measured 2026-10-29 20:37 on production: /api/health timed out at
+# 15 s while 7 backends sat "idle in transaction" for up to two minutes and ~10 threads
+# queued inside _acquire_slot. Skipping is always safe -- the job queue re-queues it.
+BACKGROUND_PROVIDER_SLOTS = threading.BoundedSemaphore(
+    max(1, int(os.getenv("BG_PROVIDER_SLOTS", "2"))))
 _next_slot = 0.0            # earliest time the next call may start
 _tokens = float(_HISTORICAL_BURST)
 
