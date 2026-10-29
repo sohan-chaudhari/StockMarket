@@ -6226,6 +6226,12 @@ def _stock_data_range_core(ticker: str, range: str, db) -> list:
     range_days = {"1M": 30, "3M": 90, "6M": 180, "1Y": 365}.get(range.upper())
     clean_ticker = ticker.strip().upper().replace('.NS', '').replace('.BO', '')
 
+    # Opening the daily chart repairs the daily exactly as opening an intraday chart
+    # repairs the 5m: rebuild from our own 5m now, and (outside market hours) ask the
+    # exchange in the background. Cheap when there is nothing to do -- one indexed
+    # count -- which is why it is safe to run on every chart load.
+    _ensure_daily_on_open(clean_ticker, db)
+
     def _get_target_latest_trading_day(now_dt: datetime) -> date:
         d = now_dt.date()
         if d.weekday() < 5 and d not in NSE_HOLIDAYS and (now_dt.hour, now_dt.minute) >= (15, 30):
@@ -7427,6 +7433,11 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
                         print(f"[BackfillJob] queued {clean_ticker} 5m ({_js.date()}..{_je.date()})")
                 except Exception:
                     pass
+
+            # The daily gets the same on-open treatment as the 5m above: a derived or
+            # wrong close is not a "missing day", so the day-level gap check in the
+            # daily endpoint could never repair it. Guarded by one indexed count.
+            _ensure_daily_on_open(clean_ticker, db)
 
             if interval in DERIVED_FROM_5M:
                 # Derived timeframes are rebuilt from stored 5m (see the
@@ -9687,7 +9698,8 @@ def _session_coverage_min_bars(now_ist=None, floor: int = 3, cap: int = 70) -> i
         return 3
 
 
-def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
+def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70,
+                             ticker: Optional[str] = None) -> int:
     """Rewrite the 1D candle from our own stored 5m series -- for EVERY ticker.
 
     Why (measured 2026-10-28, verified against the exchange tick itself):
@@ -9752,6 +9764,7 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
                 FROM candles c
                 WHERE c.timeframe = '5m'
                   AND c.timestamp >= :s AND c.timestamp <= :e
+                  AND (:tkr IS NULL OR c.ticker = :tkr)
                   AND c.open > 0 AND c.high > 0 AND c.low > 0 AND c.close > 0
                   AND c.high >= GREATEST(c.open, c.close) - 0.0001
                   AND c.low  <= LEAST(c.open, c.close)  + 0.0001
@@ -9788,7 +9801,8 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70) -> int:
                    data_source = '5M_AGG',
                    is_backfilled = false
              WHERE candles.data_source IS DISTINCT FROM 'ANGELONE'
-        """), {"s": start, "e": end, "min_bars": int(min_bars)})
+        """), {"s": start, "e": end, "min_bars": int(min_bars),
+               "tkr": (ticker.strip().upper() if ticker else None)})
         db.commit()
         n = res.rowcount or 0
         if n:
@@ -9948,6 +9962,88 @@ def _reconcile_daily_from_quote(limit: int = 400) -> int:
     except Exception as e:
         print(f"[QuoteDaily] error: {e}")
     return fixed
+
+
+# --- on-open daily repair ------------------------------------------------------
+# Opening a ticker already repairs its 5m (the `chart_open` enqueue in
+# get_intraday_paginated). The daily had no equivalent: the day-level gap check in
+# _stock_data_range_core only fires when a DAY is missing, and a derived or wrong
+# close is not a missing day -- so CUPID served 316.00 instead of the exchange's
+# 314.55 for as long as that row existed.
+_daily_ondemand_lock = threading.Lock()
+_daily_ondemand_inflight: set = set()
+_DAILY_ONDEMAND_MAX_THREADS = 4
+
+
+def _daily_recent_needs_exchange(ticker: str, db, days: int = 7) -> bool:
+    """True when this ticker's recent 1D rows are missing or not from the exchange."""
+    from sqlalchemy import text as sa_text
+    start = datetime.combine(database.get_ist_now().date() - timedelta(days=days),
+                             datetime.min.time())
+    row = db.execute(sa_text("""
+        SELECT COUNT(*) AS total,
+               COUNT(*) FILTER (WHERE data_source = 'ANGELONE') AS from_exchange
+          FROM candles
+         WHERE ticker = :t AND timeframe = '1D' AND close > 0 AND timestamp >= :s
+    """), {"t": ticker, "s": start}).fetchone()
+    total = int(row[0] or 0) if row else 0
+    from_exchange = int(row[1] or 0) if row else 0
+    return total == 0 or from_exchange < total
+
+
+def _spawn_daily_provider_refresh(ticker: str) -> bool:
+    """Ask the exchange for this ticker's dailies, off the request path.
+
+    A paced provider call blocks ~15 s, so it must never sit in a chart load. The
+    in-flight set stops repeated opens of the same ticker from piling up, and the
+    thread cap keeps the shared provider quota available for the 5m repair queue.
+    """
+    key = (ticker or "").strip().upper()
+    if not key:
+        return False
+    with _daily_ondemand_lock:
+        if key in _daily_ondemand_inflight or len(_daily_ondemand_inflight) >= _DAILY_ONDEMAND_MAX_THREADS:
+            return False
+        _daily_ondemand_inflight.add(key)
+
+    def _run():
+        try:
+            import daily_provider_refresh as dpr
+            r = dpr.refresh(limit=1, budget_seconds=60.0, days_back=7,
+                            only_tickers=[key])
+            if r.get("rows"):
+                print(f"[ProviderDaily] on-open {key}: wrote {r['rows']} row(s)")
+        except Exception as e:
+            print(f"[ProviderDaily] on-open {key} error: {e}")
+        finally:
+            with _daily_ondemand_lock:
+                _daily_ondemand_inflight.discard(key)
+
+    try:
+        threading.Thread(target=_run, daemon=True, name=f"dpr-{key}").start()
+        return True
+    except Exception:
+        with _daily_ondemand_lock:
+            _daily_ondemand_inflight.discard(key)
+        return False
+
+
+def _ensure_daily_on_open(ticker: str, db) -> None:
+    """Repair this ticker's daily because its chart was opened. Never raises.
+
+    1. rebuild from our own 5m immediately (free, DB only, coverage-gated);
+    2. outside market hours, also ask the exchange in the background for the
+       authoritative row. During the session the tick path already does this within
+       ~2 minutes without spending any provider quota.
+    """
+    try:
+        if not ticker or not _daily_recent_needs_exchange(ticker, db):
+            return
+        _reconcile_daily_from_5m(2, _session_coverage_min_bars(), ticker=ticker)
+        if not is_market_open_now():
+            _spawn_daily_provider_refresh(ticker)
+    except Exception as e:
+        print(f"[DailyOnOpen] {ticker}: {e}")
 
 
 def _backfill_daily_from_5m(days_back: int = 10) -> int:

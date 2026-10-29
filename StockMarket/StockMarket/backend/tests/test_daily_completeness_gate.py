@@ -13,7 +13,7 @@ SRC = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text(
 
 
 def test_completeness_threshold():
-    m = re.search(r"def _reconcile_daily_from_5m\(days_back: int = \d+, min_bars: int = (\d+)\)",
+    m = re.search(r"def _reconcile_daily_from_5m\(days_back: int = \d+, min_bars: int = (\d+)",
                   SRC)
     assert m, "signature not found"
     assert int(m.group(1)) >= 70, "min_bars must mean a complete session (75 bars), got %s" % m.group(1)
@@ -29,10 +29,16 @@ def test_threshold_is_documented_as_completeness():
 
 
 def test_no_caller_lowers_the_threshold():
-    # nothing may pass a smaller min_bars and silently re-open the bug
-    for m in re.finditer(r"_reconcile_daily_from_5m\(([^)]*)\)", SRC):
-        args = m.group(1)
-        vals = [v for v in args.split(",") if "min_bars" in v]
-        for v in vals:
-            n = re.search(r"(\d+)", v)
-            assert n and int(n.group(1)) >= 70, "caller passes a low min_bars: " + args
+    # nothing may pass a small SECOND positional arg (min_bars) and silently re-open
+    # the bug. Covers both `fn(a, b)` and `asyncio.to_thread(fn, a, b)` call shapes,
+    # and matches the parameter by name so `_session_coverage_min_bars` cannot alias.
+    calls = re.findall(r"_reconcile_daily_from_5m[,(]\s*([^)\n]*)", SRC)
+    assert len(calls) >= 3, "expected the definition, the loop calls and the on-open call"
+    for args in calls:
+        parts = [p.strip() for p in args.split(",")]
+        if len(parts) >= 2 and parts[1].isdigit():
+            assert int(parts[1]) >= 60, "caller passes a low min_bars: " + args
+        for kw in parts:
+            m = re.match(r"min_bars\s*=\s*(\d+)$", kw)
+            if m:
+                assert int(m.group(1)) >= 60, "caller passes a low min_bars: " + args

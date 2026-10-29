@@ -93,6 +93,75 @@ def test_quote_path_skips_indices_and_inconsistent_ticks():
 
 
 # --------------------------------------------------------------------------- #
+# 3b. opening a ticker must repair BOTH the 5m and the daily
+# --------------------------------------------------------------------------- #
+
+def test_the_daily_chart_endpoint_repairs_on_open():
+    i = SRC.index("def _stock_data_range_core(")
+    body = SRC[i:SRC.index("def ", SRC.index("records = _query_candles_1d()", i))]
+    assert "_ensure_daily_on_open(clean_ticker, db)" in body
+    # and the repair must land BEFORE the rows are read, so the response shows it
+    assert body.index("_ensure_daily_on_open") < body.index("records = _query_candles_1d()")
+
+
+def test_the_intraday_endpoint_repairs_the_daily_on_open():
+    i = SRC.index("def get_intraday_paginated(")
+    body = SRC[i:i + 40000]
+    assert "_ensure_daily_on_open(clean_ticker, db)" in body
+    assert 'reason="chart_open"' in body, "the 5m enqueue must still be there"
+
+
+def test_the_on_open_repair_is_scoped_to_one_ticker():
+    """A chart open must never trigger a universe-wide pass."""
+    i = SRC.index("def _reconcile_daily_from_5m(")
+    body = SRC[i:i + 6000]
+    assert "(:tkr IS NULL OR c.ticker = :tkr)" in body
+
+
+class _Row:
+    def __init__(self, vals):
+        self._v = vals
+
+    def __getitem__(self, i):
+        return self._v[i]
+
+
+class _CountDB:
+    def __init__(self, total, angelone):
+        self._r = _Row((total, angelone))
+        self.params = None
+
+    def execute(self, stmt, params=None):
+        self.params = params
+        return self
+
+    def fetchone(self):
+        return self._r
+
+
+@pytest.mark.parametrize("total,angelone,expected", [
+    (0, 0, True),     # nothing in the window -> needs work
+    (5, 5, False),    # every day already from the exchange -> nothing to do
+    (5, 3, True),     # some days still derived -> repair
+])
+def test_daily_needs_exchange_detection(total, angelone, expected):
+    assert main._daily_recent_needs_exchange("CUPID", _CountDB(total, angelone)) is expected
+
+
+def test_the_on_open_provider_call_never_blocks_the_chart():
+    """A paced provider call blocks ~15 s, so it must run on a daemon thread, and only
+    when the tick path cannot do the job for free (i.e. outside market hours)."""
+    i = SRC.index("def _ensure_daily_on_open(")
+    body = SRC[i:SRC.index("\ndef ", i + 10)]
+    assert "threading.Thread(target=_run, daemon=True" in SRC
+    assert "if not is_market_open_now():" in body
+    j = SRC.index("def _spawn_daily_provider_refresh(")
+    spawn = SRC[j:SRC.index("\ndef ", j + 10)]
+    assert "_daily_ondemand_inflight" in spawn, "repeated opens must not pile up calls"
+    assert "_DAILY_ONDEMAND_MAX_THREADS" in spawn, "the shared provider quota must be capped"
+
+
+# --------------------------------------------------------------------------- #
 # 3. the ONE_DAY provider refresher is wired in, after the close
 # --------------------------------------------------------------------------- #
 
