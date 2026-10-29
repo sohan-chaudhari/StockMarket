@@ -98,9 +98,10 @@ def test_quote_path_skips_indices_and_inconsistent_ticks():
 
 def test_provider_refresh_runs_after_the_close():
     i = SRC.index("async def _daily_bar_refresh_loop(")
-    body = SRC[i:i + 2600]
+    body = SRC[i:SRC.index("\nasync def ", i + 10)]
     assert "daily_provider_refresh" in body
-    assert "(15, 35)" in body, "ONE_DAY must only be consulted after the close"
+    assert "(15, 35)" in body, "the quote path must only run on the session's own day"
+    assert "hm < (9, 10)" in body, "ONE_DAY is date-keyed, so it may also run overnight"
     assert "_reconcile_daily_from_quote" in body
 
 

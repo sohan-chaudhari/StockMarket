@@ -10253,8 +10253,17 @@ async def _daily_bar_refresh_loop():
                 # (CUPID 2026-10-28: 316.00 stored vs 314.55 on the exchange). Ticks
                 # first -- exact and free -- then ONE_DAY for the tickers nobody streams.
                 now_ist = database.get_ist_now()
-                if (now_ist.hour, now_ist.minute) >= (15, 35):
+                hm = (now_ist.hour, now_ist.minute)
+                # The tick still holds TODAY's finished OHLC, so the quote path is only
+                # valid on the same calendar day as the session it describes -- never
+                # overnight, where it would stamp yesterday's session onto today's row.
+                if hm >= (15, 35):
                     await asyncio.to_thread(_reconcile_daily_from_quote)
+                # ONE_DAY is keyed by the dates it returns, so it is safe outside the
+                # session as well (including before the open). The overnight hours are
+                # what let the universe converge instead of limping at a few hundred a
+                # night, and the provider paces every call at ~15 s anyway.
+                if hm >= (15, 35) or hm < (9, 10):
                     if time.monotonic() - _last_provider_pass >= 300:
                         _last_provider_pass = time.monotonic()
                         try:
