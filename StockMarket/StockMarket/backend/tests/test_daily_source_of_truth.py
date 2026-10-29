@@ -228,9 +228,36 @@ def test_candidates_only_return_rows_that_still_need_the_exchange():
     i = src.index("def candidates(")
     body = src[i:src.index("def _upsert(", i)]
     sql = body[body.index('sa_text("""') + 11:body.index('"""', body.index('sa_text("""') + 12)]
-    assert "HAVING COUNT(c.ticker) = 0" in sql, "a never-written ticker must be included"
-    assert "FILTER (WHERE c.data_source IN ('5M_AGG', 'BACKFILL', 'YFINANCE'))" in sql
+    assert "NOT EXISTS" in sql, "a never-written ticker must be included"
+    assert "c.data_source IN ('5M_AGG', 'BACKFILL', 'YFINANCE')" in sql
     assert "ANGELONE" not in sql, "rows already from the exchange must not be re-fetched"
+    # `timestamp::date` cannot use the index and measured 30 s instead of 2.9 s
+    assert "::date" not in sql
+
+
+def test_the_candidate_list_is_fetched_once_per_cycle_not_once_per_pass(fakes):
+    """Each pass must spend its time on the provider, not on the queue query."""
+    calls = []
+
+    def _fake_candidates(db, start_day, today, limit):
+        calls.append(limit)
+        return ["AAA", "BBB", "CCC"]
+
+    original = dpr.candidates
+    dpr.candidates = _fake_candidates
+    try:
+        class _Svc(_FakeSvc):
+            def get_historical_candles(self, **kwargs):
+                return [{"timestamp": datetime(2026, 10, 28), "open": 10.0, "high": 11.0,
+                         "low": 9.0, "close": 10.5, "volume": 100}]
+
+        dpr._service_override = _Svc([])
+        first = dpr.refresh(limit=1, budget_seconds=5.0)
+        second = dpr.refresh(limit=1, budget_seconds=5.0)
+    finally:
+        dpr.candidates = original
+    assert first["tickers"] == 1 and second["tickers"] == 1
+    assert len(calls) == 1, "the queue query ran %d times" % len(calls)
 
 
 def test_the_real_service_is_the_instance_not_the_module():
