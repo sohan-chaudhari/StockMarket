@@ -6889,6 +6889,21 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
     max_stored_ts = max(stored_dict.keys()) if stored_dict else 0
     min_stored_ts = min(stored_dict.keys()) if stored_dict else 0
 
+    # A young listing has no weekly/monthly series of its own -- its 1W/1M chart IS the
+    # 1D series resampled -- so an inline 'max' download buys nothing and cost 20 s on
+    # JPL's first open. Below 60 daily rows the fill is left to
+    # _weekly_monthly_backfill, which runs it in the background. Computed ONCE, before
+    # either branch, because both use it (reading it from the 1M branch while it was
+    # defined inside the 1W branch raised NameError -> HTTP 500 on 1M).
+    try:
+        _daily_rows = db.query(func.count(models.Candle.id)).filter(
+            models.Candle.ticker.in_(db_tickers),
+            models.Candle.timeframe == '1D',
+        ).scalar() or 0
+    except Exception:
+        _daily_rows = 10 ** 6          # unknown -> behave as before (no regression)
+    _too_young_for_inline = _daily_rows < 60
+
     # ── LAYER 2 (1W only): fill gaps in stored 1W using yfinance interval='1wk' ────────────
     # These are REAL weekly OHLCV candles (not resampled), so we store them permanently to DB.
     if target_tf == "1W":
@@ -6914,18 +6929,7 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         _resample_weekly_key = f"{clean}:resample1W"
         _weekly_claimed = False
         _weekly_got_data = False
-        # A young listing has no weekly series of its own -- its 1W chart IS the 1D
-        # series resampled -- so an inline 'max' download buys nothing and cost 20 s on
-        # JPL's first open. Below 60 daily rows the fill is left to
-        # _weekly_monthly_backfill, which runs it in the background.
-        try:
-            _daily_rows = db.query(func.count(models.Candle.id)).filter(
-                models.Candle.ticker.in_(db_tickers),
-                models.Candle.timeframe == '1D',
-            ).scalar() or 0
-        except Exception:
-            _daily_rows = 10 ** 6          # unknown -> behave as before (no regression)
-        _too_young_for_inline = _daily_rows < 60
+        # depth guard (`_too_young_for_inline`) is computed once, above both branches
         if _weekly_tail_gap and not _too_young_for_inline and not _is_yfinance_failed(clean):
             if _try_reserve_backfill(_resample_weekly_key):
                 if _try_consume_ondemand_budget():
@@ -7015,9 +7019,8 @@ def _resample_gap_fill(clean: str, target_tf: str, stored_candles: list, db_tick
         _resample_monthly_key = f"{clean}:resample1M"
         _monthly_claimed = False
         _monthly_got_data = False
-        # Same depth guard as 1W above: a young listing's monthly chart is its 1D series
-        # resampled, so no inline 'max' download.
-        _too_young_for_inline_m = _daily_rows < 60
+        # Same depth guard as 1W above (computed once, before both branches).
+        _too_young_for_inline_m = _too_young_for_inline
         if _monthly_tail_gap and not _too_young_for_inline_m and not _is_yfinance_failed(clean):
             if _try_reserve_backfill(_resample_monthly_key):
                 if _try_consume_ondemand_budget():

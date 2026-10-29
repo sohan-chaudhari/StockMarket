@@ -103,6 +103,17 @@ def test_enqueue_reuses_an_active_job_instead_of_adding_another():
     assert "if reason in ('chart_open', 'history_page') and _recent[1] in (" in body
 
 
+def test_the_depth_guard_is_computed_once_before_both_branches():
+    """Regression: computed inside the 1W branch only, it raised NameError on 1M
+    (JPL returned HTTP 500). It must be defined before both branches."""
+    body = _function_body("_resample_gap_fill")
+    w = body.index('if target_tf == "1W":')
+    m = body.index('if target_tf == "1M":')
+    d = body.index("_daily_rows = db.query(func.count(")
+    assert d < w < m
+    assert "_too_young_for_inline_m = _too_young_for_inline" in body
+
+
 def test_no_endpoint_inlines_a_historical_call_in_a_request():
     """Belt and braces: no chart endpoint may call the provider directly."""
     for name in ("_stock_data_range_core", "get_intraday_paginated",
