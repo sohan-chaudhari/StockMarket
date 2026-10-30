@@ -11793,8 +11793,11 @@ async def startup():
                 try:
                     base_price_ms = await asyncio.to_thread(_sync_daily_base_price)
                     print(f"[DailyPreFill] base_price sync completed in {base_price_ms}ms")
-                    global _all_stocks_cache_bytes
-                    _all_stocks_cache_bytes = None
+                    global _all_stocks_cache_ts
+                    # Mark STALE rather than empty: with stale-while-revalidate the next
+                    # request keeps serving the previous list and one background thread
+                    # rebuilds it, so no visitor waits for the rebuild.
+                    _all_stocks_cache_ts = 0
                 except Exception as _sync_err:
                     print(f"[DailyPreFill] base_price sync error: {_sync_err}")
 
