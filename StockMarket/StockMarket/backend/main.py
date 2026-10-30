@@ -1343,13 +1343,18 @@ def get_stocks_version():
 
     return {"version": f"{sync_date}T18:00:01|{_UNIVERSE_REVISION}"}
 
-@app.get("/api/all-stocks")
-def get_all_stocks(db: Session = Depends(get_db)):
-    global _all_stocks_cache_bytes, _all_stocks_cache_ts
-    now = time.time()
-    if _all_stocks_cache_bytes is not None and (now - _all_stocks_cache_ts) < _ALL_STOCKS_CACHE_TTL:
-        return Response(content=_all_stocks_cache_bytes, media_type="application/json")
+_all_stocks_build_lock = threading.Lock()
+_all_stocks_refreshing = False
 
+
+def _build_all_stocks_payload(db) -> Optional[bytes]:
+    """Build the /api/all-stocks JSON payload (bytes). Pure refactor of the old body.
+
+    Kept byte-for-byte equivalent to the inline version: same query, same NSE-preferred
+    de-duplication, same fields and rounding. It is only moved into a function so the
+    same code can run either inline (first request after a restart) or in a background
+    thread (every later refresh).
+    """
     # Search universe: EVERY instrument known in `stock_metadata`, collapsed to
     # one row per ticker (NSE preferred) below. A genuinely listed company must
     # be searchable even when its `is_active` flag is stale AND it has no stored
@@ -1409,9 +1414,75 @@ def get_all_stocks(db: Session = Depends(get_db)):
             "changePercent": round(float(chg_pct), 2),
             "change_pct": round(float(chg_pct), 2)
         })
-    _all_stocks_cache_bytes = json.dumps(results).encode('utf-8')
-    _all_stocks_cache_ts = now
-    return Response(content=_all_stocks_cache_bytes, media_type="application/json")
+    return json.dumps(results).encode('utf-8')
+
+
+def _all_stocks_refresh_worker() -> None:
+    """Rebuild the all-stocks payload OFF the request path."""
+    global _all_stocks_cache_bytes, _all_stocks_cache_ts, _all_stocks_refreshing
+    from database import SessionLocal
+    db = None
+    try:
+        db = SessionLocal()
+        payload = _build_all_stocks_payload(db)
+        if payload is not None:
+            _all_stocks_cache_bytes = payload
+            _all_stocks_cache_ts = time.time()
+    except Exception as e:
+        print(f"[AllStocks] background rebuild failed (serving the previous list): {e}")
+    finally:
+        try:
+            if db is not None:
+                db.close()
+        except Exception:
+            pass
+        _all_stocks_refreshing = False
+
+
+def _schedule_all_stocks_refresh() -> None:
+    """Start at most ONE background rebuild, whatever the request pressure."""
+    global _all_stocks_refreshing
+    with _all_stocks_build_lock:
+        if _all_stocks_refreshing:
+            return
+        _all_stocks_refreshing = True
+    try:
+        threading.Thread(target=_all_stocks_refresh_worker, daemon=True,
+                         name="all-stocks-refresh").start()
+    except Exception as e:
+        print(f"[AllStocks] could not start refresh thread: {e}")
+        _all_stocks_refreshing = False
+
+
+@app.get("/api/all-stocks")
+def get_all_stocks(db: Session = Depends(get_db)):
+    """Full searchable universe (one row per ticker).
+
+    STALE-WHILE-REVALIDATE. This used to rebuild INLINE whenever the 60 s cache
+    expired: 8,282 ORM rows + a 1.27 MB JSON, plus `_get_all_market_prices()`, which
+    can trigger the 30-day 1D baseline query. Measured 2026-10-30: 6.4 s cold and
+    **47-58 s** during the market close, on a request EVERY page load hits.
+
+    Now an expired cache is served immediately and refreshed in a single background
+    thread, so a user never waits for a rebuild. The payload is byte-identical to
+    before (same fields, same rounding, same ordering) and the very first request
+    after a restart still builds inline, because there is nothing to serve yet.
+    """
+    global _all_stocks_cache_bytes, _all_stocks_cache_ts
+    cached = _all_stocks_cache_bytes
+    if cached is not None:
+        if (time.time() - _all_stocks_cache_ts) >= _ALL_STOCKS_CACHE_TTL:
+            _schedule_all_stocks_refresh()
+        return Response(content=cached, media_type="application/json")
+
+    # Cold start only (the startup hook normally pre-populates this).
+    payload = _build_all_stocks_payload(db)
+    if payload is None:
+        payload = b"[]"
+    _all_stocks_cache_bytes = payload
+    _all_stocks_cache_ts = time.time()
+    return Response(content=payload, media_type="application/json")
+
 
 @app.get("/api/stock-data", response_model=List[schemas.StockDataResponse])
 
