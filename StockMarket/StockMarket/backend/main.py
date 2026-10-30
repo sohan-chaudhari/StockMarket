@@ -10904,46 +10904,24 @@ async def startup():
 
     # Pre-populate all-stocks cache so first request doesn't hit DB
     try:
+        # Use the CANONICAL builder. The old code had its own copy that did NOT
+        # de-duplicate NSE/BSE rows, so after every restart /api/all-stocks served
+        # 8,282 entries (duplicate tickers, 1.9 MB) until the 60 s cache expired and
+        # the real endpoint overwrote it with 5,743. One builder means the payload is
+        # the same before and after a restart.
         from database import SessionLocal as _CacheSession
         _cache_db = _CacheSession()
-        stocks = _cache_db.query(models.StockMetadata).all()
         try:
-            from sqlalchemy import text as _sa_text
-            rows = _cache_db.execute(_sa_text(
-                "SELECT DISTINCT ON (ticker) ticker, close FROM candles "
-                "WHERE timeframe='1D' AND close > 0 ORDER BY ticker, timestamp DESC"
-            )).fetchall()
-            latest_close = {r[0]: float(r[1]) for r in rows}
-        except Exception:
-            latest_close = {}
-        
-        market_prices = {}
-        try:
-            market_prices = _get_all_market_prices()
-        except Exception:
-            pass
-
-        _all_stocks_results = []
-        for s in stocks:
-            tkr_clean = s.ticker.upper().replace('.NS', '').replace('.BO', '')
-            pdata = market_prices.get(tkr_clean, {})
-            base_price = pdata.get('current') or latest_close.get(s.ticker) or s.base_price or 0.0
-            chg = pdata.get('change', 0.0)
-            chg_pct = pdata.get('change_pct', 0.0)
-            _all_stocks_results.append({
-                "ticker": s.ticker,
-                "name": s.name,
-                "logo": _safe_logo(s.logo, ticker=s.ticker),
-                "exchange": s.exchange,
-                "basePrice": round(float(base_price), 2),
-                "change": round(float(chg), 2),
-                "changePercent": round(float(chg_pct), 2),
-                "change_pct": round(float(chg_pct), 2)
-            })
-        _all_stocks_cache_bytes = json.dumps(_all_stocks_results).encode('utf-8')
-        _all_stocks_cache_ts = time.time()
-        _cache_db.close()
-        print(f"[Startup] Pre-populated all-stocks cache with {len(_all_stocks_results)} stocks ({len(_all_stocks_cache_bytes)} bytes)")
+            _as_payload = _build_all_stocks_payload(_cache_db)
+        finally:
+            try:
+                _cache_db.close()
+            except Exception:
+                pass
+        if _as_payload:
+            _all_stocks_cache_bytes = _as_payload
+            _all_stocks_cache_ts = time.time()
+            print(f"[Startup] Pre-populated all-stocks cache ({len(_all_stocks_cache_bytes)} bytes)")
     except Exception as e:
         print(f"[Startup] Could not pre-populate all-stocks cache: {e}")
 
