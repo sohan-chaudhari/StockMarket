@@ -8496,7 +8496,21 @@ async def get_screener(
 
         # ── 3. Fetch live prices (pass market_open=True so yfinance tries) ──
         market_open = is_market_open_now()
-        prices = await fetch_batch_live_data(stocks, market_open=market_open)
+        # CHUNKED price fetch. `fetch_batch_live_data` caps a single call at 50
+        # tickers ("[Live] Batch too large (300), truncating to 50"), so the screener
+        # only ever had live prices for the first 50 of its 300-ticker universe. The
+        # other 250 then depended entirely on the DB history fallback below — and
+        # whenever that query failed, they were dropped and the page showed
+        # "No stocks match your scan criteria" with no filters applied.
+        prices = {}
+        _BATCH = 50
+        for _i in range(0, len(stocks), _BATCH):
+            try:
+                _part = await fetch_batch_live_data(stocks[_i:_i + _BATCH], market_open=market_open)
+                if _part:
+                    prices.update(_part)
+            except Exception as _px_err:
+                print(f"[Screener] price batch {_i} failed: {_px_err}")
 
         # ── 4. Fetch historical data from DB for RSI + avg volume ────────────
         from datetime import timedelta
@@ -8507,35 +8521,68 @@ async def get_screener(
         meta_by_ticker: dict = {}
 
         def _fetch_screener_db_data():
-            # Metadata for ticker names and sectors
+            from types import SimpleNamespace as _NS
+
+            # Metadata for ticker names and sectors.
+            #
+            # ROLLBACK MATTERS HERE: a failed statement leaves the psycopg2 transaction
+            # in the ABORTED state, and every later query on this session then raises
+            # `InFailedSqlTransaction: current transaction is aborted`. That is exactly
+            # what emptied the historical caches below and produced the "No stocks
+            # found" pages. Rolling back keeps the rest of the request usable.
             try:
                 m_rows = db.query(models.StockMetadata).filter(models.StockMetadata.ticker.in_(stocks)).all()
                 for m in m_rows:
                     if m.ticker not in meta_by_ticker:
                         meta_by_ticker[m.ticker] = m
-            except Exception:
-                pass
+            except Exception as _meta_err:
+                print(f"[Screener] metadata query failed ({_meta_err}); rolling back")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
-            # 4a. Daily historical data for RSI + volume ratio — from candles(1D)
+            # 4a. Daily history for RSI + median volume.
+            #
+            # Only the newest 21 daily rows per ticker are needed, but this used to load
+            # the whole 60-day window as ORM objects: measured 111,028 rows / 22.61 s for
+            # a 3,151-ticker universe (1.29 s even for the 300-ticker default). A LATERAL
+            # join walks ix_candles_ticker_tf_ts per ticker and returns 21 rows each —
+            # measured 0.05 s for 300 tickers / 0.27 s for the full universe.
             cutoff = datetime.now(IST).date() - timedelta(days=60)
             cutoff_dt = datetime(cutoff.year, cutoff.month, cutoff.day)
-            all_historical = db.query(models.Candle).filter(
-                models.Candle.ticker.in_(stocks),
-                models.Candle.timeframe == '1D',
-                models.Candle.timestamp >= cutoff_dt,
-            ).order_by(models.Candle.timestamp.desc()).all()
+            try:
+                from sqlalchemy import text as _sa_text
+                _hist_rows = db.execute(_sa_text("""
+                    SELECT t.ticker, c.timestamp, c.open, c.close, c.volume
+                    FROM unnest(:tick) AS t(ticker)
+                    CROSS JOIN LATERAL (
+                        SELECT timestamp, open, close, volume
+                        FROM candles
+                        WHERE ticker = t.ticker
+                          AND timeframe = '1D'
+                          AND close > 0
+                          AND timestamp >= :cut
+                        ORDER BY timestamp DESC
+                        LIMIT 21
+                    ) c
+                    ORDER BY t.ticker, c.timestamp ASC
+                """), {"tick": list(stocks), "cut": cutoff_dt}).fetchall()
+            except Exception as _hist_err:
+                print(f"[Screener] history query failed ({_hist_err}); rolling back")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                _hist_rows = []
 
             grouped: dict = {}
-            for row in all_historical:
-                if row.ticker not in grouped:
-                    grouped[row.ticker] = []
-                if len(grouped[row.ticker]) < 21:
-                    grouped[row.ticker].append(row)
+            for r in _hist_rows:
+                grouped.setdefault(r[0], []).append(r)      # already ascending by time
 
-            for t, c_list in grouped.items():
-                c_list.reverse()
-                closes = [c.close for c in c_list if c.close and c.close > 0]
-                volumes = [c.volume for c in c_list if c.volume and c.volume > 0]
+            for t, rows in grouped.items():
+                closes = [float(x[3]) for x in rows if x[3] and x[3] > 0]
+                volumes = [int(x[4]) for x in rows if x[4] and x[4] > 0]
                 # MEDIAN, not mean. A handful of corrupt BACKFILL 1D rows carry
                 # absurd volumes (HDFCLIFE 2026-10-06 = 8,754,133,922; YESBANK =
                 # 24,973,353,469), and averaging turns those into an "average
@@ -8552,17 +8599,26 @@ async def get_screener(
                 # Latest STORED daily volume: the live quote from the REST poller
                 # and from the DB snapshot carries no volume, so without this the
                 # screener reports volume 0 and vol_ratio falls back to 1.0.
-                for _c in reversed(c_list):
-                    if _c.volume and _c.volume > 0:
-                        last_day_vol[t] = int(_c.volume)
+                for x in reversed(rows):
+                    if x[4] and x[4] > 0:
+                        last_day_vol[t] = int(x[4])
                         break
 
-            # 4b. Last candle for any ticker with no live price
-            tickers_missing = [t for t in stocks if not prices.get(t, {}).get("current_price")]
-            if tickers_missing:
-                for t in tickers_missing:
-                    if t in grouped and len(grouped[t]) > 0:
-                        last_candle_cache[t] = grouped[t][-1]  # most recent after reverse()
+            # 4b. Last candle for any ticker with no live price.
+            # SimpleNamespace keeps the call site (`sd.close`, `sd.open`, `sd.volume`)
+            # unchanged while avoiding ORM object construction.
+            for t in stocks:
+                if prices.get(t, {}).get("current_price"):
+                    continue
+                rows = grouped.get(t)
+                if rows:
+                    last = rows[-1]
+                    last_candle_cache[t] = _NS(
+                        close=float(last[3]),
+                        open=float(last[2] or 0) or float(last[3]),
+                        volume=int(last[4] or 0),
+                        timestamp=last[1],
+                    )
 
 
         await asyncio.to_thread(_fetch_screener_db_data)
