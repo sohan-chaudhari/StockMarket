@@ -10534,7 +10534,16 @@ async def _backfill_job_worker():
             market_open = is_market_open_now()
             await asyncio.to_thread(bj.ensure_table)
             batch = 1 if market_open else int(os.getenv("BACKFILL_WORKER_BATCH", "4"))
-            done = await asyncio.to_thread(bj.run_batch, batch)
+            # COOLDOWN-AWARE CLAIMING. The historical API's cooldown is account-wide and
+            # is hot whenever the prefill/sweep/worker together trip the broker's rate
+            # limit. While it is hot, a background job cannot fetch anyway -- it is
+            # claimed, refused by the cooldown check and re-queued ~20 s later, which is
+            # how single jobs accumulated 72 attempts without a single candle. Only
+            # user-triggered repairs (priority) bypass the cooldown, so only those are
+            # claimed while it is hot.
+            import historical_service as _hs_mod
+            _cool = _hs_mod.rate_limit_backoff_remaining()
+            done = await asyncio.to_thread(bj.run_batch, batch, None, _cool > 1)
             if done:
                 print(f"[BackfillWorker] {len(done)} job(s) processed (market_open={market_open})")
             await asyncio.to_thread(bj.cleanup)

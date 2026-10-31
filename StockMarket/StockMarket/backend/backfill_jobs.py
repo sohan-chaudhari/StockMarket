@@ -19,6 +19,7 @@ which owns the account-wide pacing, the shared cooldown and request dedup.
 """
 import datetime as _dt
 import os
+import re
 import random
 import threading
 import time
@@ -412,6 +413,35 @@ def enqueue(ticker, interval, range_start, range_end, exchange="NSE", reason="ga
         db.close()
 
 
+_KNOWN_TICKERS_CACHE = {"ts": 0.0, "set": frozenset()}
+_JUNK_SYMBOL_RE = re.compile(r"(INAV|NSETEST)", re.IGNORECASE)
+
+
+def _is_dead_symbol(db, ticker: str) -> bool:
+    """True for symbols that can never be backfilled, so no provider call is spent.
+
+    Measured 2026-10-31: 30 open jobs were for indicative-NAV / exchange-TEST symbols
+    (MID150INAV, 011NSETEST, G1NSETEST, ICICI2INAV ...) and 152 more for tickers with no
+    candle row at all. Each cost a full broker round trip, failed with "Ticker not found"
+    or "no candles returned", and competed with real repairs for the historical quota.
+    """
+    t = (ticker or "").strip().upper()
+    if not t:
+        return True
+    if _JUNK_SYMBOL_RE.search(t) or t.startswith("TEST"):
+        return True
+    now = time.time()
+    cache = _KNOWN_TICKERS_CACHE
+    if not cache["set"] or (now - cache["ts"]) > 600:
+        try:
+            rows = db.execute(text("SELECT DISTINCT ticker FROM stock_metadata")).fetchall()
+            cache["set"] = frozenset((r[0] or "").upper() for r in rows)
+            cache["ts"] = now
+        except Exception:
+            return False                     # never guess: treat as real on failure
+    return t not in cache["set"]
+
+
 def has_missing(db, ticker, interval, range_start, range_end, now=None) -> bool:
     """True when at least one expected bucket is genuinely missing.
 
@@ -477,7 +507,7 @@ def mark_absent(ticker, exchange, interval, buckets, reason, evidence=""):
         return 0
 
 
-def claim(worker_id, limit=1):
+def claim(worker_id, limit=1, priority_only=False):
     """Atomically lease up to `limit` due jobs. Safe across workers/restarts:
     a job is only claimable when queued, or when its lease has expired."""
     ensure_table()
@@ -489,6 +519,12 @@ def claim(worker_id, limit=1):
                 WHERE (status = 'queued' OR status = 'retry_wait' OR status = 'partially_complete'
                        OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < NOW())))
                   AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+                  -- priority_only: while the account-wide provider cooldown is
+                  -- hot, claim ONLY user-triggered repairs. Background jobs
+                  -- would otherwise be claimed, refused by the cooldown and
+                  -- re-queued every ~20 s -- which is how single jobs reached 72
+                  -- attempts without ever fetching a candle.
+                  AND (NOT :po OR priority)
                 ORDER BY priority DESC, COALESCE(next_attempt_at, created_at) ASC
                 LIMIT :n
                 FOR UPDATE SKIP LOCKED
@@ -502,7 +538,8 @@ def claim(worker_id, limit=1):
              WHERE j.id = due.id
             RETURNING j.id, j.ticker, j.exchange, j.interval, j.range_start, j.range_end,
                       j.attempts, j.priority
-        """), {"w": worker_id, "n": limit, "lease": JOB_LEASE_SEC}).fetchall()
+        """), {"w": worker_id, "n": limit, "lease": JOB_LEASE_SEC,
+                "po": bool(priority_only)}).fetchall()
         db.commit()
         return [dict(id=r[0], ticker=r[1], exchange=r[2], interval=r[3],
                      range_start=r[4], range_end=r[5], attempts=r[6], priority=bool(r[7]))
@@ -626,6 +663,14 @@ def run_job(job):
         floor = _pre_data_floor(db, job["ticker"], job["interval"], job["range_start"])
     finally:
         db.close()
+
+    # Dead symbol? Retire it BEFORE spending a provider call (see _is_dead_symbol).
+    if _is_dead_symbol(db, job["ticker"]):
+        finish(job["id"], "permanently_failed", fetched=0, persisted=0,
+               remaining=len(missing), expected=len(missing),
+               error="symbol is not a tradeable instrument (junk/test or not in stock_metadata)",
+               failure_kind="unsupported")
+        return "permanently_failed", {"reason": "dead_symbol"}
 
     expected_n = len(missing)
     if not missing:
@@ -872,7 +917,7 @@ def reap_stale(max_age_min=None):
         db.close()
 
 
-def run_batch(limit=3, worker_id=None):
+def run_batch(limit=3, worker_id=None, priority_only=False):
     """Claim and execute a bounded batch. Returns a small result summary."""
     worker_id = worker_id or f"w{os.getpid()}"
     try:
@@ -880,7 +925,7 @@ def run_batch(limit=3, worker_id=None):
     except Exception:
         pass
     out = []
-    for job in claim(worker_id, limit=limit):
+    for job in claim(worker_id, limit=limit, priority_only=priority_only):
         try:
             status, detail = run_job(job)
         except Exception as e:
