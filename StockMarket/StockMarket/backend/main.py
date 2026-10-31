@@ -8455,18 +8455,42 @@ async def get_screener(
 
             stocks = list(dict.fromkeys(sec_tickers + db_sec_tickers + map_tickers))
         else:
+            # THE "No stocks found" ROOT CAUSE lives here.
+            #
+            # The old form was:
+            #   SELECT DISTINCT ticker FROM stock_metadata
+            #   WHERE ticker IN (SELECT DISTINCT ticker FROM candles WHERE timeframe='1D')
+            #   ORDER BY ticker LIMIT 300
+            # It materialises DISTINCT over EVERY 1D row and measured **17.96 s** against
+            # the session's 30 s `statement_timeout`. Under any concurrent load it crossed
+            # 30 s, PostgreSQL cancelled it, and the psycopg2 transaction stayed ABORTED —
+            # after which every later query in the same session raised
+            # `InFailedSqlTransaction`. `stocks` then fell back to the 30 hardcoded names,
+            # the metadata/history lookups failed, and the page rendered
+            # "No stocks match your scan criteria" with no filter applied.
+            #
+            # An EXISTS probe walks ix_candles_ticker_tf_ts per ticker instead:
+            # measured **0.11 s** for the same 300 rows (5.25 s for all 5,303).
             try:
                 from sqlalchemy import text as _sa_txt
                 rows = await asyncio.to_thread(lambda: db.execute(_sa_txt(
-                    "SELECT DISTINCT ticker FROM stock_metadata "
-                    "WHERE ticker IN (SELECT DISTINCT ticker FROM candles WHERE timeframe = '1D') "
-                    "ORDER BY ticker LIMIT 300"
+                    "SELECT m.ticker FROM stock_metadata m "
+                    "WHERE EXISTS (SELECT 1 FROM candles c "
+                    "              WHERE c.ticker = m.ticker "
+                    "                AND c.timeframe = '1D' "
+                    "                AND c.timestamp >= NOW() - INTERVAL '30 days') "
+                    "ORDER BY m.ticker LIMIT 300"
                 )).fetchall())
                 stocks = list(dict.fromkeys([r[0] for r in rows]))
                 if len(stocks) < 30:
                     rows_fallback = await asyncio.to_thread(lambda: db.execute(_sa_txt("SELECT DISTINCT ticker FROM stock_metadata ORDER BY ticker LIMIT 300")).fetchall())
                     stocks = list(dict.fromkeys(stocks + [r[0] for r in rows_fallback]))
-            except Exception:
+            except Exception as _uni_err:
+                print(f"[Screener] universe query failed ({_uni_err}); rolling back")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
                 stocks = []
 
         if not search and not sector and (not stocks or len(stocks) < 10):
