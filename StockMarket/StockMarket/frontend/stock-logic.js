@@ -767,10 +767,12 @@ window.showTradeModal = showTradeModal;
           const pnlPrefix = pnl >= 0 ? '+' : '';
 
           // Badge styling for exit reason
+          // close_type and exit_reason are both sent; use whichever exists.
+          const _exitReason = pos.exit_reason || pos.close_type || '';
           let reasonBadge = '';
-          if (pos.exit_reason === 'TP_HIT') {
+          if (_exitReason === 'TP_HIT' || _exitReason === 'TP_EXECUTED') {
             reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">TP Hit</span>`;
-          } else if (pos.exit_reason === 'SL_HIT') {
+          } else if (_exitReason === 'SL_HIT' || _exitReason === 'SL_EXECUTED') {
             reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">SL Hit</span>`;
           } else {
             reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.72rem; font-weight:700; padding:3px 8px; border-radius:6px; white-space:nowrap;">Manual Close</span>`;
@@ -823,10 +825,12 @@ window.showTradeModal = showTradeModal;
           const pnlBorder = pnl >= 0 ? 'rgba(8, 153, 129,0.25)' : 'rgba(255,82,82,0.25)';
           const pnlPrefix = pnl >= 0 ? '+' : '';
 
+          // close_type and exit_reason are both sent; use whichever exists.
+          const _exitReason = pos.exit_reason || pos.close_type || '';
           let reasonBadge = '';
-          if (pos.exit_reason === 'TP_HIT') {
+          if (_exitReason === 'TP_HIT' || _exitReason === 'TP_EXECUTED') {
             reasonBadge = `<span style="background:rgba(8, 153, 129,0.12); border:1px solid rgba(8, 153, 129,0.3); color:#089981; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">TP</span>`;
-          } else if (pos.exit_reason === 'SL_HIT') {
+          } else if (_exitReason === 'SL_HIT' || _exitReason === 'SL_EXECUTED') {
             reasonBadge = `<span style="background:rgba(255,82,82,0.12); border:1px solid rgba(255,82,82,0.3); color:#FF5252; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">SL</span>`;
           } else {
             reasonBadge = `<span style="background:rgba(74,144,226,0.12); border:1px solid rgba(74,144,226,0.3); color:#4A90E2; font-size:0.62rem; font-weight:700; padding:1px 4px; border-radius:3px; white-space:nowrap;">Manual</span>`;

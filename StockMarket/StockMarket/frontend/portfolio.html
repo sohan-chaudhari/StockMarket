@@ -975,10 +975,13 @@
                     const pnlClass = (pos.realized_pnl || 0) >= 0 ? 'success' : 'danger';
                     const date = formatFullDate(pos.closed_at);
 
+                    // The API sends close_type and (now) exit_reason. Branch on whichever is
+                    // present so a TP/SL execution can never be shown as a manual close.
+                    const _exitReason = pos.exit_reason || pos.close_type || '';
                     let reasonBadge = '';
-                    if (pos.exit_reason === 'TP_HIT') {
+                    if (_exitReason === 'TP_HIT' || _exitReason === 'TP_EXECUTED') {
                         reasonBadge = `<span style="background:rgba(38, 166, 154, 0.14); border:1px solid rgba(38, 166, 154, 0.32); color:#26a69a; font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;">TP Hit</span>`;
-                    } else if (pos.exit_reason === 'SL_HIT') {
+                    } else if (_exitReason === 'SL_HIT' || _exitReason === 'SL_EXECUTED') {
                         reasonBadge = `<span style="background:rgba(242, 54, 69, 0.14); border:1px solid rgba(242, 54, 69, 0.32); color:#ff6b7a; font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;">SL Hit</span>`;
                     } else {
                         reasonBadge = `<span style="background:rgba(41, 98, 255, 0.12); border:1px solid rgba(41, 98, 255, 0.28); color:#58a6ff; font-size:11px; font-weight:600; padding:2px 8px; border-radius:6px;">Manual Close</span>`;

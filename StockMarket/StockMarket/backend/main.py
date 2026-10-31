@@ -2250,6 +2250,12 @@ def get_closed_positions(
             "unrealized_pnl": 0.0,
             "total_investment": pos.total_investment,
             "close_type": pos.close_type,
+            # The UI has always rendered the exit badge from `exit_reason`
+            # ('TP_HIT' / 'SL_HIT' / 'MANUAL_CLOSE'), but this payload only ever
+            # sent `close_type`. The field was therefore undefined in the browser
+            # and EVERY closed position — including real TP/SL executions — fell
+            # through to "Manual Close". Additive field: nothing else changes.
+            "exit_reason": pos.exit_reason,
             "created_at": pos.created_at.isoformat(),
             "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
             "tp_edit_count": pos.tp_edit_count,
