@@ -10063,6 +10063,11 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70,
                 WHERE c.timeframe = '5m'
                   AND c.timestamp >= :s AND c.timestamp <= :e
                   AND (:tkr IS NULL OR c.ticker = :tkr)
+                  -- Never build a daily candle for a day the exchange did not trade. A stray
+                  -- weekend/holiday 5m bar (the prefill has produced phantom 15:30 bars before)
+                  -- would otherwise create a phantom 1D row.
+                  AND EXTRACT(DOW FROM c.timestamp) NOT IN (0, 6)
+                  AND (date_trunc('day', c.timestamp))::date <> ALL(:holidays)
                   AND c.open > 0 AND c.high > 0 AND c.low > 0 AND c.close > 0
                   AND c.high >= GREATEST(c.open, c.close) - 0.0001
                   AND c.low  <= LEAST(c.open, c.close)  + 0.0001
@@ -10100,7 +10105,8 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70,
                    is_backfilled = false
              WHERE candles.data_source IS DISTINCT FROM 'ANGELONE'
         """), {"s": start, "e": end, "min_bars": int(min_bars),
-               "tkr": (ticker.strip().upper() if ticker else None)})
+               "tkr": (ticker.strip().upper() if ticker else None),
+                 "holidays": sorted(d.isoformat() for d in NSE_HOLIDAYS)})
         db.commit()
         n = res.rowcount or 0
         if n:
@@ -10137,6 +10143,10 @@ def _reconcile_index_daily_from_tick(days_back: int = 0) -> int:
     """
     fixed = 0
     try:
+        # Same calendar gate as _reconcile_daily_from_quote: writing an index daily
+        # from a stale quote on a Saturday is not a correction, it is fabrication.
+        if not is_trading_day_now():
+            return 0
         prices = _get_all_market_prices()
         today = datetime.combine(database.get_ist_now().date(), datetime.min.time())
         from database import SessionLocal
@@ -10212,6 +10222,18 @@ def _reconcile_daily_from_quote(limit: int = 400) -> int:
         _ticks = getattr(angelone_service, "latest_ticks", {}) or {}
         if not _ticks:
             return 0
+
+        # NO SESSION ON A NON-TRADING DAY. The tick cache still holds the last
+        # session's OHLC on a weekend/holiday, and this function stamps it onto
+        # `today` -- which invented a daily candle for Saturday 2026-10-31 on 114
+        # tickers (all volume 0, byte-identical to Friday's row). The per-tick
+        # `_tick_is_current_session` gate cannot catch it when the REST poller
+        # supplies a quote with no exchange timestamp, because staleness is then
+        # unprovable. The calendar can: if today is not a trading day there is no
+        # session to reconcile.
+        if not is_trading_day_now():
+            return 0
+
         market_open = is_market_open_now()
         today = datetime.combine(database.get_ist_now().date(), datetime.min.time())
         from database import SessionLocal
@@ -10372,6 +10394,9 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
             WHERE c.timeframe='5m' AND c.close>0 AND c.open>0
               AND c.timestamp >= :s
               AND NOT (c.ticker = ANY(:idx))
+              -- See _reconcile_daily_from_5m: no daily candle on a non-trading day.
+              AND EXTRACT(DOW FROM c.timestamp) NOT IN (0, 6)
+              AND (date_trunc('day', c.timestamp))::date <> ALL(:holidays)
               AND NOT EXISTS (
                   SELECT 1 FROM candles d
                   WHERE d.ticker = c.ticker AND d.timeframe='1D'
@@ -10380,7 +10405,8 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
               )
             GROUP BY c.ticker, date_trunc('day', c.timestamp)
             ON CONFLICT ON CONSTRAINT uix_candle_key DO NOTHING
-        """), {"s": start, "idx": list(_INDEX_LIST)})
+        """), {"s": start, "idx": list(_INDEX_LIST),
+                  "holidays": sorted(d.isoformat() for d in NSE_HOLIDAYS)})
         db.commit()
         n = res.rowcount or 0
     except Exception as e:
