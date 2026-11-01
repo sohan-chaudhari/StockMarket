@@ -206,9 +206,9 @@
                     activated.<br>Welcome to Leverage Corporation!</p>
             </div>
             <div class="info-box text-center">
-                <p>You can now access your trading dashboard.</p>
+                <p id="verifiedHint">You are now signed in and can access your dashboard.</p>
             </div>
-            <button class="btn btn-primary" onclick="window.location.href='login.html'">Sign In to Continue</button>
+            <button class="btn btn-primary" onclick="_goToApp()">Continue</button>
         </div>
 
         <!-- ==================== FORGOT PASSWORD PAGE ==================== -->
@@ -314,6 +314,7 @@ function _onVerifiedElsewhere(ev) {
     if (Date.now() - Number(payload.at || 0) > 5 * 60 * 1000) return;      // stale
     var mine = String(window._pendingVerifyEmail || '').toLowerCase();
     if (!mine || mine !== String(payload.email).toLowerCase()) return;     // not my account
+    window._verifiedElsewhere = true;
     showPage('verifiedPage');
   } catch (e) {}
 }
@@ -401,6 +402,7 @@ function showPage(pageId) {
         } catch (e) {}
                             console.log('[AUTH] Verification detected via polling!');
                             clearInterval(verificationPollingInterval);
+                            window._verifiedElsewhere = true;
                             showPage('verifiedPage');
                         }
                     }
@@ -617,6 +619,25 @@ function showPage(pageId) {
             }
         }
 
+        function _goToApp() {
+            // Only the device that actually consumed the verification token holds the
+            // session cookie (the endpoint sets it). A device that merely DETECTED the
+            // verification (phone verified, laptop polling) has no cookie yet, so it is
+            // sent to sign in once instead of to a dashboard it cannot load.
+            if (!window._verifiedHere) {
+                var hint = document.getElementById('verifiedHint');
+                if (hint) hint.textContent = 'Your email is verified. Please sign in once on this device.';
+                window.location.replace('login.html');
+                return;
+            }
+            var target = 'home.html';
+            try {
+                var r = new URLSearchParams(window.location.search).get('redirect');
+                if (r && /^[A-Za-z0-9_.\-]+(\?[^#]*)?$/.test(r)) target = r;
+            } catch (e) {}
+            window.location.replace(target);
+        }
+
         async function handleVerifyOTP() {
             const otpCodeInput = document.getElementById('otpCode');
             const otp = otpCodeInput ? otpCodeInput.value.trim() : '';
@@ -645,7 +666,9 @@ function showPage(pageId) {
                 });
 
                 if (response.ok) {
+                    window._verifiedHere = true;
                     showPage('verifiedPage');
+                    setTimeout(_goToApp, 2500);
                 } else {
                     const data = await response.json();
                     showMessage('verificationMessage', data.detail || 'Invalid code');
@@ -668,7 +691,9 @@ function showPage(pageId) {
                     body: JSON.stringify({ token: token })
                 });
                 if (response.ok) {
+                    window._verifiedHere = true;
                     showPage('verifiedPage');
+                    setTimeout(_goToApp, 2500);
                 } else {
                     showPage('verificationErrorPage');
                 }

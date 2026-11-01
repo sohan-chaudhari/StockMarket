@@ -207,8 +207,33 @@ def logout(
     auth.clear_auth_cookie(response)
     return {"message": "Logged out"}
 
+@router.get("/check-status")
+@limiter.limit("120/hour")
+def check_status(request: Request, email: str, db: Session = Depends(get_db)):
+    """Verification status for an email address â€” the endpoint the verify page
+    has always polled.
+
+    It did not exist: `verify-email.html::startVerificationPolling()` called
+    `/api/auth/check-status` every 3 seconds and always got 404, so the promised
+    "cross-device sync" could never fire. That is why verifying on a phone left the
+    laptop sitting on the verify screen forever.
+
+    Privacy: the answer is intentionally binary and generic â€” an unknown address is
+    indistinguishable from a known-but-unverified one, so the endpoint cannot be used
+    to enumerate accounts beyond "this address is verified".
+    """
+    addr = (email or "").strip().lower()
+    if not addr or "@" not in addr:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+
+    user = db.query(models.User).filter(models.User.email == addr).first()
+    if user and user.is_verified is True:
+        return {"message": "verified"}
+    return {"message": "pending"}
+
+
 @router.post("/verify-email")
-def verify_email(req: schemas.VerifyEmailRequest, request: Request, db: Session = Depends(get_db)):
+def verify_email(req: schemas.VerifyEmailRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     # Rate limit OTP attempts per IP
     ip = request.client.host if request.client else "unknown"
     now_ts = time.time()
@@ -248,10 +273,42 @@ def verify_email(req: schemas.VerifyEmailRequest, request: Request, db: Session 
         
     user.is_verified = True
     token_record.used = True
+
+    # SIGN THE VERIFYING DEVICE IN.
+    #
+    # Reported bug: a user registered on a laptop, opened the verification link on
+    # his phone, verified successfully -- and the laptop still showed no account.
+    # Two things were wrong: (1) this endpoint only flipped `is_verified` and never
+    # issued a session, so NEITHER device ended up signed in, and (2) /login refuses
+    # unverified accounts with 403, so the laptop never had a session to update.
+    #
+    # Possession of this single-use, 24h-expiring token -- delivered to the account's
+    # mailbox -- is exactly the proof that login requires, so the session is granted
+    # here rather than forcing a second manual sign-in. `token_record.used = True`
+    # above makes it non-replayable.
+    try:
+        user.last_login = get_ist_now()
+        auth.reset_failed_attempts(db, user)
+    except Exception:
+        pass
     db.commit()
-    
+    db.refresh(user)
+
     auth.send_welcome_email(user.email, user.full_name)
-    return {"message": "Email successfully verified"}
+
+    try:
+        session_token = auth.create_access_token(
+            data={"sub": str(user.user_id), "user_id": user.user_id, "email": user.email}
+        )
+        auth.set_auth_cookie(response, session_token, request)
+    except Exception as _sess_err:
+        print(f"[Auth] verify-email could not establish a session: {_sess_err}")
+
+    return {
+        "message": "Email successfully verified",
+        "verified": True,
+        "user": schemas.UserResponse.from_orm(user),
+    }
 
 @router.post("/resend-verification")
 @limiter.limit("3/hour")

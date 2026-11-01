@@ -682,10 +682,15 @@
                     // of stranding them on the login form -- the backend only
                     // reveals this state once the password is correct.
                     if (response.status === 403 && /verify your email/i.test(_loginMsg)) {
+                        // Stay here instead of navigating to the OTP page: the user may
+                        // already be verifying on ANOTHER device (the reported case: the
+                        // link opened on a phone). We keep the credentials he typed and
+                        // retry once when this tab becomes visible again.
                         try { sessionStorage.setItem('auth_return_url', window.location.href); } catch (e) {}
-                        setTimeout(function () {
-                            window.location.href = 'verify-email.html?email=' + encodeURIComponent(email);
-                        }, 1200);
+                        window._awaitingEmailVerification = true;
+                        showMessage('loginMessage',
+                            'Your email is not verified yet. If you just verified it on another '
+                            + 'device, this page will sign you in automatically when you come back.');
                     }
                 }
             } catch (err) {
@@ -693,6 +698,21 @@
                 setLoading('loginBtn', 'loginBtnText', false, 'Sign In');
             }
         }
+
+        // Auto-retry after an "email not verified" rejection. The moment this tab is
+        // focused again (user verified on his phone and came back), re-submit the same
+        // credentials ONCE. No password is written to storage -- it is read from the form
+        // the user already filled in.
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible' || !window._awaitingEmailVerification) return;
+            var em = document.getElementById('loginEmail');
+            var pw = document.getElementById('loginPassword');
+            if (!em || !pw || !em.value || !pw.value) return;
+            window._awaitingEmailVerification = false;
+            if (typeof handleLogin === 'function') {
+                try { handleLogin(new Event('submit')); } catch (e) {}
+            }
+        });
 
         async function handleSignup(e) {
             e.preventDefault();
