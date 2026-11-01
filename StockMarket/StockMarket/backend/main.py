@@ -6267,6 +6267,55 @@ def _dedupe_candles_prefer_canonical(rows, ticker_variants, limit=None):
     return out
 
 
+_PRESENT_TICKERS_CACHE = {}
+
+
+def _present_tickers(db, tickers, interval):
+    """Return only the ticker spellings that actually hold rows for `interval`.
+
+    WHY: `_normalize_ticker('NIFTY')` returns four spellings — NIFTY, NIFTY50,
+    'NIFTY 50', ^NSEI — and every chart query then used `ticker IN (...)`.
+    With an IN list there is NO equality on the leading column of
+    ix_candles_ticker_tf_ts (ticker, timeframe, timestamp DESC), so PostgreSQL walked
+    ix_candles_tf_ts across EVERY ticker and filtered afterwards. Measured on the
+    dashboard minichart (2026-11-01, market closed):
+
+        GET /api/stock-data/intraday/paginated?ticker=NIFTY&interval=5m&limit=300
+        -> 16.5 s, and the gap checker logged
+           "QueryCanceled: canceling statement due to statement timeout"
+
+    Shrinking the list to the spellings that exist (normally just 'NIFTY') turns the
+    same query into an index range scan. Cached for an hour per (ticker, interval);
+    each probe is a single LIMIT 1 index lookup, so the cost is a few ms.
+    """
+    try:
+        tk = [str(t) for t in tickers]
+    except Exception:
+        return tickers
+    if len(tk) <= 1:
+        return tk if isinstance(tickers, list) else list(tk)
+    key = (tk[0].upper(), interval)
+    now = time.time()
+    hit = _PRESENT_TICKERS_CACHE.get(key)
+    if hit and (now - hit[0]) < 3600:
+        return list(hit[1])
+    present = []
+    try:
+        from sqlalchemy import text as _pst
+        for t in tk:
+            row = db.execute(_pst(
+                "SELECT 1 FROM candles WHERE ticker = :t AND timeframe = :tf LIMIT 1"
+            ), {"t": t, "tf": interval}).first()
+            if row:
+                present.append(t)
+    except Exception:
+        return tk                      # never guess: fall back to the full list
+    if not present:
+        present = tk                   # nothing stored yet -> keep the request honest
+    _PRESENT_TICKERS_CACHE[key] = (now, tuple(present))
+    return present
+
+
 def _page_fetch_limit(distinct_wanted, ticker_variants):
     """Rows to pull so `distinct_wanted` DISTINCT timestamps can be filled even when
     several spellings duplicate them. Never below `distinct_wanted` (so an extreme
@@ -7466,7 +7515,15 @@ def _derived_tf_rows_desc(db, db_tickers, interval, before, limit):
 def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m"), before: int = Query(None), after: int = Query(None), limit: int = Query(1500, ge=1, le=50000), background_tasks: BackgroundTasks = None, db: Session = Depends(get_db), request: Request = None):
     """Paginated intraday intraday_candles_5min. Auto-triggers gap fill on first page load (before=None)."""
     db_tickers = _normalize_ticker(ticker)
-    
+
+    # Collapse the alias spellings to the ones that actually hold rows BEFORE any
+    # query is built: an IN list on `ticker` cannot use the leading column of
+    # ix_candles_ticker_tf_ts, which made the NIFTY minichart take 16.5 s (see
+    # _present_tickers). Derived timeframes are read from 5m, so probe that tier.
+    if len(db_tickers) > 1:
+        db_tickers = _present_tickers(
+            db, list(db_tickers), '5m' if interval in DERIVED_FROM_5M else interval)
+
     if interval not in INTRADAY_TFS:
         return JSONResponse(status_code=400, content={"error": f"Unsupported interval: {interval}"})
         
