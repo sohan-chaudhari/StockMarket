@@ -7738,12 +7738,30 @@ def get_intraday_paginated(ticker: str = Query(...), interval: str = Query("5m")
             # rather than the 5m source the response is actually built from.
             if not fill_needed and interval not in DERIVED_FROM_5M:
                 depth_floor = _intraday_cutoff(interval) + timedelta(days=_INTRADAY_DEPTH_GRACE_DAYS)
-                oldest_row = q_base.order_by(model.timestamp.asc()).limit(1).first()
-                if oldest_row is not None and oldest_row.timestamp > depth_floor:
+                # BOUNDED EXISTENCE PROBE, not "ORDER BY timestamp ASC LIMIT 1".
+                #
+                # The old form had no lower timestamp bound, so PostgreSQL walked
+                # ix_candles_tf_ts (timeframe, timestamp) from the OLDEST 5-minute row in
+                # the whole table -- millions of entries for older tickers -- and filtered
+                # by ticker afterwards. cProfile on GET /api/stock-data/intraday/paginated
+                # ?ticker=NIFTY&interval=5m&limit=300 put 19.08 s of a 19.15 s request in
+                # that single query.first(); BANKNIFTY hit the 30 s statement_timeout
+                # outright. That is why the dashboard minichart crawled even with the
+                # market closed.
+                #
+                # We only need to know whether ANY candle exists before the depth floor.
+                # A `timestamp < floor` LIMIT 1 lookup is satisfied by the first index
+                # entry, so it is effectively instant.
+                has_older = db.query(model.id).filter(
+                    model.timeframe == interval,
+                    model.ticker.in_(db_tickers),
+                    model.timestamp < depth_floor,
+                ).limit(1).first() is not None
+                if not has_older:
                     fill_start = _intraday_cutoff(interval)
                     fill_needed = True
                     print(f"[GapFill] Sync fill for {clean_ticker} {interval}: history depth "
-                          f"(oldest stored={oldest_row.timestamp}, floor={depth_floor})")
+                          f"(no stored candle before {depth_floor})")
 
             # Derived timeframes never reach a provider (the sync repair above and
             # the enqueued 5m job are what actually fill the source), so only the
