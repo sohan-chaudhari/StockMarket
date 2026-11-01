@@ -10067,7 +10067,7 @@ def _reconcile_daily_from_5m(days_back: int = 1, min_bars: int = 70,
                   -- weekend/holiday 5m bar (the prefill has produced phantom 15:30 bars before)
                   -- would otherwise create a phantom 1D row.
                   AND EXTRACT(DOW FROM c.timestamp) NOT IN (0, 6)
-                  AND (date_trunc('day', c.timestamp))::date <> ALL(:holidays)
+                  AND to_char(date_trunc('day', c.timestamp), 'YYYY-MM-DD') <> ALL(:holidays)
                   AND c.open > 0 AND c.high > 0 AND c.low > 0 AND c.close > 0
                   AND c.high >= GREATEST(c.open, c.close) - 0.0001
                   AND c.low  <= LEAST(c.open, c.close)  + 0.0001
@@ -10396,7 +10396,7 @@ def _backfill_daily_from_5m(days_back: int = 10) -> int:
               AND NOT (c.ticker = ANY(:idx))
               -- See _reconcile_daily_from_5m: no daily candle on a non-trading day.
               AND EXTRACT(DOW FROM c.timestamp) NOT IN (0, 6)
-              AND (date_trunc('day', c.timestamp))::date <> ALL(:holidays)
+              AND to_char(date_trunc('day', c.timestamp), 'YYYY-MM-DD') <> ALL(:holidays)
               AND NOT EXISTS (
                   SELECT 1 FROM candles d
                   WHERE d.ticker = c.ticker AND d.timeframe='1D'
